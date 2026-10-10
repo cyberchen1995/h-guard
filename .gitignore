@@ -1,0 +1,6 @@
+# 私有内容：设计与评审文档、评审回归用例、CLAUDE.md 不进入公开仓库，
+# 只由本机的私有仓库 .git-private 跟踪（用法见 CLAUDE.md「私有内容」）。
+/.git-private/
+/CLAUDE.md
+/docs/
+/tests/
