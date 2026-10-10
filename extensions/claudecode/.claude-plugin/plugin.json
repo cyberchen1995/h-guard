@@ -1,0 +1,6 @@
+{
+  "name": "h-guard",
+  "version": "0.0.0",
+  "description": "Hands Claude Code tool calls, tool results and prompts to the h-guard binary and applies its decision",
+  "author": { "name": "h-guard contributors" }
+}

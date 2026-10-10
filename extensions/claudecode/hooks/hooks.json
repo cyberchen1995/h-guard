@@ -1,0 +1,4 @@
+{
+  "description": "h-guard 的 Claude Code 接入：按扩展接入协议 v1 调用 h-guard",
+  "modules": ["./register.js"]
+}
