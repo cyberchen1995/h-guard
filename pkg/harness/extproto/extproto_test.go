@@ -55,7 +55,12 @@ func TestReplyRoundTrip(t *testing.T) {
 }
 
 func TestParseReplyRejects(t *testing.T) {
-	for _, in := range []string{`{"protocol":"h-guard.ext/v1","action":"allow"}`, `{"protocol":"other","action":"pass"}`, `[]`} {
+	for _, in := range []string{
+		`{"protocol":"h-guard.ext/v1","action":"allow"}`, `{"protocol":"other","action":"pass"}`, `[]`,
+		// 非 pass 的回复必须带说明：扩展把它交给用户或模型，空说明会让扩展的返回值不合法
+		`{"protocol":"h-guard.ext/v1","action":"deny"}`, `{"protocol":"h-guard.ext/v1","action":"ask","message":""}`,
+		`{"protocol":"h-guard.ext/v1","action":"warn","message":"  "}`,
+	} {
 		if _, err := extproto.ParseReply([]byte(in)); err == nil {
 			t.Errorf("ParseReply(%s): want an error", in)
 		}

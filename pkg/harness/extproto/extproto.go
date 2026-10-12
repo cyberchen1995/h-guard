@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/cyberchen1995/h-guard/pkg/guard"
 )
@@ -95,6 +96,10 @@ func ParseReply(b []byte) (Reply, error) {
 	}
 	if !r.Action.Valid() {
 		return Reply{}, fmt.Errorf("extproto: unknown action %q", r.Action)
+	}
+	// 非 pass 的回复必须带说明。扩展仍须在说明缺失时自行兜底，不能因此放宽（spec §7.6）。
+	if r.Action != ActionPass && strings.TrimSpace(r.Message) == "" {
+		return Reply{}, fmt.Errorf("extproto: %s reply needs a message", r.Action)
 	}
 	return r, nil
 }
