@@ -59,3 +59,24 @@ func TestScriptsRunEveryJudgedScenario(t *testing.T) {
 		})
 	}
 }
+
+// TestHarnessRunsDoNotReadStdin：codex exec 在 stdin 不是终端时会等待读入，脚本在管道里运行就会一直挂起。
+// 每条 harness 调用都要显式从 /dev/null 读 stdin。
+func TestHarnessRunsDoNotReadStdin(t *testing.T) {
+	stmt := regexp.MustCompile(`(?ms)^\s*(?:\(cd [^\n]*&& )?(?:codex exec|claude -p)\b.*?\n[^\n]*\|\| rc=\$\?`)
+	for _, script := range []string{"claude-scripted.sh", "codex-scripted.sh"} {
+		src, err := os.ReadFile(script)
+		if err != nil {
+			t.Fatal(err)
+		}
+		runs := stmt.FindAllString(string(src), -1)
+		if len(runs) == 0 {
+			t.Fatalf("%s: no harness run found", script)
+		}
+		for _, run := range runs {
+			if !strings.Contains(run, "< /dev/null") {
+				t.Errorf("%s: harness run does not read stdin from /dev/null:\n%s", script, run)
+			}
+		}
+	}
+}

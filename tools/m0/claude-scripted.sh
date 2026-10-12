@@ -41,7 +41,7 @@ scenario() {
       --mcp-config "$mcp" --strict-mcp-config \
       --model haiku --output-format stream-json --verbose --permission-mode "${PERM_MODE:-acceptEdits}" \
       --allowedTools "Bash(echo:*)" "Bash(cat:*)" Read Write Edit Monitor "$MCP_TOOL") \
-    > "$stream" 2> "$stderr" || rc=$?
+    < /dev/null > "$stream" 2> "$stderr" || rc=$?
   stream_split "$stream" "$result" "$notices"
   record_facts claudecode "$name" "$rc" "$result" "$6" "$7" "$stderr" "$notices"
 }

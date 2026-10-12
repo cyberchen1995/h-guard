@@ -35,7 +35,7 @@ scenario() {
   log "运行场景 $name"
   codex exec --cd "$PROJ" --skip-git-repo-check --sandbox workspace-write \
       --dangerously-bypass-hook-trust --json -o "$result" "${MCP_ARGS[@]}" ${EXTRA[@]+"${EXTRA[@]}"} "$8" \
-    > "$events" 2> "$stderr" || rc=$?
+    < /dev/null > "$events" 2> "$stderr" || rc=$?
   record_facts codex "$name" "$rc" "$result" "$6" "$7" "$stderr" "$events"
 }
 
