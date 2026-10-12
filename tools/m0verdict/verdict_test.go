@@ -9,7 +9,7 @@ import (
 // fact 返回一条默认「正常结束、有结果、没有秘密串」的事实，再依次应用修改。
 func fact(name string, mods ...func(*Fact)) Fact {
 	f := Fact{Scenario: name, ExitCode: 0, ResultBytes: 10, HookSawSecret: -1,
-		InResult: "-", InTranscript: "-", ReplacedInTranscript: "-", TargetSeen: "-"}
+		InResult: "-", InTranscript: "-", ReplacedInTranscript: "-", TargetSeen: "-", TargetCalls: -1, LeakElsewhere: -1}
 	for _, m := range mods {
 		m(&f)
 	}
@@ -19,27 +19,36 @@ func fact(name string, mods ...func(*Fact)) Fact {
 func secret(saw int, inResult string) func(*Fact) {
 	return func(f *Fact) {
 		f.HookSawSecret, f.InResult, f.InTranscript, f.ReplacedInTranscript = saw, inResult, "no", "no"
+		f.LeakElsewhere = 0
 	}
 }
 
 func replied(f *Fact) { f.HookReplies = 1 }
 
-func seen(f *Fact) { f.TargetSeen = "yes" }
+// seen：目标工具调用了一次，录到调用前与调用后事件；seenPre：只录到调用前事件（如被 deny）。
+func seen(f *Fact) { f.TargetSeen, f.TargetCalls = "yes", 1 }
+
+func seenPre(f *Fact) { f.TargetSeen, f.TargetCalls = "pre", 1 }
+
+func shown(f *Fact) { f.ReasonShown = true }
 
 // goodClaudeFacts 是每个场景都满足前提、行为与文档一致时的事实。
 func goodClaudeFacts() []Fact {
 	return []Fact{
-		fact("prompt-plain"), fact("bash-echo", seen), fact("file-ops", seen), fact("monitor", seen), fact("ask-pre", seen),
-		fact("control-cat", secret(1, "yes")),
-		fact("control-read", secret(1, "yes")),
-		fact("control-mcp", secret(1, "yes")),
+		fact("prompt-plain"), fact("bash-echo", seen), fact("file-ops", seen), fact("monitor", seen),
+		fact("ask-pre", seenPre), fact("ask-auto", seenPre), fact("ask-bypass", seen),
+		fact("control-cat", secret(1, "yes"), seen),
+		fact("control-bash-error", secret(1, "yes"), seen),
+		fact("control-read", secret(1, "yes"), seen),
+		fact("control-mcp", secret(1, "yes"), seen),
 		fact("control-prompt", secret(-1, "yes")),
-		fact("deny-pre", secret(0, "no"), replied),
+		fact("deny-pre", secret(0, "no"), replied, seenPre),
 		fact("block-prompt", secret(-1, "no"), replied, func(f *Fact) { f.ExitCode, f.ResultBytes, f.ReasonShown = 1, 0, true }),
-		fact("replace-bash", secret(1, "no"), replied),
-		fact("warn-bash", secret(1, "yes"), replied),
-		fact("replace-read", secret(1, "no"), replied),
-		fact("replace-mcp", secret(1, "no"), replied),
+		fact("replace-bash", secret(1, "no"), replied, seen),
+		fact("replace-bash-error", secret(1, "no"), replied, seen),
+		fact("warn-bash", secret(1, "yes"), replied, seen, shown),
+		fact("replace-read", secret(1, "no"), replied, seen),
+		fact("replace-mcp", secret(1, "no"), replied, seen),
 	}
 }
 
@@ -110,6 +119,16 @@ func TestJudgeNeverPassesWithoutEvidence(t *testing.T) {
 		{"observe scenario failed to run", with(good, "bash-echo", func(f *Fact) { f.ExitCode = 1 }), "bash-echo", resultInconclusive},
 		{"withheld output leaked", with(good, "replace-bash", func(f *Fact) { f.InResult = "yes" }), "replace-bash", resultFail},
 		{"deny did not stop the tool", with(good, "deny-pre", func(f *Fact) { f.HookSawSecret = 1 }), "deny-pre", resultFail},
+		// 证据必须来自目标工具（评审 C2、I6）
+		{"mcp tool never called in control", with(good, "control-mcp", func(f *Fact) { f.TargetSeen = "no" }), "control-mcp", resultInconclusive},
+		{"mcp tool never called", with(good, "replace-mcp", func(f *Fact) { f.TargetSeen = "no" }), "replace-mcp", resultInconclusive},
+		{"read target unknown", with(good, "replace-read", func(f *Fact) { f.TargetSeen = "-" }), "replace-read", resultInconclusive},
+		{"secret reached the model through another tool", with(good, "replace-read", func(f *Fact) { f.LeakElsewhere = 1 }), "replace-read", resultInconclusive},
+		{"other-tool leak unknown", with(good, "replace-read", func(f *Fact) { f.LeakElsewhere = -1 }), "replace-read", resultInconclusive},
+		{"agent retried the target tool", with(good, "deny-pre", func(f *Fact) { f.TargetCalls = 2 }), "deny-pre", resultInconclusive},
+		// 单元名称声明的证据都要有（评审 I1）
+		{"warn not shown to the user", with(good, "warn-bash", func(f *Fact) { f.ReasonShown = false }), "warn-bash", resultInconclusive},
+		{"observe without the post event", with(good, "bash-echo", func(f *Fact) { f.TargetSeen = "pre" }), "bash-echo", resultInconclusive},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -126,8 +145,8 @@ func TestJudgeNeverPassesWithoutEvidence(t *testing.T) {
 
 func TestJudgeCodexAskFailsOpen(t *testing.T) {
 	facts := []Fact{
-		fact("control-cat", secret(1, "yes")),
-		fact("ask-pre", secret(1, "yes"), replied),
+		fact("control-cat", secret(1, "yes"), seen),
+		fact("ask-pre", secret(1, "yes"), replied, seen),
 	}
 	vs, err := Judge("codex", facts)
 	if err != nil {
@@ -153,20 +172,24 @@ func TestEveryExpectationHasACell(t *testing.T) {
 			if e.Kind == check && exp[e.Control].Kind != control {
 				t.Errorf("%s/%s depends on %q, which is not a control", h, name, e.Control)
 			}
+			if e.Kind != observe && e.Executed != nil && e.Target == "" {
+				t.Errorf("%s/%s runs a tool but names no target tool", h, name)
+			}
 		}
 	}
 }
 
 func TestReadFacts(t *testing.T) {
-	in := "scenario\texit_code\tresult_bytes\treason_shown\thook_replies\thook_saw_secret\tin_result\tin_transcript\treplaced_in_transcript\ttarget_tool_seen\n" +
-		"replace-bash\t0\t42\tno\t1\t1\tno\tyes\tyes\t-\n" +
-		"bash-echo\t0\t10\tno\t0\t-\t-\t-\t-\tyes\n"
+	in := "scenario\texit_code\tresult_bytes\treason_shown\thook_replies\thook_saw_secret\tin_result\tin_transcript\treplaced_in_transcript\ttarget_tool_seen\ttarget_calls\tleak_elsewhere\n" +
+		"replace-bash\t0\t42\tno\t1\t1\tno\tyes\tyes\tyes\t1\t0\n" +
+		"bash-echo\t0\t10\tno\t0\t-\t-\t-\t-\tpre\t-\t-\n"
 	facts, err := ReadFacts(strings.NewReader(in))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(facts) != 2 || facts[0].ResultBytes != 42 || facts[0].HookReplies != 1 || facts[0].InTranscript != "yes" ||
-		facts[1].HookSawSecret != -1 || facts[1].TargetSeen != "yes" {
+		facts[0].TargetCalls != 1 || facts[0].LeakElsewhere != 0 ||
+		facts[1].HookSawSecret != -1 || facts[1].TargetSeen != "pre" || facts[1].TargetCalls != -1 || facts[1].LeakElsewhere != -1 {
 		t.Errorf("facts = %+v", facts)
 	}
 	if _, err := ReadFacts(strings.NewReader("bad\theader\n")); err == nil {
@@ -175,13 +198,13 @@ func TestReadFacts(t *testing.T) {
 }
 
 func TestWriteMarkdown(t *testing.T) {
-	facts := []Fact{fact("replace-bash", secret(1, "no"), replied)}
+	facts := []Fact{fact("replace-bash", secret(1, "no"), replied, seen)}
 	var buf bytes.Buffer
 	vs := []Verdict{{Scenario: "replace-bash", Cell: "tool.result · Bash · 扣下", Result: resultPass}}
 	if err := WriteMarkdown(&buf, vs, facts); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(buf.String(), "| replace-bash | tool.result · Bash · 扣下 | pass | - | no | 1 | - | no | no |") {
+	if !strings.Contains(buf.String(), "| replace-bash | tool.result · Bash · 扣下 | pass | - | no | 1 | yes ×1 | 0 | no | no |") {
 		t.Errorf("markdown =\n%s", buf.String())
 	}
 }
