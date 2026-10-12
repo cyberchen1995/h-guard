@@ -272,3 +272,32 @@ func TestOnlyRerunsSelectedScenariosAndKeepsOtherFacts(t *testing.T) {
 		t.Errorf("full run must start a fresh facts table, got:\n%s", b)
 	}
 }
+
+func TestGateOnlyChecksScenariosRunThisTime(t *testing.T) {
+	work := newWork(t)
+	writeFile(t, filepath.Join(work, "r.txt"), "nothing\n", 0o644)
+	// 本轮没有运行 control-cat：门槛沿用上一轮的结论，不能拿本轮新生成的秘密串去查
+	if got := sh(t, work, `HG_M0_ONLY="other" gate_control claudecode control-cat HGCANARY-NEW '^Bash$' "$WORK/r.txt" && echo skipped`); got != "skipped" {
+		t.Errorf("gate for an unselected scenario = %q, want skipped", got)
+	}
+	// 本轮运行了但没有证据：停止
+	cmd := exec.Command("bash", "-c", "source \"$0\"; gate_control claudecode control-cat HGCANARY-X '^Bash$' \"$WORK/r.txt\"", mustAbs(t, "lib.sh"))
+	cmd.Env = append(os.Environ(), "HG_M0_WORK="+work)
+	if err := cmd.Run(); err == nil {
+		t.Error("a failed control must stop the run")
+	}
+	record(t, work, "claudecode", "control-cat", "1-tool.result", claudeResult("Bash", "HGCANARY-X"), pass)
+	writeFile(t, filepath.Join(work, "r.txt"), "HGCANARY-X\n", 0o644)
+	if got := sh(t, work, `gate_control claudecode control-cat HGCANARY-X '^Bash$' "$WORK/r.txt" && echo passed`); got != "passed" {
+		t.Errorf("gate with evidence = %q, want passed", got)
+	}
+}
+
+func mustAbs(t *testing.T, p string) string {
+	t.Helper()
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return abs
+}

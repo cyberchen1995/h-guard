@@ -46,14 +46,6 @@ scenario() {
   record_facts claudecode "$name" "$rc" "$result" "$6" "$7" "$stderr" "$notices"
 }
 
-# gate NAME SECRET TOOLS：门槛场景没通过就停止，免得整轮录制都是 inconclusive
-gate() {
-  if [[ "$(record_count claudecode "$1" tool.result "$2" "$3")" == 0 \
-    || "$(has_text "$WORK/claudecode/$1.result.txt" "$2")" != yes ]]; then
-    log "正对照 $1 未通过（工具没执行，或模型没复述），停止。见 $WORK/claudecode/$1.*"
-    exit 1
-  fi
-}
 
 S_CAT="$(new_canary)"; S_ERR_CTRL="$(new_canary)"; S_READ_CTRL="$(new_canary)"; S_MCP_CTRL="$(new_canary)"
 S_PROMPT_CTRL="$(new_canary)"; S_DENY="$(new_canary)"; S_ASK="$(new_canary)"; S_ASK_AUTO="$(new_canary)"
@@ -76,7 +68,7 @@ fi
 
 # 正对照：hook 只记录，工具应执行、模型应能复述秘密串
 scenario control-cat record record record "" "$S_CAT" "$T_BASH" "$P_CAT" "printf '%s\n' '$S_CAT' > entry.txt"
-gate control-cat "$S_CAT" "$T_BASH"
+gate_control claudecode control-cat "$S_CAT" "$T_BASH" "$WORK/claudecode/control-cat.result.txt"
 scenario control-bash-error record record record "" "$S_ERR_CTRL" "$T_BASH" "$P_ERR" "printf '%s\n' '$S_ERR_CTRL' > entry.txt"
 scenario control-read record record record "" "$S_READ_CTRL" "$T_READ" "$P_READ" "printf '%s\n' '$S_READ_CTRL' > memo.txt"
 scenario control-mcp record record record "" "$S_MCP_CTRL" "$T_MCP" "$P_MCP" "printf '%s\n' '$S_MCP_CTRL' > \"\$MCP_SECRET\""

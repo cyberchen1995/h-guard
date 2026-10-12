@@ -219,6 +219,16 @@ facts_begin() {
   done
 }
 
+# gate_control HARNESS NAME SECRET TOOLS RESULT_FILE：对照场景是门槛，没通过（目标工具没输出秘密串，或模型
+# 没复述）就停止整轮录制，免得后面全是 inconclusive。本轮没有运行该场景时沿用上一轮的结论，不检查。
+gate_control() {
+  selected "$2" || return 0
+  if [[ "$(record_count "$1" "$2" "$(post_event "$1")" "$3" "$4")" == 0 || "$(has_text "$5" "$3")" != yes ]]; then
+    log "正对照 $2 未通过（工具没执行，或模型没复述），停止。见 $WORK/$1/$2.*"
+    exit 1
+  fi
+}
+
 # record_facts HARNESS SCENARIO EXIT_CODE RESULT_FILE SECRET TOOLS LOG_FILE...：采集一个场景的事实。
 # TOOLS 是目标工具（逗号分隔的 jq 正则，可为空），工具输出、回复与调用次数只算目标工具的（评审 C2）。
 # LOG_FILE 是 stderr、提示行等可能显示 hook 原因的文件，可以有多个。
