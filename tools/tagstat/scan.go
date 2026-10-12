@@ -31,7 +31,8 @@ type Summary struct {
 type extractor func(rec map[string]any) (texts []string, fields map[string]any, ok bool)
 
 var (
-	tagRe  = regexp.MustCompile(`^<([A-Za-z][A-Za-z0-9_-]{0,40})`)
+	// 只认闭合的标签（<name> 或 <name attr…>）：没闭合的尖括号后面可能是用户内容（评审 M4）
+	tagRe  = regexp.MustCompile(`^<([A-Za-z][A-Za-z0-9_-]{0,40})(?:\s[^<>]{0,200})?/?>`)
 	enumRe = regexp.MustCompile(`^[A-Za-z_-]{1,32}$`)
 )
 
@@ -115,6 +116,8 @@ func leadingTag(text string) string {
 		return "<" + strings.ToLower(m[1])
 	}
 	switch {
+	case strings.HasPrefix(t, "<"):
+		return "(lt)"
 	case t == "":
 		return "(empty)"
 	case strings.HasPrefix(t, "["):

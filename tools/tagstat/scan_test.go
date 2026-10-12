@@ -109,6 +109,11 @@ func TestLeadingTag(t *testing.T) {
 		"/init":                     "(slash)",
 		"":                          "(empty)",
 		"hello <tag>":               "(plain)",
+		"<task-notification>\n<id>": "<task-notification",
+		"<tag attr=\"x\">body":      "<tag",
+		// 没有闭合成标签的尖括号开头不输出后面的词：可能是凭据前缀、名字等用户内容
+		"<AKIAIOSFODNN7EXAMPLE rest": "(lt)",
+		"<john said hi":              "(lt)",
 	}
 	for in, want := range tests {
 		if got := leadingTag(in); got != want {
