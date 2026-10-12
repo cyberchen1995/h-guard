@@ -1,0 +1,40 @@
+{
+  "harness": "claudecode",
+  "version": "2.1.296",
+  "scenario": "file-ops",
+  "platform": "darwin-arm64",
+  "run_id": "20261012T023050Z",
+  "event": "tool.result",
+  "stdin": {
+    "protocol": "h-guard.ext/v1",
+    "harness": "claudecode",
+    "harness_version": "2.1.296",
+    "hook": "tool.result",
+    "session": {
+      "id": "cc610d60-b37f-4077-851d-8066e4a7d713",
+      "cwd": "/tmp/hg-m0/claudecode/file-ops"
+    },
+    "data": {
+      "file_path": "/tmp/hg-m0/claudecode/file-ops/copy.txt",
+      "content": "hello\n",
+      "tool": "Write",
+      "tool_use_id": "toolu_01Cft1x4BrHU5jdiviJe4eWT"
+    },
+    "result": {
+      "ref": 1,
+      "result": {
+        "type": "create",
+        "filePath": "/tmp/hg-m0/claudecode/file-ops/copy.txt",
+        "content": "hello\n",
+        "structuredPatch": [],
+        "originalFile": null,
+        "userModified": false
+      },
+      "text": "File created successfully at: /tmp/hg-m0/claudecode/file-ops/copy.txt (file state is current in your context — no need to Read it back)"
+    }
+  },
+  "reply": {
+    "protocol": "h-guard.ext/v1",
+    "action": "pass"
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "harness": "claudecode",
+  "version": "2.1.296",
+  "scenario": "interactive",
+  "platform": "darwin-arm64",
+  "run_id": "20261012T025954Z",
+  "event": "tool.check",
+  "stdin": {
+    "protocol": "h-guard.ext/v1",
+    "harness": "claudecode",
+    "harness_version": "2.1.296",
+    "hook": "tool.check",
+    "session": {
+      "id": "293592bb-6c6a-4777-a27e-950a63282910",
+      "cwd": "/tmp/hg-m0/claudecode/interactive"
+    },
+    "data": {
+      "tool": "Agent",
+      "input": {
+        "description": "Run echo hg-m0-sub",
+        "prompt": "Run the shell command `echo hg-m0-sub` using the Bash tool and report back the exact output.",
+        "subagent_type": "general-purpose"
+      },
+      "tool_use_id": "toolu_01WMBmLffoxVRsg8ZxPrx4z2"
+    },
+    "decided": "ask"
+  },
+  "reply": {
+    "protocol": "h-guard.ext/v1",
+    "action": "pass"
+  }
+}

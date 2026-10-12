@@ -1,0 +1,31 @@
+{
+  "harness": "claudecode",
+  "version": "2.1.296",
+  "scenario": "replace-bash",
+  "platform": "darwin-arm64",
+  "run_id": "20261012T023050Z",
+  "event": "tool.check",
+  "stdin": {
+    "protocol": "h-guard.ext/v1",
+    "harness": "claudecode",
+    "harness_version": "2.1.296",
+    "hook": "tool.check",
+    "session": {
+      "id": "afff4cbc-0459-4266-9d34-22d8f6ad33da",
+      "cwd": "/tmp/hg-m0/claudecode/replace-bash"
+    },
+    "data": {
+      "tool": "Bash",
+      "input": {
+        "command": "cat entry.txt",
+        "description": "Print contents of entry.txt"
+      },
+      "tool_use_id": "toolu_013KiC6QaD9X744cLoih1TwT"
+    },
+    "decided": "allow"
+  },
+  "reply": {
+    "protocol": "h-guard.ext/v1",
+    "action": "pass"
+  }
+}

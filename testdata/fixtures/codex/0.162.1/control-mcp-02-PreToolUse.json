@@ -1,0 +1,20 @@
+{
+  "harness": "codex",
+  "version": "0.162.1",
+  "scenario": "control-mcp",
+  "platform": "darwin-arm64",
+  "run_id": "20261012T023347Z",
+  "event": "PreToolUse",
+  "stdin": {
+    "session_id": "01a12df7-56f1-78a3-97d2-387305130659",
+    "turn_id": "01a12df7-6b0d-72b3-acb3-a04c0e91080b",
+    "transcript_path": "/home/user/.codex/sessions/2026/10/12/rollout-2026-10-12T10-35-51-01a12df7-56f1-78a3-97d2-387305130659.jsonl",
+    "cwd": "/tmp/hg-m0/codex/proj",
+    "hook_event_name": "PreToolUse",
+    "model": "gpt-6-astra",
+    "permission_mode": "default",
+    "tool_name": "mcp__hgm0__hg_m0_report",
+    "tool_input": {},
+    "tool_use_id": "exec-3cbe6c87-409f-4f37-8898-c173132f1c6f"
+  }
+}

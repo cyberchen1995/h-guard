@@ -1,0 +1,18 @@
+{
+  "harness": "codex",
+  "version": "0.162.1",
+  "scenario": "apply-patch",
+  "platform": "darwin-arm64",
+  "run_id": "20261012T023347Z",
+  "event": "UserPromptSubmit",
+  "stdin": {
+    "session_id": "01a12df9-8c21-7cf0-b5f7-f9ba68ded8e2",
+    "turn_id": "01a12df9-8c94-71e2-83d2-78b370933293",
+    "transcript_path": "/home/user/.codex/sessions/2026/10/12/rollout-2026-10-12T10-38-11-01a12df9-8c21-7cf0-b5f7-f9ba68ded8e2.jsonl",
+    "cwd": "/tmp/hg-m0/codex/proj",
+    "hook_event_name": "UserPromptSubmit",
+    "model": "gpt-6-astra",
+    "permission_mode": "default",
+    "prompt": "Using apply_patch for every file change: create a.txt containing the line alpha, then rename a.txt to b.txt, then delete b.txt."
+  }
+}

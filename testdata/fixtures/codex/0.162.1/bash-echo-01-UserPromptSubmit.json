@@ -1,0 +1,18 @@
+{
+  "harness": "codex",
+  "version": "0.162.1",
+  "scenario": "bash-echo",
+  "platform": "darwin-arm64",
+  "run_id": "20261012T023347Z",
+  "event": "UserPromptSubmit",
+  "stdin": {
+    "session_id": "01a12df8-bf34-7832-acf5-5fde8fbf0c26",
+    "turn_id": "01a12df8-ccd3-7642-b8f7-d51ef6051513",
+    "transcript_path": "/home/user/.codex/sessions/2026/10/12/rollout-2026-10-12T10-37-22-01a12df8-bf34-7832-acf5-5fde8fbf0c26.jsonl",
+    "cwd": "/tmp/hg-m0/codex/proj",
+    "hook_event_name": "UserPromptSubmit",
+    "model": "gpt-6-astra",
+    "permission_mode": "default",
+    "prompt": "Run the shell command: echo hg-m0-bash. Then reply with its output."
+  }
+}

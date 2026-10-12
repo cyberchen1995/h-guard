@@ -1,0 +1,29 @@
+{
+  "harness": "claudecode",
+  "version": "2.1.296",
+  "scenario": "monitor",
+  "platform": "darwin-arm64",
+  "run_id": "20261012T023050Z",
+  "event": "prompt.submit",
+  "stdin": {
+    "protocol": "h-guard.ext/v1",
+    "harness": "claudecode",
+    "harness_version": "2.1.296",
+    "hook": "prompt.submit",
+    "session": {
+      "id": "51cda0dd-efa6-4f3a-b1a5-05de87d448c4",
+      "cwd": "/tmp/hg-m0/claudecode/monitor"
+    },
+    "data": {
+      "text": "Use the Monitor tool to run exactly: echo hg-m0-monitor. Report the first line it prints, then stop the monitor.",
+      "wait": false,
+      "origin": {
+        "kind": "sdk"
+      }
+    }
+  },
+  "reply": {
+    "protocol": "h-guard.ext/v1",
+    "action": "pass"
+  }
+}

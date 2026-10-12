@@ -1,0 +1,30 @@
+{
+  "harness": "claudecode",
+  "version": "2.1.296",
+  "scenario": "control-read",
+  "platform": "darwin-arm64",
+  "run_id": "20261012T023050Z",
+  "event": "tool.check",
+  "stdin": {
+    "protocol": "h-guard.ext/v1",
+    "harness": "claudecode",
+    "harness_version": "2.1.296",
+    "hook": "tool.check",
+    "session": {
+      "id": "81c11ab2-343d-4fc9-a1da-aefdea51db5d",
+      "cwd": "/tmp/hg-m0/claudecode/control-read"
+    },
+    "data": {
+      "tool": "Read",
+      "input": {
+        "file_path": "/tmp/hg-m0/claudecode/control-read/memo.txt"
+      },
+      "tool_use_id": "toolu_01PZYVufYyBBJbmE8i9pj7dD"
+    },
+    "decided": "allow"
+  },
+  "reply": {
+    "protocol": "h-guard.ext/v1",
+    "action": "pass"
+  }
+}

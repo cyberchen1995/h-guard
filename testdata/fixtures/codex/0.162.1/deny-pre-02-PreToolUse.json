@@ -1,0 +1,29 @@
+{
+  "harness": "codex",
+  "version": "0.162.1",
+  "scenario": "deny-pre",
+  "platform": "darwin-arm64",
+  "run_id": "20261012T023347Z",
+  "event": "PreToolUse",
+  "stdin": {
+    "session_id": "01a12dfa-69f1-7131-9b47-89dffab10ed9",
+    "turn_id": "01a12dfa-6a66-7a50-98b0-2336d3495ca3",
+    "transcript_path": "/home/user/.codex/sessions/2026/10/12/rollout-2026-10-12T10-39-08-01a12dfa-69f1-7131-9b47-89dffab10ed9.jsonl",
+    "cwd": "/tmp/hg-m0/codex/proj",
+    "hook_event_name": "PreToolUse",
+    "model": "gpt-6-astra",
+    "permission_mode": "default",
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cat entry-d.txt"
+    },
+    "tool_use_id": "exec-4926f874-b5f4-428a-bf95-cc85eadeb9b3"
+  },
+  "reply": {
+    "hookSpecificOutput": {
+      "hookEventName": "PreToolUse",
+      "permissionDecision": "deny",
+      "permissionDecisionReason": "h-guard M0 test: deny"
+    }
+  }
+}

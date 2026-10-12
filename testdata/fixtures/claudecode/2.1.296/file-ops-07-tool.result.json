@@ -1,0 +1,54 @@
+{
+  "harness": "claudecode",
+  "version": "2.1.296",
+  "scenario": "file-ops",
+  "platform": "darwin-arm64",
+  "run_id": "20261012T023050Z",
+  "event": "tool.result",
+  "stdin": {
+    "protocol": "h-guard.ext/v1",
+    "harness": "claudecode",
+    "harness_version": "2.1.296",
+    "hook": "tool.result",
+    "session": {
+      "id": "cc610d60-b37f-4077-851d-8066e4a7d713",
+      "cwd": "/tmp/hg-m0/claudecode/file-ops"
+    },
+    "data": {
+      "replace_all": false,
+      "file_path": "/tmp/hg-m0/claudecode/file-ops/copy.txt",
+      "old_string": "hello",
+      "new_string": "bye",
+      "tool": "Edit",
+      "tool_use_id": "toolu_0175FAXKcWVSLm6Th93GttVt"
+    },
+    "result": {
+      "ref": 1,
+      "result": {
+        "filePath": "/tmp/hg-m0/claudecode/file-ops/copy.txt",
+        "oldString": "hello",
+        "newString": "bye",
+        "originalFile": "hello\n",
+        "structuredPatch": [
+          {
+            "oldStart": 1,
+            "oldLines": 1,
+            "newStart": 1,
+            "newLines": 1,
+            "lines": [
+              "-hello",
+              "+bye"
+            ]
+          }
+        ],
+        "userModified": false,
+        "replaceAll": false
+      },
+      "text": "The file /tmp/hg-m0/claudecode/file-ops/copy.txt has been updated successfully. (file state is current in your context — no need to Read it back)"
+    }
+  },
+  "reply": {
+    "protocol": "h-guard.ext/v1",
+    "action": "pass"
+  }
+}

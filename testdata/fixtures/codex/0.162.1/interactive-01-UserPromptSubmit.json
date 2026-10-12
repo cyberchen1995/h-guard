@@ -1,0 +1,18 @@
+{
+  "harness": "codex",
+  "version": "0.162.1",
+  "scenario": "interactive",
+  "platform": "darwin-arm64",
+  "run_id": "20261012T025954Z",
+  "event": "UserPromptSubmit",
+  "stdin": {
+    "session_id": "01a12e2c-7088-7d23-8c7a-911a9c7f1257",
+    "turn_id": "01a12e2c-7ed3-7231-8441-7689f4d9df7f",
+    "transcript_path": "/home/user/.codex/sessions/2026/10/12/rollout-2026-10-12T11-33-46-01a12e2c-7088-7d23-8c7a-911a9c7f1257.jsonl",
+    "cwd": "/tmp/hg-m0/codex/interactive",
+    "hook_event_name": "UserPromptSubmit",
+    "model": "gpt-6-astra",
+    "permission_mode": "default",
+    "prompt": "Reply with the single word OK."
+  }
+}

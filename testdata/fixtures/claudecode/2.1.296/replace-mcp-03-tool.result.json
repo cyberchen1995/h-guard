@@ -1,0 +1,40 @@
+{
+  "harness": "claudecode",
+  "version": "2.1.296",
+  "scenario": "replace-mcp",
+  "platform": "darwin-arm64",
+  "run_id": "20261012T023050Z",
+  "event": "tool.result",
+  "stdin": {
+    "protocol": "h-guard.ext/v1",
+    "harness": "claudecode",
+    "harness_version": "2.1.296",
+    "hook": "tool.result",
+    "session": {
+      "id": "59ce03bf-6318-44d2-bcbd-ddeedcfaf0d8",
+      "cwd": "/tmp/hg-m0/claudecode/replace-mcp"
+    },
+    "data": {
+      "query": "select:mcp__hgm0__hg_m0_report",
+      "max_results": 1,
+      "tool": "ToolSearch",
+      "tool_use_id": "toolu_018E6zrf632gKDZDQxARctYX"
+    },
+    "result": {
+      "ref": 1,
+      "result": {
+        "matches": [
+          "mcp__hgm0__hg_m0_report"
+        ],
+        "query": "select:mcp__hgm0__hg_m0_report",
+        "total_deferred_tools": 17
+      },
+      "text": "",
+      "isReadOnly": true
+    }
+  },
+  "reply": {
+    "protocol": "h-guard.ext/v1",
+    "action": "pass"
+  }
+}

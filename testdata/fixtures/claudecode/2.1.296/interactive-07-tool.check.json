@@ -1,0 +1,32 @@
+{
+  "harness": "claudecode",
+  "version": "2.1.296",
+  "scenario": "interactive",
+  "platform": "darwin-arm64",
+  "run_id": "20261012T025954Z",
+  "event": "tool.check",
+  "stdin": {
+    "protocol": "h-guard.ext/v1",
+    "harness": "claudecode",
+    "harness_version": "2.1.296",
+    "hook": "tool.check",
+    "session": {
+      "id": "293592bb-6c6a-4777-a27e-950a63282910",
+      "cwd": "/tmp/hg-m0/claudecode/interactive"
+    },
+    "data": {
+      "tool": "CronCreate",
+      "input": {
+        "cron": "34 11 12 10 *",
+        "prompt": "reply with the word HG-SCHEDULED",
+        "recurring": false
+      },
+      "tool_use_id": "toolu_019fW2RVRkR7JHbagPd1WQSQ"
+    },
+    "decided": "ask"
+  },
+  "reply": {
+    "protocol": "h-guard.ext/v1",
+    "action": "pass"
+  }
+}

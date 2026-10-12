@@ -1,0 +1,29 @@
+{
+  "harness": "claudecode",
+  "version": "2.1.296",
+  "scenario": "file-ops",
+  "platform": "darwin-arm64",
+  "run_id": "20261012T023050Z",
+  "event": "prompt.submit",
+  "stdin": {
+    "protocol": "h-guard.ext/v1",
+    "harness": "claudecode",
+    "harness_version": "2.1.296",
+    "hook": "prompt.submit",
+    "session": {
+      "id": "cc610d60-b37f-4077-851d-8066e4a7d713",
+      "cwd": "/tmp/hg-m0/claudecode/file-ops"
+    },
+    "data": {
+      "text": "Use the Read tool to read notes.txt. Then use the Write tool to create copy.txt with the same content. Then use the Edit tool to replace hello with bye in copy.txt.",
+      "wait": false,
+      "origin": {
+        "kind": "sdk"
+      }
+    }
+  },
+  "reply": {
+    "protocol": "h-guard.ext/v1",
+    "action": "pass"
+  }
+}

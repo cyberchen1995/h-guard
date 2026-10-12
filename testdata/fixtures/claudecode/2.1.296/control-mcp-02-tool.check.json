@@ -1,0 +1,31 @@
+{
+  "harness": "claudecode",
+  "version": "2.1.296",
+  "scenario": "control-mcp",
+  "platform": "darwin-arm64",
+  "run_id": "20261012T023050Z",
+  "event": "tool.check",
+  "stdin": {
+    "protocol": "h-guard.ext/v1",
+    "harness": "claudecode",
+    "harness_version": "2.1.296",
+    "hook": "tool.check",
+    "session": {
+      "id": "b3de3679-b989-45b3-a789-93cb5053466d",
+      "cwd": "/tmp/hg-m0/claudecode/control-mcp"
+    },
+    "data": {
+      "tool": "ToolSearch",
+      "input": {
+        "query": "select:mcp__hgm0__hg_m0_report",
+        "max_results": 1
+      },
+      "tool_use_id": "toolu_01X5mjcADVFcAAeuXsw8erkw"
+    },
+    "decided": "allow"
+  },
+  "reply": {
+    "protocol": "h-guard.ext/v1",
+    "action": "pass"
+  }
+}

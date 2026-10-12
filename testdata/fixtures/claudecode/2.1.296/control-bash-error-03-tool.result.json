@@ -1,0 +1,35 @@
+{
+  "harness": "claudecode",
+  "version": "2.1.296",
+  "scenario": "control-bash-error",
+  "platform": "darwin-arm64",
+  "run_id": "20261012T023050Z",
+  "event": "tool.result",
+  "stdin": {
+    "protocol": "h-guard.ext/v1",
+    "harness": "claudecode",
+    "harness_version": "2.1.296",
+    "hook": "tool.result",
+    "session": {
+      "id": "4a2fb55b-a31d-404d-b167-b76d0b1f6a8b",
+      "cwd": "/tmp/hg-m0/claudecode/control-bash-error"
+    },
+    "data": {
+      "command": "cat entry.txt missing.txt",
+      "description": "Concatenate entry.txt and missing.txt",
+      "tool": "Bash",
+      "tool_use_id": "toolu_01QsTdiPHVTAeD66eTCRrVX2"
+    },
+    "result": {
+      "ref": 1,
+      "result": "Error: Exit code 1\nHGCANARY-200ce840d293\n\u001b[31m[bat error]\u001b[0m: 'missing.txt': No such file or directory (os error 2)",
+      "text": "Exit code 1\nHGCANARY-200ce840d293\n\u001b[31m[bat error]\u001b[0m: 'missing.txt': No such file or directory (os error 2)",
+      "isError": true,
+      "isReadOnly": true
+    }
+  },
+  "reply": {
+    "protocol": "h-guard.ext/v1",
+    "action": "pass"
+  }
+}

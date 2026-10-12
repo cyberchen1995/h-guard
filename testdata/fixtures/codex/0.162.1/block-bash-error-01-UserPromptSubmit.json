@@ -1,0 +1,18 @@
+{
+  "harness": "codex",
+  "version": "0.162.1",
+  "scenario": "block-bash-error",
+  "platform": "darwin-arm64",
+  "run_id": "20261012T025748Z",
+  "event": "UserPromptSubmit",
+  "stdin": {
+    "session_id": "01a12e0c-5345-7f01-9977-79262bf8823a",
+    "turn_id": "01a12e0c-53bc-7771-9418-25498f082b64",
+    "transcript_path": "/home/user/.codex/sessions/2026/10/12/rollout-2026-10-12T10-58-42-01a12e0c-5345-7f01-9977-79262bf8823a.jsonl",
+    "cwd": "/tmp/hg-m0/codex/proj",
+    "hook_event_name": "UserPromptSubmit",
+    "model": "gpt-6-astra",
+    "permission_mode": "default",
+    "prompt": "Run the shell command: cat entry.txt missing.txt. It fails because missing.txt does not exist; that is expected. Exactly one line of its output starts with HGCANARY; reply with exactly that line and nothing else. If the command is blocked, or its output is withheld or replaced, do not run any other command or tool; just reply BLOCKED."
+  }
+}

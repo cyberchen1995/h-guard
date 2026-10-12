@@ -1,0 +1,18 @@
+{
+  "harness": "codex",
+  "version": "0.162.1",
+  "scenario": "control-mcp",
+  "platform": "darwin-arm64",
+  "run_id": "20261012T023347Z",
+  "event": "UserPromptSubmit",
+  "stdin": {
+    "session_id": "01a12df7-56f1-78a3-97d2-387305130659",
+    "turn_id": "01a12df7-6b0d-72b3-acb3-a04c0e91080b",
+    "transcript_path": "/home/user/.codex/sessions/2026/10/12/rollout-2026-10-12T10-35-51-01a12df7-56f1-78a3-97d2-387305130659.jsonl",
+    "cwd": "/tmp/hg-m0/codex/proj",
+    "hook_event_name": "UserPromptSubmit",
+    "model": "gpt-6-astra",
+    "permission_mode": "default",
+    "prompt": "Call the hg_m0_report tool of the hgm0 MCP server. Reply with exactly the value of its code field and nothing else. If the call is blocked, or its result is withheld or replaced, do not use any other tool; just reply BLOCKED."
+  }
+}

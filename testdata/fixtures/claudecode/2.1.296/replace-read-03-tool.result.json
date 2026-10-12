@@ -1,0 +1,43 @@
+{
+  "harness": "claudecode",
+  "version": "2.1.296",
+  "scenario": "replace-read",
+  "platform": "darwin-arm64",
+  "run_id": "20261012T023050Z",
+  "event": "tool.result",
+  "stdin": {
+    "protocol": "h-guard.ext/v1",
+    "harness": "claudecode",
+    "harness_version": "2.1.296",
+    "hook": "tool.result",
+    "session": {
+      "id": "bae770f6-d440-4d53-9dc8-53aa44fa91a8",
+      "cwd": "/tmp/hg-m0/claudecode/replace-read"
+    },
+    "data": {
+      "file_path": "/tmp/hg-m0/claudecode/replace-read/memo.txt",
+      "tool": "Read",
+      "tool_use_id": "toolu_01Jz4KmypRjp1EdxB1iNWTXy"
+    },
+    "result": {
+      "ref": 1,
+      "result": {
+        "type": "text",
+        "file": {
+          "filePath": "/tmp/hg-m0/claudecode/replace-read/memo.txt",
+          "content": "HGCANARY-eb1187149e34\n",
+          "numLines": 2,
+          "startLine": 1,
+          "totalLines": 2
+        }
+      },
+      "text": "1\tHGCANARY-eb1187149e34\n2\t",
+      "isReadOnly": true
+    }
+  },
+  "reply": {
+    "protocol": "h-guard.ext/v1",
+    "action": "deny",
+    "message": "[h-guard replaced] h-guard M0 test: deny"
+  }
+}
