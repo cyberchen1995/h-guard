@@ -9,7 +9,8 @@ rm -rf "${RAW:?}/codex/interactive"
 mkdir -p "$dir/.codex"
 [[ -d "$dir/.git" ]] || (cd "$dir" && git init -q)
 write_manifest codex interactive "$VERSION"
-hooks_json codex interactive record record record "" > "$dir/.codex/hooks.json"
+# 只拦下含 HG-DROP-ME 的提示词（清单 C3），其余全部只记录
+hooks_json codex interactive record record block-prompt "HG-DROP-ME" > "$dir/.codex/hooks.json"
 cat <<EOF
 在新的终端标签页里执行：
 

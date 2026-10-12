@@ -202,6 +202,23 @@ facts_header() {
     > "$WORK/$1-facts.tsv"
 }
 
+# HG_M0_ONLY：空格分隔的场景名。设置时只重跑这些场景，事实表里其他场景的行保留，免得为排查一两个
+# 场景重跑整轮（门槛检查沿用同一 HG_M0_WORK 里已有的记录）。
+# selected NAME：本轮是否运行该场景
+selected() { [[ -z "${HG_M0_ONLY:-}" || " $HG_M0_ONLY " == *" $1 "* ]]; }
+
+# facts_begin HARNESS：开始一轮录制的事实表。全量运行时新建；只重跑部分场景时删掉这些场景的旧行
+facts_begin() {
+  local f="$WORK/$1-facts.tsv" name
+  if [[ -z "${HG_M0_ONLY:-}" || ! -f "$f" ]]; then
+    facts_header "$1"
+    return 0
+  fi
+  for name in $HG_M0_ONLY; do
+    awk -F '\t' -v n="$name" 'NR == 1 || $1 != n' "$f" > "$f.new" && mv -f "$f.new" "$f"
+  done
+}
+
 # record_facts HARNESS SCENARIO EXIT_CODE RESULT_FILE SECRET TOOLS LOG_FILE...：采集一个场景的事实。
 # TOOLS 是目标工具（逗号分隔的 jq 正则，可为空），工具输出、回复与调用次数只算目标工具的（评审 C2）。
 # LOG_FILE 是 stderr、提示行等可能显示 hook 原因的文件，可以有多个。

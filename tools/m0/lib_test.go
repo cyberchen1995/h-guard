@@ -247,3 +247,28 @@ func TestBuildToolsRebuildsAStaleBinary(t *testing.T) {
 		t.Error("an up-to-date binary must be kept")
 	}
 }
+
+func TestOnlyRerunsSelectedScenariosAndKeepsOtherFacts(t *testing.T) {
+	work := newWork(t)
+	facts := filepath.Join(work, "codex-facts.tsv")
+	writeFile(t, facts, "scenario\tx\na\t1\nb\t2\n", 0o644)
+	sh(t, work, `HG_M0_ONLY="b c" facts_begin codex`)
+	b, err := os.ReadFile(facts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(b) != "scenario\tx\na\t1\n" {
+		t.Errorf("facts after a selective rerun begins =\n%s", b)
+	}
+	if got := sh(t, work, `for n in a b c; do if HG_M0_ONLY="b c" selected "$n"; then echo "$n"; fi; done | tr '\n' ' '`); got != "b c" {
+		t.Errorf("selected = %q, want b c", got)
+	}
+	if got := sh(t, work, `selected a && echo yes`); got != "yes" {
+		t.Errorf("without HG_M0_ONLY every scenario is selected, got %q", got)
+	}
+	// 不选时重新开始事实表
+	sh(t, work, `facts_begin codex`)
+	if b, _ := os.ReadFile(facts); !strings.HasPrefix(string(b), "scenario\texit_code") || strings.Count(string(b), "\n") != 1 {
+		t.Errorf("full run must start a fresh facts table, got:\n%s", b)
+	}
+}
