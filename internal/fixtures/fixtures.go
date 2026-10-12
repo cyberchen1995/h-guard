@@ -126,10 +126,12 @@ func LocalPathRules(home string, workdirs []string) []Replacement {
 		if wd == "" {
 			continue
 		}
-		rules = append(rules,
-			Replacement{Old: wd, New: WorkdirPlaceholder},
-			Replacement{Old: ClaudeSlug(wd), New: ClaudeSlug(WorkdirPlaceholder)},
-		)
+		for _, p := range pathAliases(wd) {
+			rules = append(rules,
+				Replacement{Old: p, New: WorkdirPlaceholder},
+				Replacement{Old: ClaudeSlug(p), New: ClaudeSlug(WorkdirPlaceholder)},
+			)
+		}
 	}
 	if home != "" {
 		rules = append(rules,
@@ -138,6 +140,44 @@ func LocalPathRules(home string, workdirs []string) []Replacement {
 		)
 	}
 	return rules
+}
+
+// pathAliases 返回 p 本身，以及 macOS 上同一位置的另一种写法：/var、/tmp 是 /private/var、/private/tmp 的
+// 符号链接，记录里两种写法都可能出现。
+func pathAliases(p string) []string {
+	out := []string{p}
+	for _, pre := range []string{"/var/", "/tmp/"} {
+		switch {
+		case strings.HasPrefix(p, "/private"+pre):
+			out = append(out, strings.TrimPrefix(p, "/private"))
+		case strings.HasPrefix(p, pre):
+			out = append(out, "/private"+p)
+		}
+	}
+	return out
+}
+
+// leakPatterns 是样本中不应出现的本机路径写法：macOS 临时目录及其 Claude Code 项目目录名、
+// /private/tmp、macOS 与 Windows 的用户目录（JSON 中 Windows 路径的反斜杠是转义后的写法）。
+var leakPatterns = []string{
+	"/var/folders/", "-var-folders-", "/private/var/", "-private-var-", "/private/tmp/", "-private-tmp-",
+	"/Users/", "-Users-", `\\Users\\`,
+}
+
+// LeakCheck 检查样本内容中是否残留本机路径。home 是本机家目录，它和它的 Claude Code 项目目录名也算泄露。
+// 返回的错误只说明类别，不含路径本身。
+func LeakCheck(b []byte, home string) error {
+	if home != "" && home != HomePlaceholder {
+		if bytes.Contains(b, []byte(home)) || bytes.Contains(b, []byte(ClaudeSlug(home))) {
+			return errors.New("fixtures: contains the local home directory or its Claude Code project name")
+		}
+	}
+	for _, p := range leakPatterns {
+		if bytes.Contains(b, []byte(p)) {
+			return fmt.Errorf("fixtures: contains a local path (%s)", strings.Trim(p, `-/\`))
+		}
+	}
+	return nil
 }
 
 const lockFile = ".import.lock"

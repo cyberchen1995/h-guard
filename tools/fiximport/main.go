@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/cyberchen1995/h-guard/internal/fixtures"
@@ -21,8 +22,8 @@ func (m *multiFlag) Set(v string) error { *m = append(*m, v); return nil }
 func main() {
 	raw := flag.String("raw", "", "一个场景的 hookrec 记录目录，含 "+fixtures.ManifestFile+"（必填）")
 	dest := flag.String("dest", "testdata/fixtures", "样本根目录")
-	workdir := flag.String("workdir", "", "录制用的临时目录，替换为 "+fixtures.WorkdirPlaceholder)
-	var extra multiFlag
+	var workdirs, extra multiFlag
+	flag.Var(&workdirs, "workdir", "录制用的临时目录，替换为 "+fixtures.WorkdirPlaceholder+"；可重复，链接路径与物理路径都要给")
 	flag.Var(&extra, "replace", "额外替换，格式 OLD=NEW，可重复")
 	flag.Parse()
 	if *raw == "" {
@@ -37,11 +38,11 @@ func main() {
 	if err != nil {
 		fail(err)
 	}
-	workdirs, err := workdirVariants(*workdir)
+	variants, err := workdirVariants(workdirs)
 	if err != nil {
 		fail(err)
 	}
-	rules := fixtures.LocalPathRules(home, workdirs)
+	rules := fixtures.LocalPathRules(home, variants)
 	for _, kv := range extra {
 		oldValue, newValue, ok := strings.Cut(kv, "=")
 		if !ok || oldValue == "" {
@@ -58,18 +59,26 @@ func main() {
 	}
 }
 
-// workdirVariants 返回录制目录的绝对路径，以及解析符号链接后的写法（两者不同时）。
-func workdirVariants(wd string) ([]string, error) {
-	if wd == "" {
-		return nil, nil
+// workdirVariants 返回每个录制目录的绝对路径，以及解析符号链接后的写法（两者不同时），去重。
+func workdirVariants(wds []string) ([]string, error) {
+	var out []string
+	add := func(p string) {
+		if !slices.Contains(out, p) {
+			out = append(out, p)
+		}
 	}
-	abs, err := filepath.Abs(wd)
-	if err != nil {
-		return nil, err
-	}
-	out := []string{abs}
-	if real, err := filepath.EvalSymlinks(abs); err == nil && real != abs {
-		out = append(out, real)
+	for _, wd := range wds {
+		if wd == "" {
+			continue
+		}
+		abs, err := filepath.Abs(wd)
+		if err != nil {
+			return nil, err
+		}
+		add(abs)
+		if real, err := filepath.EvalSymlinks(abs); err == nil {
+			add(real)
+		}
 	}
 	return out, nil
 }

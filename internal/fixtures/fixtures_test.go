@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -13,10 +14,10 @@ func TestSanitizeLongestFirstAndEscaped(t *testing.T) {
 	rules := []Replacement{
 		{Old: "/var/x/hg", New: WorkdirPlaceholder},
 		{Old: "/private/var/x/hg", New: WorkdirPlaceholder},
-		{Old: `C:\Users\cc`, New: `C:\Users\user`},
+		{Old: `C:\Users\alice`, New: `C:\Users\user`},
 		{Old: "", New: "ignored"},
 	}
-	in := []byte(`{"a":"/private/var/x/hg/proj","b":"/var/x/hg/proj","c":"C:\\Users\\cc\\x"}`)
+	in := []byte(`{"a":"/private/var/x/hg/proj","b":"/var/x/hg/proj","c":"C:\\Users\\alice\\x"}`)
 	want := `{"a":"/tmp/hg-m0/proj","b":"/tmp/hg-m0/proj","c":"C:\\Users\\user\\x"}`
 	if got := string(Sanitize(in, rules)); got != want {
 		t.Errorf("Sanitize =\n %s\nwant\n %s", got, want)
@@ -25,7 +26,7 @@ func TestSanitizeLongestFirstAndEscaped(t *testing.T) {
 
 func TestClaudeSlug(t *testing.T) {
 	tests := map[string]string{
-		"/Users/cc/MyCode/h-guard":            "-Users-cc-MyCode-h-guard",
+		"/Users/alice/MyCode/h-guard":         "-Users-alice-MyCode-h-guard",
 		"/private/var/folders/ab/T/hg-m0.Xy1": "-private-var-folders-ab-T-hg-m0-Xy1",
 	}
 	for in, want := range tests {
@@ -36,11 +37,11 @@ func TestClaudeSlug(t *testing.T) {
 }
 
 func TestLocalPathRulesSanitize(t *testing.T) {
-	rules := LocalPathRules("/Users/cc", []string{
+	rules := LocalPathRules("/Users/alice", []string{
 		"/var/folders/ab/T/hg-m0.X1",
 		"/private/var/folders/ab/T/hg-m0.X1",
 	})
-	in := []byte(`{"transcript_path":"/Users/cc/.claude/projects/-private-var-folders-ab-T-hg-m0-X1-claudecode-s/1.jsonl",` +
+	in := []byte(`{"transcript_path":"/Users/alice/.claude/projects/-private-var-folders-ab-T-hg-m0-X1-claudecode-s/1.jsonl",` +
 		`"cwd":"/private/var/folders/ab/T/hg-m0.X1/claudecode/s","other":"/var/folders/ab/T/hg-m0.X1/raw"}`)
 	want := `{"transcript_path":"/home/user/.claude/projects/-tmp-hg-m0-claudecode-s/1.jsonl",` +
 		`"cwd":"/tmp/hg-m0/claudecode/s","other":"/tmp/hg-m0/raw"}`
@@ -103,7 +104,7 @@ func TestImport(t *testing.T) {
 	t0 := time.Date(2026, 10, 10, 1, 0, 0, 0, time.UTC)
 	// 文件名顺序与时间顺序相反，导入应按接收时间排序；manifest.json 不是记录
 	writeRaw(t, raw, "a.json", RawRecord{Event: "tool.check", ReceivedAt: t0.Add(time.Second),
-		Stdin: json.RawMessage(`{"hook":"tool.check","session":{"cwd":"/Users/cc/w"}}`)})
+		Stdin: json.RawMessage(`{"hook":"tool.check","session":{"cwd":"/Users/alice/w"}}`)})
 	writeRaw(t, raw, "b.json", RawRecord{Event: "prompt.submit", ReceivedAt: t0,
 		Stdin: json.RawMessage(`{"hook":"prompt.submit","data":{"text":"<task-notification>x"}}`)})
 	writeManifest(t, raw, Manifest{RunID: "r1", Harness: "claudecode", Version: "2.1.296", Platform: "darwin-arm64", Scenario: "s"})
@@ -112,7 +113,7 @@ func TestImport(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	written, err := Import(raw, dest, m.Meta(), []Replacement{{Old: "/Users/cc", New: HomePlaceholder}})
+	written, err := Import(raw, dest, m.Meta(), []Replacement{{Old: "/Users/alice", New: HomePlaceholder}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +131,7 @@ func TestImport(t *testing.T) {
 		t.Errorf("HTML characters must not be escaped:\n%s", first)
 	}
 	second, _ := os.ReadFile(written[1])
-	if bytes.Contains(second, []byte("/Users/cc")) || !bytes.Contains(second, []byte("/home/user/w")) {
+	if bytes.Contains(second, []byte("/Users/alice")) || !bytes.Contains(second, []byte("/home/user/w")) {
 		t.Errorf("path not sanitized:\n%s", second)
 	}
 	var f Fixture
@@ -253,6 +254,35 @@ func TestLoadMissingRoot(t *testing.T) {
 }
 
 // TestRecordedFixtures 校验 testdata/fixtures 下的真实样本：字段齐全、不含本机家目录。
+func TestLocalPathRulesAddsDarwinAliases(t *testing.T) {
+	// 录制脚本只知道物理路径；记录里也可能出现 /var、/tmp 的写法与对应的 Claude Code 项目目录名
+	rules := LocalPathRules("", []string{"/private/var/folders/ab/T/hg-m0.X1", "/private/tmp/w1"})
+	in := []byte(`{"a":"/var/folders/ab/T/hg-m0.X1/claudecode","b":"-var-folders-ab-T-hg-m0-X1-claudecode","c":"/tmp/w1/x"}`)
+	got := string(Sanitize(in, rules))
+	for _, leak := range []string{"/var/folders", "-var-folders-", "/tmp/w1"} {
+		if strings.Contains(got, leak) {
+			t.Errorf("Sanitize left %q: %s", leak, got)
+		}
+	}
+}
+
+func TestLeakCheck(t *testing.T) {
+	home := "/Users/alice"
+	for _, leak := range []string{
+		`"/Users/alice/x"`, `"-Users-alice-proj"`, `"/var/folders/ab/T/x"`, `"/private/var/folders/ab/T/x"`,
+		`"-private-var-folders-ab-T-x"`, `"-var-folders-ab"`, `"/private/tmp/claude-501/x"`, `"/Users/bob/x"`,
+		`"C:\\Users\\bob\\x"`,
+	} {
+		if LeakCheck([]byte(leak), home) == nil {
+			t.Errorf("LeakCheck(%s) = nil, want a leak", leak)
+		}
+	}
+	clean := []byte(`{"cwd":"/tmp/hg-m0/claudecode/s","home":"/home/user/.claude","slug":"-tmp-hg-m0-claudecode-s"}`)
+	if err := LeakCheck(clean, home); err != nil {
+		t.Errorf("LeakCheck(clean) = %v", err)
+	}
+}
+
 func TestRecordedFixtures(t *testing.T) {
 	all, err := Load(filepath.Join("..", "..", "testdata", "fixtures"))
 	if err != nil {
@@ -270,8 +300,8 @@ func TestRecordedFixtures(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if home != "" && bytes.Contains(b, []byte(home)) {
-			t.Errorf("%s contains the local home directory", f.Path)
+		if err := LeakCheck(b, home); err != nil {
+			t.Errorf("%s: %v", f.Path, err)
 		}
 	}
 }
