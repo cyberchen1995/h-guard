@@ -270,14 +270,37 @@ judge_facts() {
   "$BIN/m0verdict" -harness "$1" -facts "$WORK/$1-facts.tsv" | tee "$WORK/$1-verdict.md" >&2
 }
 
-# import_all HARNESS：把该 harness 的全部场景整组导入 testdata/fixtures；版本、平台与批次取自各场景的 manifest
+# quarantine_foreign HARNESS SCENARIO：把工作目录不在录制目录（$WORK 或 $HG_M0_WORK）下的记录移到
+# $WORK/quarantine/，不导入。harness 自己的后台 agent（如 Codex 的记忆整理）也会触发录制用的 hook，
+# 这些记录可能含维护者的私人内容，不能进入公开样本。
+quarantine_foreign() {
+  local key=session.cwd q="$WORK/quarantine/$1/$2" f
+  if [[ "$1" == codex ]]; then key=cwd; fi
+  for f in "$RAW/$1/$2"/*-*.json; do
+    [[ -e "$f" ]] || continue
+    # shellcheck disable=SC2016 # $key 等由 jq 解释
+    if jq -e --arg key "$key" --arg a "$WORK/" --arg b "$WORK_LINK/" \
+      '((.stdin | objects | getpath($key | split("."))) // "") as $c
+       | $c != "" and (($c | startswith($a)) or ($c | startswith($b)) | not)' "$f" >/dev/null 2>&1; then
+      mkdir -p "$q"
+      mv -f "$f" "$q/"
+      log "隔离不在录制目录内的记录（不导入）：$1/$2/$(basename "$f")"
+    fi
+  done
+}
+
+# import_all HARNESS：把该 harness 的全部场景整组导入 testdata/fixtures；版本、平台与批次取自各场景的 manifest。
+# 另外替换 Claude Code 的临时目录 /private/tmp/claude-<uid>（任务输出等文件的路径会出现在记录里）
 import_all() {
-  local d
+  local d uid
+  uid="$(id -u)"
   for d in "$RAW/$1"/*/; do
     if [[ ! -f "$d/manifest.json" ]]; then
       log "跳过没有 manifest 的目录 $d"
       continue
     fi
-    "$BIN/fiximport" -raw "$d" -dest "$REPO_ROOT/testdata/fixtures" -workdir "$WORK_LINK" -workdir "$WORK"
+    quarantine_foreign "$1" "$(basename "$d")"
+    "$BIN/fiximport" -raw "$d" -dest "$REPO_ROOT/testdata/fixtures" -workdir "$WORK_LINK" -workdir "$WORK" \
+      -replace "/private/tmp/claude-$uid=/tmp/claude-uid" -replace "/tmp/claude-$uid=/tmp/claude-uid"
   done
 }

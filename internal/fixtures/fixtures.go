@@ -441,6 +441,24 @@ func Validate(f Fixture) error {
 	return nil
 }
 
+// cwdKeys 是各 harness 记录中工作目录所在的字段。
+var cwdKeys = map[string]string{"claudecode": "session.cwd", "codex": "cwd"}
+
+// CwdOf 返回样本记录的工作目录；harness 未知或没有该字段时返回空串。
+func CwdOf(f Fixture) string {
+	key, ok := cwdKeys[f.Harness]
+	if !ok {
+		return ""
+	}
+	var stdin map[string]any
+	if json.Unmarshal(f.Stdin, &stdin) != nil {
+		return ""
+	}
+	v, _ := lookup(stdin, key)
+	s, _ := v.(string)
+	return s
+}
+
 // lookup 按点号路径取值。
 func lookup(m map[string]any, path string) (any, bool) {
 	var cur any = m

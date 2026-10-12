@@ -283,6 +283,23 @@ func TestLeakCheck(t *testing.T) {
 	}
 }
 
+func TestCwdOf(t *testing.T) {
+	tests := []struct {
+		f    Fixture
+		want string
+	}{
+		{Fixture{Harness: "codex", Stdin: json.RawMessage(`{"cwd":"/tmp/hg-m0/codex/proj"}`)}, "/tmp/hg-m0/codex/proj"},
+		{Fixture{Harness: "claudecode", Stdin: json.RawMessage(`{"session":{"cwd":"/tmp/hg-m0/claudecode/s"}}`)}, "/tmp/hg-m0/claudecode/s"},
+		{Fixture{Harness: "claudecode", Stdin: json.RawMessage(`{"session":{}}`)}, ""},
+		{Fixture{Harness: "other", Stdin: json.RawMessage(`{"cwd":"/x"}`)}, ""},
+	}
+	for _, tt := range tests {
+		if got := CwdOf(tt.f); got != tt.want {
+			t.Errorf("CwdOf(%s %s) = %q, want %q", tt.f.Harness, tt.f.Stdin, got, tt.want)
+		}
+	}
+}
+
 func TestRecordedFixtures(t *testing.T) {
 	all, err := Load(filepath.Join("..", "..", "testdata", "fixtures"))
 	if err != nil {
@@ -302,6 +319,10 @@ func TestRecordedFixtures(t *testing.T) {
 		}
 		if err := LeakCheck(b, home); err != nil {
 			t.Errorf("%s: %v", f.Path, err)
+		}
+		// 样本只能来自录制目录；harness 自己的后台 agent（如 Codex 的记忆整理）的记录可能含私人内容
+		if cwd := CwdOf(f); !strings.HasPrefix(cwd, WorkdirPlaceholder+"/") {
+			t.Errorf("%s: working directory is outside the recording directory", f.Path)
 		}
 	}
 }

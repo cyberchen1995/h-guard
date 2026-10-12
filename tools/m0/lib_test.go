@@ -4,6 +4,7 @@ package m0
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -222,6 +223,11 @@ func TestImportAllPassesLinkAndPhysicalWorkdir(t *testing.T) {
 			t.Errorf("fiximport args lack -workdir %s:\n%s", want, args)
 		}
 	}
+	// Claude Code 的任务输出等临时文件在 /private/tmp/claude-<uid>/ 下，样本里不能留下这个本机目录
+	want := fmt.Sprintf("-replace\n/private/tmp/claude-%d=/tmp/claude-uid\n", os.Getuid())
+	if !strings.Contains(string(args), want) {
+		t.Errorf("fiximport args lack %q:\n%s", want, args)
+	}
 }
 
 func TestBuildToolsRebuildsAStaleBinary(t *testing.T) {
@@ -300,4 +306,30 @@ func mustAbs(t *testing.T, p string) string {
 		t.Fatal(err)
 	}
 	return abs
+}
+
+// TestImportAllQuarantinesRecordsFromOutsideTheWorkdir：harness 自己的后台 agent（如 Codex 的记忆整理）也会
+// 触发录制用的 hook，它们的记录可能含维护者的私人内容，不能进入公开样本。
+func TestImportAllQuarantinesRecordsFromOutsideTheWorkdir(t *testing.T) {
+	work := newWork(t)
+	writeFile(t, filepath.Join(work, "raw", "codex", "s", "manifest.json"), "{}", 0o644)
+	record(t, work, "codex", "s", "1-UserPromptSubmit", map[string]any{"cwd": filepath.Join(work, "codex", "proj"), "prompt": "ok"}, nil)
+	record(t, work, "codex", "s", "2-UserPromptSubmit", map[string]any{"cwd": "/somewhere/else/.codex/memories", "prompt": "private"}, nil)
+	record(t, work, "claudecode", "s", "1-prompt.submit", map[string]any{"session": map[string]any{"cwd": filepath.Join(work, "claudecode", "s")}}, pass)
+	record(t, work, "claudecode", "s", "2-prompt.submit", map[string]any{"session": map[string]any{"cwd": "/elsewhere"}}, pass)
+	writeFile(t, filepath.Join(work, "raw", "claudecode", "s", "manifest.json"), "{}", 0o644)
+	sh(t, work, `import_all codex; import_all claudecode`)
+	for _, kept := range []string{"raw/codex/s/1-UserPromptSubmit.json", "raw/claudecode/s/1-prompt.submit.json"} {
+		if _, err := os.Stat(filepath.Join(work, kept)); err != nil {
+			t.Errorf("%s must stay: %v", kept, err)
+		}
+	}
+	for _, moved := range []string{"codex/s/2-UserPromptSubmit.json", "claudecode/s/2-prompt.submit.json"} {
+		if _, err := os.Stat(filepath.Join(work, "raw", moved)); err == nil {
+			t.Errorf("raw/%s comes from outside the workdir and must not be imported", moved)
+		}
+		if _, err := os.Stat(filepath.Join(work, "quarantine", moved)); err != nil {
+			t.Errorf("quarantine/%s missing: %v", moved, err)
+		}
+	}
 }
