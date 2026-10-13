@@ -209,11 +209,12 @@ func Compile(patterns []string, env Env) (*Matcher, error) {
 			m.incomplete = m.incomplete || !complete
 		}
 		for _, s := range srcs {
-			src := "^" + s + "$"
+			// 路径里的目录名可以含换行符，`.` 必须能匹配它（s 标志），否则 `**/`、`/**` 会漏掉这类路径（fail-open）。
+			flags := "(?s)"
 			if env.FoldCase {
-				src = "(?i)" + src
+				flags = "(?is)"
 			}
-			re, err := regexp.Compile(src)
+			re, err := regexp.Compile(flags + "^" + s + "$")
 			if err != nil {
 				return nil, fmt.Errorf("pattern %q: %w", p, err)
 			}

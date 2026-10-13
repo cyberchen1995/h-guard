@@ -306,3 +306,35 @@ func TestLargeProtectedDirectoryIsReportedIncomplete(t *testing.T) {
 		}
 	}
 }
+
+// 路径里的目录名可以含换行符：通配的 `.` 默认不匹配换行，这类路径会漏掉（fail-open）。
+// 字面匹配，不访问文件系统。
+func TestNewlineInPathIsMatchedByWildcards(t *testing.T) {
+	patterns := []string{"**/.claude/settings.json", "/x/cfg/**", "/x/**/y"}
+	env := paths.Env{Home: "/home/u", Lexical: true}
+	m, err := paths.Compile(patterns, env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{
+		"/home/u/a\nb/.claude/settings.json",
+		"/x/cfg/sub\ndir/f",
+		"/x/a\nb/y",
+	} {
+		if !m.Match(paths.Resolve(path, env)) {
+			t.Errorf("Match(%q) = false, want true", path)
+		}
+	}
+	if m.Match(paths.Resolve("/home/u/a\nb/.claude/settings.json.bak", env)) {
+		t.Error("a path with a newline matched a pattern it should not")
+	}
+	// 不区分大小写时两个标志都要生效
+	env.FoldCase = true
+	fm, err := paths.Compile(patterns, env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !fm.Match(paths.Resolve("/home/u/A\nB/.Claude/Settings.JSON", env)) {
+		t.Error("case-insensitive matcher missed a path with a newline")
+	}
+}
