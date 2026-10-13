@@ -18,6 +18,7 @@ const (
 	FallbackTruncated        = "evidence_truncated"
 	FallbackRegexTimeout     = "regex_timeout"
 	FallbackBudget           = "local_budget_exceeded"
+	FallbackPathUnresolved   = "path_unresolved"
 )
 
 // MaxRadius 是影响范围的最大值（blast_radius 共 4 级，0..3）。
@@ -28,6 +29,7 @@ type Rule struct {
 	ID            string
 	Action        guard.Decision // ask 或 deny
 	Bypassable    bool           // 用户明确要求能否放行
+	Vetoable      bool           // 模型有把握的否定能否撤销它的本地命中（与 Bypassable 相互独立）
 	RadiusFloor   float64        // 已合并校准档案的覆盖值
 	RequiresJudge bool           // 模型关闭时命中不打断
 	Asked         bool           // 它的问题在这次判断请求里
@@ -175,8 +177,8 @@ func Decide(in Input) Result {
 		p := *a.P
 		existing, hit := byRule[id]
 		if p < in.Thresholds.Hit {
-			// 模型有把握的否定可以否决正则命中；证据被截断或正则超时时不否决
-			if hit && p <= in.Thresholds.Veto && !in.Truncated && !existing.TimedOut {
+			// 模型有把握的否定可以否决正则命中；规则声明不可否决（护栏自我保护）、证据被截断或正则超时时不否决
+			if hit && p <= in.Thresholds.Veto && !in.Truncated && !existing.TimedOut && rule.Vetoable {
 				delete(byRule, id)
 				res.Vetoed = append(res.Vetoed, id)
 			}

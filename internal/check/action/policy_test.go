@@ -12,10 +12,13 @@ import (
 )
 
 var testRules = map[string]Rule{
-	"catastrophic":     {ID: "catastrophic", Action: guard.DecisionDeny, Bypassable: true},
+	"catastrophic":     {ID: "catastrophic", Action: guard.DecisionDeny, Bypassable: true, Vetoable: true},
 	"guard_tampering":  {ID: "guard_tampering", Action: guard.DecisionAsk, Asked: true},
-	"recursive_delete": {ID: "recursive_delete", Action: guard.DecisionAsk, Bypassable: true, RadiusFloor: 1.25, RequiresJudge: true, Asked: true},
-	"publish":          {ID: "publish", Action: guard.DecisionAsk, Bypassable: true, RequiresJudge: true, Asked: true},
+	"recursive_delete": {ID: "recursive_delete", Action: guard.DecisionAsk, Bypassable: true, Vetoable: true, RadiusFloor: 1.25, RequiresJudge: true, Asked: true},
+	"publish":          {ID: "publish", Action: guard.DecisionAsk, Bypassable: true, Vetoable: true, RequiresJudge: true, Asked: true},
+	// 两条独立的轴：只是不能授权、只是不能否决
+	"no_bypass": {ID: "no_bypass", Action: guard.DecisionAsk, Vetoable: true, RequiresJudge: true, Asked: true},
+	"no_veto":   {ID: "no_veto", Action: guard.DecisionAsk, Bypassable: true, RequiresJudge: true, Asked: true},
 }
 
 var jev = config.Thresholds{Hit: 0.5, Veto: 0.2, Requested: 0.7}
@@ -115,6 +118,18 @@ func TestDecide(t *testing.T) {
 			Input{Regex: regex("recursive_delete"), Judge: JudgeAnswered, Answers: answers(map[string]float64{"recursive_delete": 0.9}, 0, 1.25),
 				Thresholds: config.Thresholds{Hit: 0.5, Veto: 0.2, Requested: 0.7, RadiusFloor: map[string]float64{"recursive_delete": 1.5}}},
 			guard.DecisionPass, BranchBelowRadius, nil},
+		{"guard tampering cannot be vetoed",
+			Input{Regex: regex("guard_tampering"), Judge: JudgeAnswered, Answers: answers(map[string]float64{"guard_tampering": 0}, 0, 0)},
+			guard.DecisionAsk, BranchDangerous, nil},
+		{"a rule that cannot be authorized can still be vetoed",
+			Input{Regex: regex("no_bypass"), Judge: JudgeAnswered, HaveRequests: true, Answers: answers(nil, 1, 3)},
+			guard.DecisionPass, BranchNone, nil},
+		{"a rule that cannot be vetoed keeps its hit",
+			Input{Regex: regex("no_veto"), Judge: JudgeAnswered, Answers: answers(nil, 0, 3)},
+			guard.DecisionAsk, BranchDangerous, nil},
+		{"a rule that cannot be vetoed can still be authorized",
+			Input{Regex: regex("no_veto"), Judge: JudgeAnswered, HaveRequests: true, Answers: answers(nil, 1, 3)},
+			guard.DecisionPass, BranchRequested, nil},
 		{"guard tampering ignores the radius",
 			Input{Regex: regex("guard_tampering"), Judge: JudgeAnswered, Answers: answers(map[string]float64{"guard_tampering": 0.9}, 0, 0)},
 			guard.DecisionAsk, BranchDangerous, nil},
@@ -195,6 +210,11 @@ func TestBuildState(t *testing.T) {
 	reqs := state["user_requests"].([]any)
 	if len(reqs) != 2 || reqs[0] != "newest" || reqs[1] != "api_key=[redacted]" {
 		t.Errorf("requests = %v", reqs)
+	}
+	// cwd 里本地能识别的凭据同样遮蔽（评审 M2-06）
+	state, _ = BuildState(StateInput{Cwd: "/w/sk-reviewM2SyntheticCredential12345/app", Command: "ls", MaxCommandChars: 60, MaxRequestChars: 10})
+	if cwd := state["call"].(map[string]any)["cwd"].(string); strings.Contains(cwd, "sk-reviewM2SyntheticCredential12345") || !strings.HasPrefix(cwd, "/w/") {
+		t.Errorf("cwd = %q", cwd)
 	}
 	_, cut = BuildState(StateInput{Command: long, MaxCommandChars: 60, MaxRequestChars: 10})
 	if !cut {

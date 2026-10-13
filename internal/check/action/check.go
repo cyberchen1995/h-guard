@@ -1,5 +1,6 @@
 // Package action 是 action 检查（spec §5）：命令检测（pkg/detect/command）+ 规则包（internal/rules）+
-// 判断后端（pkg/judge）+ 纯函数策略（Decide）。M1 处理 exec 动作；文件动作（第 2 档）在 M3 加入。
+// 判断后端（pkg/judge）+ 纯函数策略（Decide）。exec 动作走完整流程；文件动作只按路径匹配（pkg/detect/paths），
+// M2 只有内置的护栏自我保护作用于文件动作，其余文件规则（第 2 档）在 M3 加入。
 package action
 
 import (
@@ -13,6 +14,8 @@ import (
 	"github.com/cyberchen1995/h-guard/internal/i18n"
 	"github.com/cyberchen1995/h-guard/internal/rules"
 	"github.com/cyberchen1995/h-guard/pkg/detect/command"
+	"github.com/cyberchen1995/h-guard/pkg/detect/paths"
+	"github.com/cyberchen1995/h-guard/pkg/detect/secrets"
 	"github.com/cyberchen1995/h-guard/pkg/guard"
 	"github.com/cyberchen1995/h-guard/pkg/judge"
 )
@@ -27,6 +30,8 @@ const ProbeCommand = "h-guard-probe"
 type Judge struct {
 	Backend     judge.Backend // 可调用的后端
 	Unavailable string        // 模型已开启但不能调用的原因码（如 judge_consent_missing）；非空时不调用
+	// Thresholds 是这次使用的阈值，由入口按校准档案与指纹选出（spec §8.3）；nil 时用保守默认值。
+	Thresholds *config.Thresholds
 }
 
 // Check 是 action 检查。字段在构造后只读，可并发使用。
@@ -36,28 +41,45 @@ type Check struct {
 	Catalog *i18n.Catalog
 	Locale  string
 	Judge   Judge
+	// Paths 是解析文件动作目标所需的环境：主目录、{config}、{cache} 的值与大小写规则；Cwd 取自事件。
+	Paths paths.Env
 }
 
 func (c *Check) Name() string { return Name }
 
-// Applies 报告事件是否含 exec 动作。
+// Applies 报告事件是否含 exec 动作或文件动作。
 func (c *Check) Applies(ev guard.Event) bool {
 	if ev.Kind != guard.EventAction {
 		return false
 	}
-	return slices.ContainsFunc(ev.Actions, func(a guard.Action) bool { return a.Kind == guard.ActionExec && a.Exec != nil })
+	return slices.ContainsFunc(ev.Actions, func(a guard.Action) bool { return isExec(a) || isFile(a) })
 }
 
-// Evaluate 逐个评估 exec 动作，取最严（spec §5.1 多动作）。每个动作完成全部判断后立即提交；
+func isExec(a guard.Action) bool { return a.Kind == guard.ActionExec && a.Exec != nil }
+
+func isFile(a guard.Action) bool {
+	switch a.Kind {
+	case guard.ActionFileRead, guard.ActionFileWrite, guard.ActionFileDelete, guard.ActionFileRename:
+		return a.File != nil
+	}
+	return false
+}
+
+// Evaluate 逐个评估动作，取最严（spec §5.1 多动作）。每个动作完成全部判断后立即提交；
 // 灾难性 deny 一经命中就提交，之后的预算耗尽、出错或 panic 都不能让它变宽（spec §3.3）。
 func (c *Check) Evaluate(ctx context.Context, ev guard.Event, commit func(guard.Verdict)) (guard.Verdict, error) {
 	out := guard.Verdict{Decision: guard.DecisionPass}
 	first := true
 	for _, a := range ev.Actions {
-		if a.Kind != guard.ActionExec || a.Exec == nil {
+		var v guard.Verdict
+		switch {
+		case isExec(a):
+			v = c.evalExec(ctx, ev, a.Exec, commit)
+		case isFile(a):
+			v = c.evalFile(ctx, ev, a)
+		default:
 			continue
 		}
-		v := c.evalExec(ctx, ev, a.Exec, commit)
 		commit(v)
 		if first {
 			out, first = v, false
@@ -100,7 +122,7 @@ func (c *Check) evalExec(ctx context.Context, ev guard.Event, ex *guard.ExecActi
 	policyRules := map[string]Rule{}
 	var hits []RegexHit
 	judgeOn := c.Config.Judge.Enabled
-	th := c.Config.Thresholds()
+	th := c.thresholds()
 	committed := false
 	// deny 级规则先匹配：预算可能在任何一条规则处耗尽，确定的 deny 要尽早得出、尽早提交
 	ordered := slices.Clone(c.Rules.All())
@@ -113,7 +135,7 @@ func (c *Check) evalExec(ctx context.Context, ev guard.Event, ex *guard.ExecActi
 		}
 		_, hasQ := r.JudgeQuestion()
 		policyRules[r.ID] = Rule{
-			ID: r.ID, Action: r.Action, Bypassable: r.Bypassable(), RadiusFloor: r.RadiusFloor,
+			ID: r.ID, Action: r.Action, Bypassable: r.Bypassable(), Vetoable: r.Vetoable(), RadiusFloor: r.RadiusFloor,
 			RequiresJudge: r.RequiresJudge, Asked: judgeOn && hasQ,
 		}
 		res, err := r.MatchExec(ctx, exp)
@@ -178,6 +200,19 @@ func (c *Check) Questions() []judge.Question {
 	return questions(c.Rules, policyRules)
 }
 
+// QuestionSet 返回 set 的校准题集：作用于 exec、带题的全部规则（不论是否启用）+ 两个信号题。
+// 校准档案的指纹取内置规则包的题集（spec §8.3）：规则开关不改变它，改写内置题目或信号题的措辞会；
+// 用户自定义规则的题目不在指纹内，由 status 单独提示。
+func QuestionSet(set *rules.Set) []judge.Question {
+	var qs []judge.Question
+	for _, r := range set.All() {
+		if q, ok := r.JudgeQuestion(); ok && r.AppliesTo(guard.ActionExec) {
+			qs = append(qs, q)
+		}
+	}
+	return append(qs, requestedQuestion, radiusQuestion)
+}
+
 // questions 返回这次要问的题：被问规则的题（按 id 排序）+ 两个信号题。
 func questions(set *rules.Set, policyRules map[string]Rule) []judge.Question {
 	var qs []judge.Question
@@ -192,7 +227,16 @@ func questions(set *rules.Set, policyRules map[string]Rule) []judge.Question {
 	return append(qs, requestedQuestion, radiusQuestion)
 }
 
-// userRequests 取最近 window 条用户本人的指令，最新的在前（spec §5.4；automated 指令不参与）。
+// thresholds 返回这次使用的阈值：入口注入的，没有时用保守默认值（spec §8.3）。
+func (c *Check) thresholds() config.Thresholds {
+	if c.Judge.Thresholds != nil {
+		return *c.Judge.Thresholds
+	}
+	return config.ConservativeThresholds
+}
+
+// userRequests 取最近 window 条用户本人的指令，按时间先后排列、旧的在前（spec §5.4；automated 指令不参与）。
+// reqs 本身按时间先后排列。
 func userRequests(reqs []guard.Request, window int) []string {
 	var out []string
 	for i := len(reqs) - 1; i >= 0 && len(out) < window; i-- {
@@ -200,7 +244,72 @@ func userRequests(reqs []guard.Request, window int) []string {
 			out = append(out, reqs[i].Text)
 		}
 	}
+	slices.Reverse(out)
 	return out
+}
+
+// evalFile 按路径匹配作用于该文件动作的规则（spec §5.2、§5.5）：不调模型，不看用户授权与影响范围。
+// 硬规则不受档位限制，其余规则须当前档位覆盖该动作类型。file_rename 的源与目标都检查。
+// 目标解析失败、或受保护目录读不全时按已知的写法匹配，带 path_unresolved。
+func (c *Check) evalFile(ctx context.Context, ev guard.Event, a guard.Action) guard.Verdict {
+	env := c.Paths
+	env.Cwd = ev.Cwd
+	raw := []string{a.File.Path}
+	if a.Kind == guard.ActionFileRename && a.File.To != "" {
+		raw = append(raw, a.File.To)
+	}
+	var targets []paths.Resolved
+	unresolved := false
+	for _, p := range raw {
+		r := paths.Resolve(p, env)
+		unresolved = unresolved || r.Err != nil
+		targets = append(targets, r)
+	}
+	policyRules := map[string]Rule{}
+	var hits []RegexHit
+	var hitPaths []string
+	for _, r := range c.Rules.All() {
+		if !r.Enabled() || !r.AppliesTo(a.Kind) || (!r.Locked && !rules.TierCovers(c.Config.Action.Tier, a.Kind)) {
+			continue
+		}
+		if ctx.Err() != nil {
+			return c.budgetVerdict(policyRules, hits)
+		}
+		// 路径命中本身就是结论：RequiresJudge 只对命令规则有意义
+		policyRules[r.ID] = Rule{ID: r.ID, Action: r.Action, Bypassable: r.Bypassable(), Vetoable: r.Vetoable(), RadiusFloor: r.RadiusFloor}
+		hit := false
+		for i, t := range targets {
+			matched, complete := r.MatchFile(t, env)
+			// 受保护目录里的符号链接没有收集完整：照常按已知的模式判断，带 path_unresolved（评审 R2-02）
+			unresolved = unresolved || !complete
+			if matched {
+				hit = true
+				hitPaths = appendOnce(hitPaths, raw[i])
+			}
+		}
+		if hit {
+			hits = append(hits, RegexHit{Rule: r.ID})
+		}
+	}
+	in := Input{Rules: policyRules, Regex: hits, Judge: JudgeOff}
+	v := c.render(Decide(in), in)
+	// 改动受保护文件时，原因里写明是哪个文件（遮蔽凭据形状）
+	for i, rs := range v.Reasons {
+		if rs.Code == i18n.KeyActionGuardSelf {
+			shown := make([]string, len(hitPaths))
+			for j, p := range hitPaths {
+				shown[j] = secrets.Redact(p)
+			}
+			v.Reasons[i] = guard.Reason{Code: i18n.KeyActionGuardSelfFile, Params: map[string]string{
+				"rules": rs.Params["rules"],
+				"paths": strings.Join(shown, c.Catalog.Text(c.Locale, i18n.KeyListSeparator, nil)),
+			}}
+		}
+	}
+	if unresolved {
+		v.Fallbacks = appendOnce(v.Fallbacks, FallbackPathUnresolved)
+	}
+	return v
 }
 
 func budgetExceeded() guard.Verdict {

@@ -14,13 +14,13 @@ type StateInput struct {
 	Tool            string
 	Command         string
 	Cwd             string
-	Requests        []string // 用户本人的指令，最新的在前，已按窗口截取
+	Requests        []string // 用户本人的指令，按时间先后（旧的在前），已按窗口截取
 	MaxCommandChars int
 	MaxRequestChars int
 }
 
-// BuildState 组装 state（Python 版 build_state）：先遮蔽凭据，再对超长文本做中间截断。
-// truncated 为真表示命令或任一条指令被截断（spec §5.1 证据完整性）。
+// BuildState 组装 state（Python 版 build_state）：发给后端的每个文本字段都先遮蔽凭据（cwd 等也可能带 token，
+// 评审 M2-06），再对超长的命令与指令做中间截断。truncated 为真表示命令或任一条指令被截断（spec §5.1 证据完整性）。
 func BuildState(in StateInput) (state map[string]any, truncated bool) {
 	cmd, cut := truncateMiddle(secrets.Redact(in.Command), in.MaxCommandChars)
 	requests := make([]any, 0, len(in.Requests))
@@ -31,10 +31,10 @@ func BuildState(in StateInput) (state map[string]any, truncated bool) {
 	}
 	return map[string]any{
 		"call": map[string]any{
-			"harness": in.Harness,
-			"tool":    in.Tool,
+			"harness": secrets.Redact(in.Harness),
+			"tool":    secrets.Redact(in.Tool),
 			"command": cmd,
-			"cwd":     in.Cwd,
+			"cwd":     secrets.Redact(in.Cwd),
 		},
 		"user_requests": requests,
 	}, cut

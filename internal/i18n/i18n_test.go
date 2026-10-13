@@ -95,3 +95,18 @@ func TestPick(t *testing.T) {
 		t.Error("Pick(nil) must be empty")
 	}
 }
+
+// TestParamValuesAreNotExpanded：参数值里的 {…} 原样保留，结果与参数的替换顺序无关（M1 遗留问题）。
+func TestParamValuesAreNotExpanded(t *testing.T) {
+	c := mustLoad(t)
+	want := "The judge is unavailable ({rules}), so the matching rules ask for confirmation: a {code} b."
+	for i := 0; i < 50; i++ {
+		got := c.Text("en", KeyActionJudgeUnavailable, map[string]string{"code": "{rules}", "rules": "a {code} b"})
+		if got != want {
+			t.Fatalf("Text = %q, want %q", got, want)
+		}
+	}
+	if got := c.Text("en", KeyHintConsent, nil); !strings.Contains(got, "{backend}") {
+		t.Errorf("a missing param must stay visible: %q", got)
+	}
+}

@@ -5,6 +5,7 @@ package i18n
 import (
 	"fmt"
 	"io/fs"
+	"regexp"
 	"strings"
 
 	"github.com/cyberchen1995/h-guard/locales"
@@ -53,11 +54,16 @@ func (c *Catalog) Text(locale, key string, params map[string]string) string {
 	if !ok {
 		return key
 	}
-	for name, value := range params {
-		tpl = strings.ReplaceAll(tpl, "{"+name+"}", value)
-	}
-	return tpl
+	// 一次扫描替换：参数值里的 {…} 不会再被当作占位符（规则说明、路径里可能带花括号）
+	return placeholder.ReplaceAllStringFunc(tpl, func(m string) string {
+		if v, ok := params[m[1:len(m)-1]]; ok {
+			return v
+		}
+		return m
+	})
 }
+
+var placeholder = regexp.MustCompile(`\{[a-z_]+\}`)
 
 // Has 报告是否内置了 locale 的消息目录。
 func (c *Catalog) Has(locale string) bool {

@@ -5,7 +5,9 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -15,6 +17,7 @@ import (
 	"github.com/cyberchen1995/h-guard/internal/config"
 	"github.com/cyberchen1995/h-guard/internal/i18n"
 	"github.com/cyberchen1995/h-guard/internal/rules"
+	"github.com/cyberchen1995/h-guard/pkg/detect/paths"
 	"github.com/cyberchen1995/h-guard/pkg/guard"
 	"github.com/cyberchen1995/h-guard/pkg/judge"
 )
@@ -63,8 +66,16 @@ func with(a map[string]judge.Answer, kv ...any) map[string]judge.Answer {
 	return a
 }
 
+// jevThresholds 是 Python 版在 Jev 上校准的阈值（内置 jev 档案）。测试与 golden 回放钉住它们：
+// golden 的答案是在这套阈值下录制的（维护者决定，2026-10-13）。
+var jevThresholds = config.Thresholds{Hit: 0.5, Veto: 0.2, Requested: 0.7, RadiusFloor: map[string]float64{"recursive_delete": 1.25}}
+
+// newCheck 返回用内置规则与默认配置的检查；j 没有注入阈值时用 jevThresholds。
 func newCheck(t *testing.T, judgeOn bool, j action.Judge) *action.Check {
 	t.Helper()
+	if j.Thresholds == nil {
+		j.Thresholds = &jevThresholds
+	}
 	cfg := config.Defaults()
 	cfg.Judge.Enabled = judgeOn
 	set, err := rules.Builtin()
@@ -381,11 +392,12 @@ func TestProbe(t *testing.T) {
 	}
 }
 
-func TestAppliesOnlyToExec(t *testing.T) {
+func TestAppliesToExecAndFileActions(t *testing.T) {
 	c := newCheck(t, false, action.Judge{})
 	file := guard.Event{Kind: guard.EventAction, Harness: "h", Actions: []guard.Action{{Kind: guard.ActionFileWrite, File: &guard.FileAction{Path: "x"}}}}
-	if c.Applies(file) || c.Applies(guard.Event{Kind: guard.EventPrompt}) || !c.Applies(event(nil, "ls")) {
-		t.Error("Applies must be true only for events with exec actions")
+	tool := guard.Event{Kind: guard.EventAction, Harness: "h", Actions: []guard.Action{{Kind: guard.ActionToolCall, Raw: map[string]any{}}}}
+	if !c.Applies(file) || c.Applies(tool) || c.Applies(guard.Event{Kind: guard.EventPrompt}) || !c.Applies(event(nil, "ls")) {
+		t.Error("Applies must be true only for events with exec or file actions")
 	}
 }
 
@@ -396,5 +408,231 @@ func TestDisabledRuleNoLongerMatches(t *testing.T) {
 	}
 	if v := run(t, c, event(nil, "rm -rf /")); v.Decision == guard.DecisionDeny {
 		t.Error("a disabled hard rule must not match")
+	}
+}
+
+// TestUserRequestsAreChronological：发给模型的是最近 request_window 条用户本人的指令，旧的在前（spec §5.4）。
+func TestUserRequestsAreChronological(t *testing.T) {
+	b := &fakeBackend{answers: low()}
+	reqs := []guard.Request{user("first"), user("second"), {Text: "scheduled", Source: guard.SourceAutomated}, user("third"), user("  "), user("fourth")}
+	run(t, newCheck(t, true, action.Judge{Backend: b}), event(reqs, "git push"))
+	got := b.states[0]["user_requests"].([]any)
+	if len(got) != 3 || got[0] != "second" || got[1] != "third" || got[2] != "fourth" {
+		t.Errorf("user_requests = %v, want [second third fourth]", got)
+	}
+}
+
+// TestRevocationWording：题目写明指令按时间先后排列、以后来的为准（spec §5.4）。
+func TestRevocationWording(t *testing.T) {
+	var q judge.Question
+	for _, x := range newCheck(t, true, action.Judge{}).Questions() {
+		if x.ID == action.SignalRequested {
+			q = x
+		}
+	}
+	if !strings.Contains(q.Instructions.Question, "oldest first") || !strings.Contains(q.Instructions.CountsAsNo, "withdraws") ||
+		strings.Contains(q.Instructions.Question, "newest first") {
+		t.Errorf("explicitly_requested wording = %+v", q.Instructions)
+	}
+}
+
+// TestThresholdsComeFromTheEntry：阈值由入口注入；没有注入时用保守默认值，不读档案（spec §8.3）。
+func TestThresholdsComeFromTheEntry(t *testing.T) {
+	answers := with(low(), "publish", 0.9, action.SignalRequested, 0.8, action.SignalRadius, []float64{0, 0, 1, 0})
+	ev := event([]guard.Request{user("push it to origin")}, "git push origin main")
+	if v := run(t, newCheck(t, true, action.Judge{Backend: &fakeBackend{answers: answers}}), ev); v.Decision != guard.DecisionPass {
+		t.Errorf("requested 0.8 with jev thresholds (0.7) = %s, want pass", v.Decision)
+	}
+	c := newCheck(t, true, action.Judge{Backend: &fakeBackend{answers: answers}})
+	c.Judge.Thresholds = nil
+	if v := run(t, c, ev); v.Decision != guard.DecisionAsk {
+		t.Errorf("requested 0.8 with conservative thresholds (0.9) = %s, want ask", v.Decision)
+	}
+}
+
+func fileEvent(kind guard.ActionKind, path, to string) guard.Event {
+	return guard.Event{Kind: guard.EventAction, Harness: "claudecode", Tool: "Write", Cwd: "/home/user/project",
+		Actions: []guard.Action{{Kind: kind, File: &guard.FileAction{Path: path, To: to}}}}
+}
+
+func fileCheck(t *testing.T, judgeOn bool, b judge.Backend) *action.Check {
+	t.Helper()
+	c := newCheck(t, judgeOn, action.Judge{Backend: b})
+	c.Paths = paths.Env{Home: "/home/user", Lexical: true,
+		Vars: map[string]string{rules.VarConfig: "/xdg/h-guard", rules.VarCache: "/home/user/.cache/h-guard"}}
+	return c
+}
+
+// TestFileActionsOnProtectedPaths：写、删、重命名护栏配置、指令缓存与 harness hook 配置时请求确认，
+// 只按路径匹配、不调模型、不能由用户授权；普通文件不打断（维护者决定，2026-10-13）。
+func TestFileActionsOnProtectedPaths(t *testing.T) {
+	b := &fakeBackend{answers: with(low(), action.SignalRequested, 1.0)}
+	for _, judgeOn := range []bool{false, true} {
+		c := fileCheck(t, judgeOn, b)
+		for _, ev := range []guard.Event{
+			fileEvent(guard.ActionFileWrite, "~/.claude/settings.json", ""),
+			fileEvent(guard.ActionFileWrite, "/xdg/h-guard/config.yaml", ""),
+			fileEvent(guard.ActionFileWrite, "/home/user/.cache/h-guard/requests/s/1.json", ""),
+			fileEvent(guard.ActionFileWrite, ".codex/hooks.json", ""),
+			fileEvent(guard.ActionFileDelete, "/home/user/.codex/config.toml", ""),
+			fileEvent(guard.ActionFileRename, "notes.md", "/home/user/.claude/settings.local.json"),
+		} {
+			ev.Requests = []guard.Request{user("update my claude settings")}
+			v := run(t, c, ev)
+			if v.Decision != guard.DecisionAsk || !slices.Equal(codes(v), []string{i18n.KeyActionGuardSelfFile, i18n.KeyHintManual}) ||
+				len(v.Findings) != 1 || v.Findings[0].Rule != "guard_tampering" {
+				t.Errorf("judge %v, %s %+v = %+v", judgeOn, ev.Actions[0].Kind, *ev.Actions[0].File, v)
+			}
+		}
+		for _, ev := range []guard.Event{
+			fileEvent(guard.ActionFileWrite, "src/main.go", ""),
+			fileEvent(guard.ActionFileRead, "~/.claude/settings.json", ""),
+			fileEvent(guard.ActionFileWrite, "/home/user/.config/h-guard-notes/x.md", ""),
+		} {
+			if v := run(t, c, ev); v.Decision != guard.DecisionPass || len(v.Reasons) != 0 {
+				t.Errorf("judge %v, %+v = %+v", judgeOn, *ev.Actions[0].File, v)
+			}
+		}
+	}
+	if b.calls.Load() != 0 {
+		t.Errorf("file actions called the judge %d times", b.calls.Load())
+	}
+}
+
+func TestProtectedFileReasonNamesThePath(t *testing.T) {
+	c := fileCheck(t, false, nil)
+	v := run(t, c, fileEvent(guard.ActionFileWrite, "~/.claude/settings.json", ""))
+	if p := v.Reasons[0].Params["paths"]; p != "~/.claude/settings.json" || !strings.Contains(v.Reasons[0].Params["rules"], "[rule]") {
+		t.Errorf("params = %v", v.Reasons[0].Params)
+	}
+	text := c.Catalog.Text("zh-CN", v.Reasons[0].Code, v.Reasons[0].Params)
+	if !strings.Contains(text, "~/.claude/settings.json") || !strings.Contains(text, "受保护的文件") {
+		t.Errorf("zh-CN text = %q", text)
+	}
+}
+
+func TestDisabledSelfProtectionIgnoresFiles(t *testing.T) {
+	c := fileCheck(t, false, nil)
+	if _, err := c.Rules.Apply(rules.Overrides{"guard_tampering": false}); err != nil {
+		t.Fatal(err)
+	}
+	if v := run(t, c, fileEvent(guard.ActionFileWrite, "~/.claude/settings.json", "")); v.Decision != guard.DecisionPass {
+		t.Errorf("disabled guard_tampering = %+v", v)
+	}
+}
+
+// TestUnresolvedPathFallsBackToTheCleanPath：相对路径没有 cwd 时按规范化后的原始路径匹配，带 path_unresolved。
+func TestUnresolvedPathFallsBackToTheCleanPath(t *testing.T) {
+	c := fileCheck(t, false, nil)
+	ev := fileEvent(guard.ActionFileWrite, "sub/../.claude/settings.json", "")
+	ev.Cwd = ""
+	v := run(t, c, ev)
+	if v.Decision != guard.DecisionAsk || !slices.Contains(v.Fallbacks, action.FallbackPathUnresolved) {
+		t.Errorf("unresolved protected path = %+v", v)
+	}
+	ev = fileEvent(guard.ActionFileWrite, "README.md", "")
+	ev.Cwd = ""
+	if v := run(t, c, ev); v.Decision != guard.DecisionPass || !slices.Contains(v.Fallbacks, action.FallbackPathUnresolved) {
+		t.Errorf("unresolved ordinary path = %+v", v)
+	}
+}
+
+// TestMixedActionsTakeTheStrictest：同一次调用里的命令与文件动作逐个评估，取最严。
+func TestMixedActionsTakeTheStrictest(t *testing.T) {
+	c := fileCheck(t, false, nil)
+	ev := fileEvent(guard.ActionFileWrite, "README.md", "")
+	ev.Actions = append(ev.Actions, guard.Action{Kind: guard.ActionFileWrite, File: &guard.FileAction{Path: "~/.codex/hooks.json"}},
+		guard.Action{Kind: guard.ActionExec, Exec: &guard.ExecAction{Command: "ls", Shell: guard.ShellPOSIX}})
+	if v := run(t, c, ev); v.Decision != guard.DecisionAsk {
+		t.Errorf("mixed actions = %+v", v)
+	}
+}
+
+// TestQuestionSetIgnoresSwitches：校准题集包含全部带题的 exec 规则，停用规则不改变题集，改写措辞会（spec §8.3）。
+func TestQuestionSetIgnoresSwitches(t *testing.T) {
+	set, _ := rules.Builtin()
+	before := action.QuestionSet(set)
+	if _, err := set.Apply(rules.Overrides{"publish": false}); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(action.QuestionSet(set), before) {
+		t.Error("disabling a rule changed the question set")
+	}
+	var ids []string
+	for _, q := range before {
+		ids = append(ids, q.ID)
+	}
+	want := []string{"branch_ops", "destructive_git", "guard_tampering", "publish", "recursive_delete", "verify_bypass",
+		action.SignalRequested, action.SignalRadius}
+	if !slices.Equal(ids, want) {
+		t.Errorf("question set = %v, want %v", ids, want)
+	}
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "publish.yaml"), []byte(`schema: 1
+id: publish
+action: ask
+on: [exec]
+requires_judge: true
+reason: {en: publish}
+match: {exec: {any: ['\bgit\s+push\b']}}
+question: {kind: probability, instructions: {question: 'Reworded: would it publish?'}}
+`), 0o600)
+	custom, err := rules.Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reflect.DeepEqual(action.QuestionSet(custom), before) {
+		t.Error("rewording a question kept the question set")
+	}
+}
+
+// TestGuardTamperingCannotBeVetoed：护栏自我保护的本地命中不能被模型的低分否决，结论保持请求确认
+// （维护者决定，2026-10-13）。只读的用法也会命中，模型同样不能撤销：已知误报，暂时保守处理。
+func TestGuardTamperingCannotBeVetoed(t *testing.T) {
+	for _, cmd := range []string{
+		`echo '{"prompts":["push 到 origin"]}' > ~/.cache/h-guard/prompts/claude-code-s.json`,
+		"rm ~/.claude/settings.json",
+		// 已知误报：读出备份、脚本读取
+		"cp ~/.claude/settings.json /tmp/backup.json",
+		`python3 -c "print(open('/home/u/.claude/settings.json').read())"`,
+	} {
+		b := &fakeBackend{answers: low()}
+		v := run(t, newCheck(t, true, action.Judge{Backend: b}), event(nil, cmd))
+		if v.Decision != guard.DecisionAsk || b.calls.Load() != 1 || v.Signals["regex_vetoed"] != nil ||
+			len(v.Findings) != 1 || v.Findings[0].Rule != "guard_tampering" {
+			t.Errorf("%q with the model answering 0: %+v", cmd, v)
+		}
+	}
+	// 其他规则照常可以否决
+	if v := run(t, newCheck(t, true, action.Judge{Backend: &fakeBackend{answers: low()}}), event(nil, "git push origin main")); v.Decision != guard.DecisionPass {
+		t.Errorf("publish with the model answering 0 = %+v", v)
+	}
+}
+
+// TestIncompleteDirectoryScanIsFlagged：受保护目录读不全时，文件动作照常按已知的模式判断，并带 path_unresolved，
+// 正在使用的配置文件的链接目标仍然受保护（评审 R2-02）。
+func TestIncompleteDirectoryScanIsFlagged(t *testing.T) {
+	root := t.TempDir()
+	conf := filepath.Join(root, "conf")
+	os.Mkdir(conf, 0o755)
+	for i := 0; i < 4100; i++ {
+		os.WriteFile(filepath.Join(conf, "b"+strconv.Itoa(i)+".bak"), nil, 0o600)
+	}
+	target := filepath.Join(root, "active.yaml")
+	os.WriteFile(target, []byte("version: 1"), 0o600)
+	if err := os.Symlink(target, filepath.Join(conf, "config.yaml")); err != nil {
+		t.Skip("symlinks unavailable:", err)
+	}
+	c := newCheck(t, false, action.Judge{})
+	c.Paths = paths.Env{Home: filepath.Join(root, "home"), Vars: map[string]string{rules.VarConfig: conf}}
+	ev := fileEvent(guard.ActionFileWrite, target, "")
+	ev.Cwd = root
+	if v := run(t, c, ev); v.Decision != guard.DecisionAsk || !slices.Contains(v.Fallbacks, action.FallbackPathUnresolved) {
+		t.Errorf("editing the active config target = %+v", v)
+	}
+	ev = fileEvent(guard.ActionFileWrite, filepath.Join(root, "notes.md"), "")
+	ev.Cwd = root
+	if v := run(t, c, ev); v.Decision != guard.DecisionPass || !slices.Contains(v.Fallbacks, action.FallbackPathUnresolved) {
+		t.Errorf("an unrelated file with an incomplete scan = %+v", v)
 	}
 }
