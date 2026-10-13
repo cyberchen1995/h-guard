@@ -613,13 +613,16 @@ func newJevServer(t *testing.T, requested float64) *jevServer {
 	return j
 }
 
-// judgeConfig 开启模型、把 jev 指向 srv；fingerprint 非空时给 jev 档案加上指纹。
+// judgeConfig 开启模型、把 jev 指向 srv，jev 档案的阈值为 0.5 / 0.2 / 0.7；fingerprint 为空时档案不带指纹（未校准），
+// 否则带上它。档案整体替换内置的 jev 档案（内置档案自 M2 验收起带指纹）。
 func (e *env) judgeConfig(srv *jevServer, fingerprint string) {
 	e.t.Setenv("HG_TEST_KEY", "test-key-not-a-secret")
 	cfg := "version: 1\njudge: {enabled: true, backend: jev}\n" +
 		"backends: {jev: {type: typesafe, model: jev-latest, profile: jev, base_url: '" + srv.URL + "', api_key_env: HG_TEST_KEY}}\n"
 	if fingerprint != "" {
 		cfg += "profiles: {jev: {thresholds: {hit: 0.5, veto: 0.2, requested: 0.7}, fingerprint: " + fingerprint + "}}\n"
+	} else {
+		cfg += "profiles: {jev: {thresholds: {hit: 0.5, veto: 0.2, requested: 0.7}}}\n"
 	}
 	e.config(cfg)
 }

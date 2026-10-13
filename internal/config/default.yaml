@@ -6,9 +6,10 @@ outbound: {tier: 1, judge_max_chunks: 4, judge_min_chars: 200}
 backends:
   jev: {type: typesafe, model: jev-latest, profile: jev, api_key_env: TYPESAFE_API_KEY}
 profiles:
-  # Python 版在 84 条语料上校准出的阈值（spec §8.3）
+  # 按 M2 的措辞在 113 条语料上用 Jev 校准（2026-10-13）
   jev:
-    thresholds: {hit: 0.5, veto: 0.2, requested: 0.7, radius_floor: {recursive_delete: 1.25}}
+    thresholds: {hit: 0.4, veto: 0.1, requested: 0.75, radius_floor: {recursive_delete: 1.25}}
+    fingerprint: {model: jev-latest, probability: native, questions: "sha256:cdd8dab0be5e906b5d5f0fda6c5c60412214db02637af427adcc8e7a9415a5ab"}
 policy:
   on_unavailable: pass
   when_ask_unsupported: deny

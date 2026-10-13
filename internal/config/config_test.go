@@ -48,7 +48,7 @@ func TestDefaultsAreValid(t *testing.T) {
 		t.Errorf("defaults = %+v", c)
 	}
 	p := c.Profiles["jev"].Thresholds
-	if *p.Hit != 0.5 || *p.Veto != 0.2 || *p.Requested != 0.7 || p.RadiusFloor["recursive_delete"] != 1.25 {
+	if *p.Hit != 0.4 || *p.Veto != 0.1 || *p.Requested != 0.75 || p.RadiusFloor["recursive_delete"] != 1.25 {
 		t.Errorf("jev profile = %+v", p)
 	}
 	if c.Policy.RequestWindow != 3 || c.Policy.MaxCommandChars != 8000 || c.Policy.MaxRequestChars != 2000 ||
@@ -238,19 +238,21 @@ func TestApplyDotEnv(t *testing.T) {
 // 否则用保守默认值并说明原因（spec §8.3）。
 func TestProfileNeedsAMatchingFingerprint(t *testing.T) {
 	c := Defaults()
+	jev := c.Profiles["jev"]
+	jev.Fingerprint = nil // 内置档案自 M2 验收起带指纹；先看没有指纹的情形
+	c.Profiles["jev"] = jev
 	if th, cal := c.ThresholdsFor("jev", described{jevInfo}, digestA); cal.Reason != UncalibratedNoFingerprint || cal.Profile != "jev" ||
 		th.Hit != ConservativeThresholds.Hit || th.Requested != ConservativeThresholds.Requested {
-		t.Errorf("built-in jev without a fingerprint: %+v (%+v)", th, cal)
+		t.Errorf("jev without a fingerprint: %+v (%+v)", th, cal)
 	}
-	jev := c.Profiles["jev"]
 	jev.Fingerprint = &Fingerprint{Model: "jev-latest", Probability: "native", Questions: digestA}
 	c.Profiles["jev"] = jev
 	th, cal := c.ThresholdsFor("jev", described{jevInfo}, digestA)
-	if !cal.Calibrated() || th.Hit != 0.5 || th.Veto != 0.2 || th.Requested != 0.7 || th.RadiusFloor["recursive_delete"] != 1.25 {
+	if !cal.Calibrated() || th.Hit != 0.4 || th.Veto != 0.1 || th.Requested != 0.75 || th.RadiusFloor["recursive_delete"] != 1.25 {
 		t.Errorf("matching fingerprint: %+v (%+v)", th, cal)
 	}
 	th.RadiusFloor["recursive_delete"] = 0
-	if *c.Profiles["jev"].Thresholds.Hit != 0.5 || c.Profiles["jev"].Thresholds.RadiusFloor["recursive_delete"] != 1.25 {
+	if *c.Profiles["jev"].Thresholds.Hit != 0.4 || c.Profiles["jev"].Thresholds.RadiusFloor["recursive_delete"] != 1.25 {
 		t.Error("ThresholdsFor must return a copy")
 	}
 	otherModel, otherProb := jevInfo, jevInfo
