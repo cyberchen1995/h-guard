@@ -123,6 +123,72 @@ func TestNewerVersionIsNotOverwritten(t *testing.T) {
 	}
 }
 
+// TestNewerVersionWithOtherSchemaIsNotOverwritten：更新版本可能改变记录的结构（records 变为对象、
+// granted 变为数字、scopes 变为对象）。这种文件仍须识别为更新版本：读取时没有同意，写入时不覆盖。
+func TestNewerVersionWithOtherSchemaIsNotOverwritten(t *testing.T) {
+	for name, newer := range map[string]string{
+		"records object": `{"version": 2, "records": {"local": {"scopes": "action"}}}`,
+		"granted number": `{"version": 2, "records": [{"backend": "local", "type": "openai", "target": "http://localhost:11434", "scopes": ["action"], "granted": 1}]}`,
+		"scopes object":  `{"version": 2, "records": [{"backend": "local", "type": "openai", "target": "http://localhost:11434", "scopes": {"action": true}}]}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			s := consent.Store{Dir: t.TempDir()}
+			path := filepath.Join(s.Dir, consent.FileName)
+			if err := os.WriteFile(path, []byte(newer), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if s.Covers(local(), consent.ScopeAction) {
+				t.Error("a newer record is covered")
+			}
+			if err := s.Grant(local(), []consent.Scope{consent.ScopeAction}, now); !errors.Is(err, consent.ErrNewerVersion) {
+				t.Errorf("Grant = %v", err)
+			}
+			if _, err := s.Revoke("local"); !errors.Is(err, consent.ErrNewerVersion) {
+				t.Errorf("Revoke = %v", err)
+			}
+			if b, _ := os.ReadFile(path); string(b) != newer {
+				t.Errorf("the newer record was overwritten: %s", b)
+			}
+		})
+	}
+}
+
+// TestEmptyOrRelativeDirReadsNothing：配置目录无法确定（空串）或是相对路径时，既不读也不写当前工作目录，
+// 项目里放的 consent.json 不能当作同意。
+func TestEmptyOrRelativeDirReadsNothing(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	if err := (consent.Store{Dir: dir}).Grant(local(), []consent.Scope{consent.ScopeAction}, now); err != nil {
+		t.Fatal(err)
+	}
+	planted, err := os.ReadFile(filepath.Join(dir, consent.FileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, s := range map[string]consent.Store{"empty": {Dir: ""}, "relative": {Dir: "rel"}} {
+		t.Run(name, func(t *testing.T) {
+			if s.Covers(local(), consent.ScopeAction) {
+				t.Error("a consent file in the working directory is covered")
+			}
+			if _, err := s.Load(); !errors.Is(err, consent.ErrNoDir) {
+				t.Errorf("Load err = %v", err)
+			}
+			if err := s.Grant(local(), []consent.Scope{consent.ScopeAction}, now); !errors.Is(err, consent.ErrNoDir) {
+				t.Errorf("Grant err = %v", err)
+			}
+			if _, err := s.Revoke("local"); !errors.Is(err, consent.ErrNoDir) {
+				t.Errorf("Revoke err = %v", err)
+			}
+		})
+	}
+	if b, _ := os.ReadFile(filepath.Join(dir, consent.FileName)); string(b) != string(planted) {
+		t.Error("the consent file in the working directory changed")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "rel")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("a relative config directory was created: %v", err)
+	}
+}
+
 func TestGrantNeedsTheLock(t *testing.T) {
 	s := consent.Store{Dir: t.TempDir()}
 	unlock, err := store.Lock(s.Dir)

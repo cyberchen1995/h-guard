@@ -77,6 +77,8 @@ var (
 	ErrCorrupt = errors.New("consent: the consent record is corrupt")
 	// ErrNewerVersion 表示同意记录来自更新的 h-guard；读取时视为没有同意，也不覆盖。
 	ErrNewerVersion = errors.New("consent: the consent record was written by a newer h-guard")
+	// ErrNoDir 表示没有可用的配置目录（空串或相对路径）：读取时视为没有任何同意，写入时拒绝，不回落到当前工作目录。
+	ErrNoDir = errors.New("consent: no config directory")
 )
 
 // Store 是 Dir（h-guard 配置目录）下的同意记录。
@@ -86,8 +88,20 @@ type Store struct {
 
 func (s Store) path() string { return filepath.Join(s.Dir, FileName) }
 
-// Load 读取全部记录；文件不存在时为空。损坏返回 ErrCorrupt，版本不认识返回 ErrNewerVersion。
+// checkDir 报告 Dir 能否作为配置目录：空串或相对路径都返回 ErrNoDir，避免读写当前工作目录。
+func (s Store) checkDir() error {
+	if s.Dir == "" || !filepath.IsAbs(s.Dir) {
+		return ErrNoDir
+	}
+	return nil
+}
+
+// Load 读取全部记录；文件不存在时为空。损坏返回 ErrCorrupt，版本不认识返回 ErrNewerVersion，
+// 配置目录无效返回 ErrNoDir。
 func (s Store) Load() ([]Record, error) {
+	if err := s.checkDir(); err != nil {
+		return nil, err
+	}
 	data, err := os.ReadFile(s.path())
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
@@ -99,14 +113,21 @@ func (s Store) Load() ([]Record, error) {
 }
 
 func parse(data []byte) ([]Record, error) {
-	var f file
-	if err := json.Unmarshal(data, &f); err != nil {
+	// 先只读版本号：更新版本可能改变其余字段的结构，整体解码失败时也要能认出它是更新的版本。
+	var head struct {
+		Version int `json:"version"`
+	}
+	if err := json.Unmarshal(data, &head); err != nil {
 		return nil, ErrCorrupt
 	}
 	switch {
-	case f.Version > Version:
+	case head.Version > Version:
 		return nil, ErrNewerVersion
-	case f.Version != Version:
+	case head.Version != Version:
+		return nil, ErrCorrupt
+	}
+	var f file
+	if err := json.Unmarshal(data, &f); err != nil {
 		return nil, ErrCorrupt
 	}
 	for _, r := range f.Records {
@@ -170,6 +191,9 @@ func (s Store) Revoke(backend string) (bool, error) {
 
 // update 在锁内读入记录、交给 change 修改、写回（读入后文件被其他程序改动时返回 store.ErrConflict）。
 func (s Store) update(change func([]Record) []Record) error {
+	if err := s.checkDir(); err != nil {
+		return err
+	}
 	unlock, err := store.Lock(s.Dir)
 	if err != nil {
 		return err
