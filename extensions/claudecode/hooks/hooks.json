@@ -1,4 +1,14 @@
 {
-  "description": "h-guard 的 Claude Code 接入：按扩展接入协议 v1 调用 h-guard",
-  "modules": ["./register.js"]
+  "description": "h-guard 的 Claude Code 接入：经典 PreToolUse 负责动作；mod 按扩展接入协议 v1 负责工具结果与提示词",
+  "modules": ["./register.js"],
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {"type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/pretooluse.sh\"", "timeout": 20}
+        ]
+      }
+    ]
+  }
 }

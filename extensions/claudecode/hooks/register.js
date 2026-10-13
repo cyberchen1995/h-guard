@@ -1,5 +1,8 @@
-// h-guard 的 Claude Code 接入（mod）。它只把事件按「扩展接入协议 v1」交给 h-guard 二进制，
+// h-guard 的 Claude Code 接入（mod）。它只把工具结果与提示词按「扩展接入协议 v1」交给 h-guard 二进制，
 // 再把回复翻译成 mods 的返回值；所有判断都在 h-guard 里（spec §7.6、§7.7）。
+//
+// 动作由同一插件里的经典 PreToolUse hook 负责（hooks/pretooluse.sh）。本 mod 不得注册 tool.check：
+// mod 在 tool.check 回传决定会让 PreToolUse 的 ask 失去强制确认（确认机制实验，2026-10-12）。
 const PROTOCOL = 'h-guard.ext/v1'
 const CONFIG_FILE = 'hguard.json'
 const ACTIONS = ['pass', 'deny', 'ask', 'warn']
@@ -8,16 +11,6 @@ const FAILED = 'h-guard could not finish its check'
 const NO_REASON = 'h-guard stopped this without giving a reason'
 
 export function register(on) {
-  // 工具调用的权限决定：在 Claude Code 的规则与 settings hook 决定之后再收紧，从不放宽
-  on('tool.check', async ($, e, next) => {
-    const decided = await next(e)
-    const reply = await callGuard($, 'tool.check', { data: e, decided: decisionOf(decided) })
-    return applyCheck($, decided, reply)
-  }).catch(async ($, e, next) => {
-    // 接入层自身出错：已有 deny 保持，其余请求确认（spec §10.1：action 内部异常请求确认）
-    return applyCheck($, await next(e), { action: 'error', message: FAILED })
-  })
-
   // 工具结果：工具执行完、结果交给 Claude 之前检查；deny 扣下结果
   on('tool.call', async ($, e, next) => {
     const result = await next(e)
@@ -44,7 +37,7 @@ export function register(on) {
 }
 
 // callGuard 按协议组装请求、运行 h-guard、校验回复。任何失败都返回 { action: 'error' }，
-// 由各 hook 按 spec §10.1 处理：tool.check 请求确认，tool.result 与 prompt.submit 放行。
+// 由各 hook 按 spec §10.1 处理：tool.result 与 prompt.submit 放行并提示用户。
 async function callGuard($, hook, extra) {
   try {
     const config = JSON.parse(await $.fs.read($.plugin.root + '/' + CONFIG_FILE))
@@ -92,22 +85,6 @@ function notify($, text) {
   } catch (err) {
     // 无法提示时只能放弃
   }
-}
-
-function decisionOf(decided) {
-  return typeof decided === 'string' ? decided : decided && decided.decision
-}
-
-// applyCheck 只收紧：pass、warn 保留 Claude Code 的决定；deny 拒绝；ask 与接入层故障在已有决定
-// 不是 deny 时请求确认。
-function applyCheck($, decided, reply) {
-  if (reply.action === 'deny') return { decision: 'deny', reason: messageOf(reply) }
-  if (reply.action === 'ask' || reply.action === 'error') {
-    if (decisionOf(decided) === 'deny') return decided
-    return { decision: 'ask', reason: messageOf(reply) }
-  }
-  if (reply.action === 'warn') $.ui.log(messageOf(reply))
-  return decided
 }
 
 // applyResult：deny（及不该出现在结果上的 ask）扣下结果，Claude 读到说明而不是原输出；

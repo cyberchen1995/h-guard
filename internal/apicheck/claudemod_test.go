@@ -25,8 +25,13 @@ func TestClaudeCodeMod(t *testing.T) {
 	for _, args := range [][]string{{"plugin", "validate", "--strict", "."}, {"plugin", "test"}} {
 		cmd := exec.Command(claude, args...)
 		cmd.Dir = dir
-		if out, err := cmd.CombinedOutput(); err != nil {
+		out, err := cmd.CombinedOutput()
+		if err != nil {
 			t.Fatalf("claude %s failed: %v\n%s", strings.Join(args, " "), err, out)
+		}
+		// mod 不得注册 tool.check（spec §7.7）：validate 列出 mod 注册的 hook
+		if args[1] == "validate" && (strings.Contains(string(out), "tool.check") || !strings.Contains(string(out), "hooks: tool.call, prompt.submit")) {
+			t.Errorf("the mod must register exactly tool.call and prompt.submit:\n%s", out)
 		}
 	}
 }

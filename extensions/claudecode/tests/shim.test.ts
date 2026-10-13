@@ -2,7 +2,6 @@ import { expect, test } from 'claude-code/testing'
 
 const CONFIG = JSON.stringify({
   commands: {
-    'tool.check': ['h-guard', 'hook', 'claudecode'],
     'tool.result': ['h-guard', 'hook', 'claudecode'],
     'prompt.submit': ['h-guard', 'hook', 'claudecode'],
   },
@@ -31,42 +30,6 @@ function guard(on, reply, calls = [], logs = [], paths = []) {
   })
 }
 
-test('tool.check: pass keeps Claude Code decision and sends a v1 request', async ($, on) => {
-  const calls = []
-  guard(on, { action: 'pass' }, calls)
-  on('tool.check', () => ({ decision: 'allow' }))
-  const out = await $.tool.check({ tool: 'Bash', input: { command: 'ls' } })
-  expect(out).toMatchObject({ decision: 'allow' })
-  expect(calls[0].argv.slice(-2)).toEqual(['--event', 'tool.check'])
-  const req = JSON.parse(calls[0].init.stdin)
-  expect(req).toMatchObject({ protocol: 'h-guard.ext/v1', harness: 'claudecode', hook: 'tool.check', decided: 'allow', session: { id: 'sess-1', cwd: '/work' } })
-  expect(req.data.tool).toBe('Bash')
-})
-
-test('tool.check: deny refuses with the h-guard message', async ($, on) => {
-  guard(on, { action: 'deny', message: 'blocked by h-guard' })
-  on('tool.check', () => ({ decision: 'allow' }))
-  expect(await $.tool.check({ tool: 'Bash', input: { command: 'rm -rf /' } })).toEqual({ decision: 'deny', reason: 'blocked by h-guard' })
-})
-
-test('tool.check: ask never loosens an existing deny', async ($, on) => {
-  guard(on, { action: 'ask', message: 'confirm' })
-  on('tool.check', () => ({ decision: 'deny', reason: 'rule' }))
-  expect(await $.tool.check({ tool: 'Bash', input: { command: 'git push' } })).toMatchObject({ decision: 'deny' })
-})
-
-test('tool.check: ask turns allow into ask', async ($, on) => {
-  guard(on, { action: 'ask', message: 'confirm' })
-  on('tool.check', () => ({ decision: 'allow' }))
-  expect(await $.tool.check({ tool: 'Bash', input: { command: 'git push' } })).toEqual({ decision: 'ask', reason: 'confirm' })
-})
-
-test('tool.check: a guard that cannot run asks instead of passing', async ($, on) => {
-  guard(on, null)
-  on('tool.check', () => ({ decision: 'allow' }))
-  expect(await $.tool.check({ tool: 'Bash', input: { command: 'ls' } })).toMatchObject({ decision: 'ask' })
-})
-
 test('tool.result: deny withholds the result', async ($, on) => {
   guard(on, { action: 'deny', message: 'output withheld by h-guard' })
   on('tool.call', () => ({ result: 'SECRET-OUTPUT' }))
@@ -91,42 +54,25 @@ test('prompt.submit: pass sends the prompt unchanged', async ($, on) => {
   expect(await $.prompt.submit({ text: 'hello', origin: { kind: 'composer' } })).toEqual({ text: 'hello' })
 })
 
-test('request: harness_version is the version string and the config is read from the mod root', async ($, on) => {
+test('request: a v1 request with the version string, read from the mod root config', async ($, on) => {
   const calls = []
   const paths = []
   guard(on, { action: 'pass' }, calls, [], paths)
-  on('tool.check', () => ({ decision: 'allow' }))
-  await $.tool.check({ tool: 'Bash', input: { command: 'ls' } })
-  expect(JSON.parse(calls[0].init.stdin).harness_version).toBe('2.1.296')
+  on('tool.call', () => ({ result: 'ordinary' }))
+  await $.tool.call({ tool: 'Bash', command: 'ls' })
+  expect(calls[0].argv.slice(-2)).toEqual(['--event', 'tool.result'])
+  const req = JSON.parse(calls[0].init.stdin)
+  expect(req).toMatchObject({ protocol: 'h-guard.ext/v1', harness: 'claudecode', hook: 'tool.result', harness_version: '2.1.296', session: { id: 'sess-1', cwd: '/work' } })
+  expect(req.result).toEqual({ result: 'ordinary' })
   expect(JSON.stringify(paths[0])).toContain('/hguard.json')
 })
 
-test('tool.check: warn keeps Claude Code decision and tells the user', async ($, on) => {
-  const logs = []
-  guard(on, { action: 'warn', message: 'careful' }, [], logs)
+test('tool.check: the mod registers no tool.check hook and never runs h-guard for it', async ($, on) => {
+  const calls = []
+  guard(on, { action: 'deny', message: 'must not be asked' }, calls)
   on('tool.check', () => ({ decision: 'allow' }))
-  expect(await $.tool.check({ tool: 'Bash', input: { command: 'ls' } })).toMatchObject({ decision: 'allow' })
-  expect(JSON.stringify(logs)).toContain('careful')
-})
-
-test('tool.check: a guard that cannot run keeps an existing deny', async ($, on) => {
-  guard(on, null)
-  on('tool.check', () => ({ decision: 'deny', reason: 'rule' }))
-  expect(await $.tool.check({ tool: 'Bash', input: { command: 'ls' } })).toMatchObject({ decision: 'deny', reason: 'rule' })
-})
-
-test('tool.check: an unrecognized reply asks', async ($, on) => {
-  guard(on, { action: 'allow' })
-  on('tool.check', () => ({ decision: 'allow' }))
-  expect(await $.tool.check({ tool: 'Bash', input: { command: 'ls' } })).toMatchObject({ decision: 'ask' })
-})
-
-test('tool.check: deny without a message still refuses with a reason', async ($, on) => {
-  guard(on, { action: 'deny' })
-  on('tool.check', () => ({ decision: 'allow' }))
-  const out = await $.tool.check({ tool: 'Bash', input: { command: 'ls' } })
-  expect(out.decision).toBe('deny')
-  expect(out.reason).toBeTruthy()
+  expect(await $.tool.check({ tool: 'Bash', input: { command: 'git push' } })).toEqual({ decision: 'allow' })
+  expect(calls.length).toBe(0)
 })
 
 test('tool.result: pass returns the result unchanged', async ($, on) => {
