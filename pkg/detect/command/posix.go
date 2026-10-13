@@ -1,0 +1,270 @@
+package command
+
+import (
+	"path"
+	"regexp"
+	"strings"
+)
+
+// HeredocPlaceholder 代替数据 heredoc 的正文（与 Python 版一致）。
+const HeredocPlaceholder = "\n<h-guard:heredoc-data>\n"
+
+// interpreters 是会把 heredoc 正文当代码执行的程序（沿用 Python 版的列表）。
+var interpreters = regexp.MustCompile(`(?:^|[\s;&|(])(?:/\S*/)?(?:bash|sh|zsh|dash|ksh|ash|fish|pwsh|powershell|` +
+	`python[0-9.]*|python3?|node|deno|ruby|perl|php|psql|mysql|sqlite3?)\b`)
+
+// executedHeredoc 报告 heredoc 的正文是否交给解释器执行：这一行在运算符之前（从上一个 ; & 或换行算起）
+// 或定界符之后（到行尾，含管道）出现解释器（沿用 Python 版 strip_heredoc_data 的判断）。按去掉续行后的
+// 文本判断（ba\ 换行 sh <<'EOF' 也是交给 bash）。
+func executedHeredoc(lx lexed, h heredoc) bool {
+	from := 0
+	for _, t := range lx.tokens {
+		if t.start >= h.op.start {
+			break
+		}
+		if t.kind == tokSep && (t.op == "\n" || strings.ContainsAny(t.op, ";&")) {
+			from = t.end
+		}
+	}
+	lineEnd := h.bodyStart - 1
+	if lineEnd < h.delim.end {
+		lineEnd = h.delim.end
+	}
+	return interpreters.MatchString(lx.join(from, h.op.start)) || interpreters.MatchString(lx.join(h.delim.end, lineEnd))
+}
+
+// stripHeredocs 处理 heredoc（spec §5.3）：
+//   - 正文送给解释器的（bash <<'EOF'、cat <<EOF | bash）原样保留，并作为内层命令返回（executed），
+//     不论定界符是否带引号；
+//   - 定界符带引号的数据 heredoc（'EOF'、"EOF"、\EOF、E'OF'）是字面量，正文换成占位符；
+//   - 定界符不带引号的数据 heredoc 会展开 $(…) 与反引号：正文换成占位符，并放入 expandable 供提取命令替换。
+//
+// expandable 与 executed 中的正文已去掉续行（不带引号定界符的正文在读入时就去掉，$\ 换行 ( 仍是命令替换）。
+//
+// heredoc 的识别以词法分析为准：引号或注释里的 << 不是 heredoc，here-string（<<<）也不是。
+func stripHeredocs(cmd string) (out string, expandable, executed []string) {
+	if !strings.Contains(cmd, "<") { // 不能只找 <<：运算符可以被续行拆开（<\ 换行 <EOF，评审 R4-01）
+		return cmd, nil, nil
+	}
+	lx := lex(cmd)
+	if len(lx.heredocs) == 0 {
+		return cmd, nil, nil
+	}
+	var b strings.Builder
+	last := 0
+	for _, h := range lx.heredocs {
+		body := lx.join(h.bodyStart, h.bodyEnd)
+		if executedHeredoc(lx, h) {
+			executed = append(executed, body)
+			continue
+		}
+		b.WriteString(cmd[last:h.bodyStart])
+		b.WriteString(HeredocPlaceholder)
+		last = h.bodyEnd
+		if !h.delim.quoted {
+			expandable = append(expandable, body)
+		}
+	}
+	b.WriteString(cmd[last:])
+	return b.String(), expandable, executed
+}
+
+// Segments 按不在引号内的 ; & | && || ( ) 与换行切段，丢掉空段（Python 版 command_segments，
+// 但以词法分析为准：单引号内的反斜杠是字面量，heredoc 正文不算命令段）。返回各段去掉首尾空白的原文。
+func Segments(cmd string) []string {
+	lx := lex(cmd)
+	var out []string
+	for _, seg := range lx.segments() {
+		out = append(out, strings.TrimSpace(cmd[seg.start:seg.end]))
+	}
+	return out
+}
+
+// prefixWords 是放在命令前面、不改变「执行哪个命令」的词与保留字；值为该词需要参数的选项。
+var prefixWords = map[string][]string{
+	"sudo":    {"-u", "-g", "-C", "-D", "-p", "-r", "-t", "-U", "-T", "--user", "--group", "--chdir"},
+	"doas":    {"-u", "-C"},
+	"env":     {"-u", "-C", "--unset", "--chdir"},
+	"command": nil,
+	"nohup":   nil,
+	"time":    {"-f", "-o"},
+	"nice":    {"-n", "--adjustment"},
+	"ionice":  {"-c", "-n", "-p", "--class", "--classdata"},
+	"exec":    {"-a"},
+	"builtin": nil,
+	"busybox": nil,
+	// 保留字：if rm …、do rm …、{ rm …; }、! rm …
+	"!": nil, "{": nil, "}": nil, "if": nil, "then": nil, "else": nil, "elif": nil, "do": nil, "while": nil, "until": nil,
+}
+
+var assignment = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*=`)
+
+// CommandPositions 返回每一段中真正处于「要被执行」位置的部分：去掉 sudo、env、FOO=1、保留字这类前缀
+// 及前缀词的选项（Python 版 command_position_text）。`echo "别用 rm -rf /"` 剥完仍以 echo 开头，
+// 锚在段首的正则不会命中。词按 shell 规则切分（空格、制表符都算），前缀词按去引号后的值比较，
+// 赋值前缀按去掉续行后的原文判断（F\ 换行 OO=1 也是赋值）；返回的文本去掉续行。
+//
+// 与 Python 版的差异（只收紧）：前缀词需要参数的选项连同参数一起跳过（sudo -u root rm …），
+// 段首的选项词总是跳过，保留字也剥掉，括号也分段。
+func CommandPositions(cmd string) []string {
+	lx := lex(cmd)
+	var out []string
+	for _, seg := range lx.segments() {
+		var words []token
+		for _, t := range seg.tokens {
+			if t.kind == tokWord {
+				words = append(words, t)
+			}
+		}
+		var argOpts []string
+		k := 0
+		for k < len(words) {
+			w := words[k]
+			base := strings.ToLower(path.Base(w.value))
+			if opts, ok := prefixWords[base]; ok && w.value != "" {
+				argOpts = opts
+				k++
+				continue
+			}
+			if assignment.MatchString(lx.join(w.start, w.end)) {
+				k++
+				continue
+			}
+			if strings.HasPrefix(w.value, "-") && k+1 < len(words) {
+				k++
+				if contains(argOpts, w.value) && k+1 < len(words) {
+					k++
+				}
+				continue
+			}
+			break
+		}
+		if k < len(words) {
+			if s := strings.TrimSpace(lx.join(words[k].start, seg.end)); s != "" {
+				out = append(out, s)
+			}
+		}
+	}
+	return out
+}
+
+func contains(list []string, s string) bool {
+	for _, v := range list {
+		if v == s {
+			return true
+		}
+	}
+	return false
+}
+
+// StripQuoted 抹掉引号里的内容（Python 版 strip_quoted），给自带分隔符、无法切段的形态用（fork bomb）。
+// 引号之外的字符、运算符与空白原样保留；heredoc 正文不在其中（交给解释器的正文另作为内层命令检查）。
+func StripQuoted(cmd string) string {
+	lx := lex(cmd)
+	var b strings.Builder
+	last := 0
+	gap := func(end int) {
+		for _, h := range lx.heredocs {
+			if h.bodyStart >= last && h.bodyStart < end {
+				b.WriteString(lx.join(last, h.bodyStart))
+				last = h.closeEnd
+			}
+		}
+		if last < end {
+			b.WriteString(lx.join(last, end)) // 词与词之间的续行（注释里的反斜杠不是续行）
+		}
+	}
+	for _, t := range lx.tokens {
+		gap(t.start)
+		if t.kind == tokWord {
+			b.WriteString(t.bare)
+		} else {
+			b.WriteString(cmd[t.start:t.end])
+		}
+		last = t.end
+	}
+	gap(len(cmd))
+	return b.String()
+}
+
+// Words 按 POSIX 规则把一段命令切成词并去掉引号，不做任何展开；运算符与 heredoc 正文不算词。
+func Words(s string) []string {
+	var words []string
+	for _, t := range lex(s).tokens {
+		if t.kind == tokWord {
+			words = append(words, t.value)
+		}
+	}
+	return words
+}
+
+// codeSubstitutions 返回命令中不在单引号内的命令替换（$(…)、反引号、<(…)、>(…)）的内容。
+func codeSubstitutions(cmd string) []string {
+	var out []string
+	for _, t := range lex(cmd).tokens {
+		out = append(out, t.subs...)
+	}
+	return out
+}
+
+// substitutions 提取不带引号定界符的 heredoc 正文（已去掉续行）中的 $(…) 与反引号命令替换。正文里的引号
+// 不起作用；$(…) 的右括号仍按词法分析寻找。未闭合的替换取到末尾。
+func substitutions(body string) []string {
+	var out []string
+	for i := 0; i < len(body); i++ {
+		switch c := body[i]; {
+		case c == '\\':
+			i++
+		case c == '$' && i+1 < len(body) && body[i+1] == '(':
+			end, _ := matchParen(body, i+1)
+			if end < 0 {
+				return append(out, body[i+2:])
+			}
+			out = append(out, body[i+2:end])
+			i = end
+		case c == '`':
+			end := closingBacktick(body, i+1)
+			if end < 0 {
+				return append(out, body[i+1:])
+			}
+			out = append(out, strings.ReplaceAll(body[i+1:end], "\\`", "`"))
+			i = end
+		}
+	}
+	return out
+}
+
+var shells = map[string]bool{"bash": true, "sh": true, "zsh": true, "dash": true, "ksh": true, "ash": true}
+
+// nestedScripts 取出 bash -c '…'、sh -lc "…" 等嵌套调用的脚本（spec §5.3）。
+func nestedScripts(cmd string) []string {
+	var out []string
+	for _, pos := range CommandPositions(cmd) {
+		words := Words(pos)
+		if len(words) < 2 {
+			continue
+		}
+		if !shells[strings.ToLower(path.Base(words[0]))] {
+			continue
+		}
+		hasC := false
+		for j := 1; j < len(words); j++ {
+			w := words[j]
+			if w == "-o" || w == "+o" {
+				j++
+				continue
+			}
+			if len(w) > 1 && (w[0] == '-' || w[0] == '+') {
+				if w[0] == '-' && !strings.HasPrefix(w, "--") && strings.ContainsRune(w[1:], 'c') {
+					hasC = true
+				}
+				continue
+			}
+			if hasC {
+				out = append(out, w)
+			}
+			break
+		}
+	}
+	return out
+}
