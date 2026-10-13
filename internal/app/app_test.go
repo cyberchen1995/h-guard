@@ -890,10 +890,10 @@ func TestEvalFailsWhenCallsFail(t *testing.T) {
 			args = append(args, "--sweep")
 		}
 		out, stderr, code := e.run(nil, args...)
-		if code != 1 || srv.calls != 0 || !strings.Contains(stderr, "h-guard: 2 of 2 calls failed (auth 2)") {
+		if code != 1 || srv.calls != 0 || !strings.Contains(stderr, "h-guard: 2 of 2 calls failed: auth 2 (HG_TEST_KEY is not set).") {
 			t.Errorf("sweep %v: exit %d, calls %d, stderr %q", sweep, code, srv.calls, stderr)
 		}
-		if !strings.Contains(out, "failed calls: auth 2") || strings.Contains(out, "=== Threshold sweep") || strings.Contains(out, "profiles:") {
+		if !strings.Contains(out, "failed calls: auth 2 (HG_TEST_KEY is not set)") || strings.Contains(out, "=== Threshold sweep") || strings.Contains(out, "profiles:") {
 			t.Errorf("sweep %v: stdout =\n%s", sweep, out)
 		}
 	}

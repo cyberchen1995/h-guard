@@ -4,9 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"maps"
 	"slices"
-	"strings"
 	"time"
 
 	"github.com/cyberchen1995/h-guard/pkg/detect/secrets"
@@ -84,7 +82,11 @@ func Report(w io.Writer, outs []Outcome, ruleIDs []string) {
 			b, _ := json.Marshal(o.Signals)
 			fmt.Fprintf(w, "    signals: %s\n", b)
 			if o.Err != "" {
-				fmt.Fprintf(w, "    error: %s\n", o.Err)
+				if d := secrets.MaskForLog(o.ErrDetail); d != "" {
+					fmt.Fprintf(w, "    error: %s (%s)\n", o.Err, d)
+				} else {
+					fmt.Fprintf(w, "    error: %s\n", o.Err)
+				}
 			}
 			if o.Invalid > 0 {
 				fmt.Fprintf(w, "    questions without a valid answer: %d\n", o.Invalid)
@@ -101,13 +103,9 @@ func Report(w io.Writer, outs []Outcome, ruleIDs []string) {
 	}
 
 	var lat []time.Duration
-	kinds := map[string]int{}
 	for _, o := range outs {
 		if o.Called {
 			lat = append(lat, o.Latency)
-		}
-		if o.Err != "" {
-			kinds[o.Err]++
 		}
 	}
 	if len(lat) > 0 {
@@ -116,12 +114,8 @@ func Report(w io.Writer, outs []Outcome, ruleIDs []string) {
 		fmt.Fprintf(w, "\n=== Latency ===\n%d calls  p50 %d ms  p95 %d ms  max %d ms\n",
 			len(lat), lat[len(lat)/2].Milliseconds(), p95.Milliseconds(), lat[len(lat)-1].Milliseconds())
 	}
-	if len(kinds) > 0 {
-		var parts []string
-		for _, k := range slices.Sorted(maps.Keys(kinds)) {
-			parts = append(parts, fmt.Sprintf("%s %d", k, kinds[k]))
-		}
-		fmt.Fprintf(w, "failed calls: %s\n", strings.Join(parts, ", "))
+	if s := FailureSummary(outs); s != "" {
+		fmt.Fprintf(w, "failed calls: %s\n", s)
 	}
 }
 

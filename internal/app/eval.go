@@ -5,8 +5,6 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"maps"
-	"slices"
 	"strings"
 
 	"github.com/cyberchen1995/h-guard/internal/check/action"
@@ -97,8 +95,8 @@ func runEval(args []string, o Options) int {
 	// 调用失败时结论来自保守处理，不扫描、不建议；退出码为 1，并在 stderr 写明——stdout 常被重定向到文件，
 	// 否则用户只看到退出码 0（如 API key 没传进来，全部调用都以 auth 失败）
 	if failed := eval.Failed(outs); failed > 0 {
-		fmt.Fprintf(o.Stderr, "h-guard: %d of %d calls failed (%s); nothing was swept or suggested. Check the backend and its API key, then run again.\n",
-			failed, calledCount(outs), failureKinds(outs))
+		fmt.Fprintf(o.Stderr, "h-guard: %d of %d calls failed: %s. Nothing was swept or suggested; fix the backend and run again.\n",
+			failed, calledCount(outs), eval.FailureSummary(outs))
 		return 1
 	}
 	if !*sweep {
@@ -145,19 +143,4 @@ func calledCount(outs []eval.Outcome) int {
 		}
 	}
 	return n
-}
-
-// failureKinds 按类别汇总调用失败，如 "auth 2, timeout 1"（类别按名字排序）。
-func failureKinds(outs []eval.Outcome) string {
-	counts := map[string]int{}
-	for _, o := range outs {
-		if o.Err != "" {
-			counts[o.Err]++
-		}
-	}
-	var parts []string
-	for _, k := range slices.Sorted(maps.Keys(counts)) {
-		parts = append(parts, fmt.Sprintf("%s %d", k, counts[k]))
-	}
-	return strings.Join(parts, ", ")
 }

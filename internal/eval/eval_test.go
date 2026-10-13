@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -395,5 +397,47 @@ func TestFailedCallsAreCountedAndReported(t *testing.T) {
 		if !strings.Contains(buf.String(), want) {
 			t.Errorf("report lacks %q:\n%s", want, buf.String())
 		}
+	}
+}
+
+// TestFailureDetailsAreReported：调用失败时报告与汇总带上错误说明（固定写法，如 HTTP 400），本地能识别的凭据遮蔽——
+// 只有类别（bad_response）时看不出服务端为何拒绝（M2 验收时 anthropic 冒烟出现过）。
+func TestFailureDetailsAreReported(t *testing.T) {
+	const secret = "sk-proj-ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdefghijklmno"
+	cases := corpus(t)[:12]
+	b := newOracle(cases)
+	b.err = &judge.Error{Kind: judge.BadResponse, Err: errors.New("HTTP 400")}
+	outs, err := eval.Run(context.Background(), newEnv(t, b, jev), cases)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := eval.Failed(outs)
+	if want := fmt.Sprintf("bad_response %d (HTTP 400)", n); eval.FailureSummary(outs) != want {
+		t.Errorf("summary = %q, want %q", eval.FailureSummary(outs), want)
+	}
+	var buf bytes.Buffer
+	eval.Report(&buf, outs, nil)
+	for _, want := range []string{"    error: bad_response (HTTP 400)\n", fmt.Sprintf("failed calls: bad_response %d (HTTP 400)\n", n)} {
+		if !strings.Contains(buf.String(), want) {
+			t.Errorf("report lacks %q:\n%s", want, buf.String())
+		}
+	}
+	// 说明不同时逐个列出条数；没有说明的只写类别；说明里的凭据遮蔽
+	var failed []int
+	for i, o := range outs {
+		if o.Err != "" {
+			failed = append(failed, i)
+		}
+	}
+	if len(failed) < 4 {
+		t.Fatalf("only %d failed calls", len(failed))
+	}
+	outs[failed[0]].ErrDetail = "the response has no answer tool call"
+	outs[failed[1]].Err, outs[failed[1]].ErrDetail = "auth", "key "+secret
+	outs[failed[2]].Err, outs[failed[2]].ErrDetail = "unavailable", ""
+	got := eval.FailureSummary(outs)
+	if strings.Contains(got, secret) || !strings.Contains(got, "auth 1 (key [secret:") || !strings.Contains(got, "unavailable 1") ||
+		!strings.Contains(got, fmt.Sprintf("bad_response %d (HTTP 400 ×%d; the response has no answer tool call ×1)", n-2, n-3)) {
+		t.Errorf("summary = %q", got)
 	}
 }

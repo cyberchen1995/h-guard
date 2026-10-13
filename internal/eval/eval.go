@@ -12,8 +12,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"maps"
 	"os"
+	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -22,6 +26,7 @@ import (
 	"github.com/cyberchen1995/h-guard/internal/config"
 	"github.com/cyberchen1995/h-guard/internal/i18n"
 	"github.com/cyberchen1995/h-guard/internal/rules"
+	"github.com/cyberchen1995/h-guard/pkg/detect/secrets"
 	"github.com/cyberchen1995/h-guard/pkg/guard"
 	"github.com/cyberchen1995/h-guard/pkg/judge"
 )
@@ -103,6 +108,7 @@ type Outcome struct {
 	Signals   map[string]any
 	Called    bool          // 调用了后端
 	Err       string        // 调用失败时的错误类别
+	ErrDetail string        // 调用失败时的错误说明（后端的固定写法，如 HTTP 400；凭据已遮蔽）
 	Invalid   int           // 调用成功、但没有有效答案（缺题、null、越界）的题数
 	Fallbacks []string      // 结论的降级原因（如 judge_answer_invalid）
 	Latency   time.Duration // 调用耗时
@@ -145,7 +151,7 @@ func Run(ctx context.Context, env Env, cases []Case) ([]Outcome, error) {
 		if rec.rec != nil {
 			o.Called, o.Latency, o.Invalid = true, rec.rec.latency, rec.rec.invalid
 			if rec.rec.err != nil {
-				o.Err = string(judge.KindOf(rec.rec.err))
+				o.Err, o.ErrDetail = string(judge.KindOf(rec.rec.err)), errDetail(rec.rec.err)
 			}
 		}
 		out = append(out, o)
@@ -241,7 +247,7 @@ func Rescore(ctx context.Context, env Env, outs []Outcome, th config.Thresholds)
 		if err != nil {
 			return nil, err
 		}
-		n.Called, n.Err, n.Invalid, n.Latency, n.recorded = o.Called, o.Err, o.Invalid, o.Latency, o.recorded
+		n.Called, n.Err, n.ErrDetail, n.Invalid, n.Latency, n.recorded = o.Called, o.Err, o.ErrDetail, o.Invalid, o.Latency, o.recorded
 		res[i] = n
 	}
 	return res, nil
@@ -312,4 +318,49 @@ func Failed(outs []Outcome) int {
 		}
 	}
 	return n
+}
+
+// errDetail 返回判断错误的说明（不含类别），遮蔽本地能识别的凭据；没有说明时为空。
+func errDetail(err error) string {
+	var je *judge.Error
+	if !errors.As(err, &je) || je.Err == nil {
+		return ""
+	}
+	return secrets.MaskForLog(je.Err.Error())
+}
+
+// FailureSummary 按类别汇总调用失败，附上各类别的错误说明，如 "auth 2 (KEY is not set), bad_response 3 (HTTP 400 ×2;
+// the response has no answer tool call ×1)"；说明只有一种时不写条数，没有说明时只写类别。没有失败时为空。
+func FailureSummary(outs []Outcome) string {
+	counts := map[string]int{}
+	details := map[string]map[string]int{}
+	for _, o := range outs {
+		if o.Err == "" {
+			continue
+		}
+		counts[o.Err]++
+		if details[o.Err] == nil {
+			details[o.Err] = map[string]int{}
+		}
+		if d := secrets.MaskForLog(o.ErrDetail); d != "" {
+			details[o.Err][d]++
+		}
+	}
+	var parts []string
+	for _, k := range slices.Sorted(maps.Keys(counts)) {
+		part := fmt.Sprintf("%s %d", k, counts[k])
+		ds := slices.Sorted(maps.Keys(details[k]))
+		switch {
+		case len(ds) == 1 && details[k][ds[0]] == counts[k]:
+			part += " (" + ds[0] + ")"
+		case len(ds) > 0:
+			var each []string
+			for _, d := range ds {
+				each = append(each, fmt.Sprintf("%s ×%d", d, details[k][d]))
+			}
+			part += " (" + strings.Join(each, "; ") + ")"
+		}
+		parts = append(parts, part)
+	}
+	return strings.Join(parts, ", ")
 }
