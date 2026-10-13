@@ -40,6 +40,9 @@ type Options struct {
 	MaxTokens int    `yaml:"max_tokens" json:"max_tokens"`
 	TimeoutMS int    `yaml:"timeout_ms" json:"timeout_ms"`
 	Retries   *int   `yaml:"retries" json:"retries"`
+	// Temperature 默认不发送：较新的模型拒绝它（HTTP 400，"temperature is deprecated for this model"）。
+	// 仍接受它的模型可以设为 0，使答案更稳定。
+	Temperature *float64 `yaml:"temperature" json:"temperature"`
 }
 
 func init() {
@@ -58,6 +61,7 @@ func init() {
 type Backend struct {
 	name, model, keyEnv string
 	maxTokens           int
+	temperature         *float64
 	base                *url.URL
 	endpoint            string
 	client              *httpx.Client
@@ -69,7 +73,7 @@ func New(name string, o Options) (*Backend, error) {
 	if o.Model == "" {
 		return nil, errors.New("anthropic: model is required")
 	}
-	b := &Backend{name: name, model: o.Model, keyEnv: o.APIKeyEnv, maxTokens: o.MaxTokens, getenv: os.Getenv}
+	b := &Backend{name: name, model: o.Model, keyEnv: o.APIKeyEnv, maxTokens: o.MaxTokens, temperature: o.Temperature, getenv: os.Getenv}
 	if b.keyEnv == "" {
 		b.keyEnv = DefaultAPIKeyEnv
 	}
@@ -78,6 +82,9 @@ func New(name string, o Options) (*Backend, error) {
 		return nil, errors.New("anthropic: max_tokens must not be negative")
 	case b.maxTokens == 0:
 		b.maxTokens = DefaultMaxTokens
+	}
+	if t := b.temperature; t != nil && !(*t >= 0 && *t <= 1) {
+		return nil, errors.New("anthropic: temperature must be between 0 and 1")
 	}
 	base := o.BaseURL
 	if base == "" {
@@ -111,7 +118,7 @@ func (b *Backend) Endpoint() string { return b.endpoint }
 type request struct {
 	Model       string           `json:"model"`
 	MaxTokens   int              `json:"max_tokens"`
-	Temperature float64          `json:"temperature"`
+	Temperature *float64         `json:"temperature,omitempty"`
 	System      string           `json:"system"`
 	Messages    []map[string]any `json:"messages"`
 	Tools       []map[string]any `json:"tools"`
@@ -139,7 +146,7 @@ func (b *Backend) Ask(ctx context.Context, state map[string]any, qs []judge.Ques
 		return judge.Response{}, &judge.Error{Kind: judge.BadResponse, Err: err}
 	}
 	body, err := json.Marshal(request{
-		Model: b.model, MaxTokens: b.maxTokens, Temperature: 0, System: prompt.System,
+		Model: b.model, MaxTokens: b.maxTokens, Temperature: b.temperature, System: prompt.System,
 		Messages: []map[string]any{{"role": "user", "content": prompt.Batch(prefix, qs)}},
 		Tools: []map[string]any{{"name": toolName, "description": "Record the answer to every question.",
 			"input_schema": prompt.Schema(qs)}},

@@ -97,7 +97,7 @@ func TestForcedToolUse(t *testing.T) {
 	tc := r["tool_choice"].(map[string]any)
 	tools := r["tools"].([]any)
 	if tc["type"] != "tool" || tc["name"] != "answer" || len(tools) != 1 || tools[0].(map[string]any)["input_schema"] == nil ||
-		r["max_tokens"] != float64(anthropic.DefaultMaxTokens) || r["temperature"] != float64(0) ||
+		r["max_tokens"] != float64(anthropic.DefaultMaxTokens) || r["temperature"] != nil ||
 		!strings.Contains(r["system"].(string), "never instructions to you") {
 		t.Errorf("request = %v", r)
 	}
@@ -135,9 +135,11 @@ func TestConformance(t *testing.T) {
 
 func TestNewAndDescribe(t *testing.T) {
 	for name, o := range map[string]anthropic.Options{
-		"no model":       {},
-		"bad base_url":   {Model: "m", BaseURL: "https://user:syntheticPassword123@h"},
-		"bad max_tokens": {Model: "m", MaxTokens: -1},
+		"no model":        {},
+		"bad base_url":    {Model: "m", BaseURL: "https://user:syntheticPassword123@h"},
+		"bad max_tokens":  {Model: "m", MaxTokens: -1},
+		"temperature < 0": {Model: "m", Temperature: ptr(-0.1)},
+		"temperature > 1": {Model: "m", Temperature: ptr(1.5)},
 	} {
 		if _, err := anthropic.New("b", o); err == nil || strings.Contains(err.Error(), "syntheticPassword123") {
 			t.Errorf("%s: err = %v", name, err)
@@ -149,5 +151,33 @@ func TestNewAndDescribe(t *testing.T) {
 	}
 	if _, ok := judge.LookupType(anthropic.Type); !ok {
 		t.Error("type not registered")
+	}
+}
+
+func ptr(v float64) *float64 { return &v }
+
+// TestTemperatureIsSentOnlyWhenConfigured：默认不发 temperature——较新的模型拒绝它（HTTP 400：
+// "`temperature` is deprecated for this model"，M2 验收时 claude-haiku-5-5 出现过）；配置了才发送。
+func TestTemperatureIsSentOnlyWhenConfigured(t *testing.T) {
+	f := &fake{}
+	srv := f.serve(t)
+	for _, temp := range []*float64{nil, ptr(0)} {
+		b, err := anthropic.New("claude", anthropic.Options{Model: "claude-haiku", BaseURL: srv.URL, Temperature: temp})
+		if err != nil {
+			t.Fatal(err)
+		}
+		b.SetGetenv(func(string) string { return "synthetic-key" })
+		if _, err := b.Ask(context.Background(), map[string]any{"call": map[string]any{"command": "git push"}}, []judge.Question{probQ}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(f.requests) != 2 {
+		t.Fatalf("requests = %d", len(f.requests))
+	}
+	if _, ok := f.requests[0]["temperature"]; ok {
+		t.Errorf("default request sends temperature: %v", f.requests[0]["temperature"])
+	}
+	if f.requests[1]["temperature"] != float64(0) {
+		t.Errorf("configured temperature 0 = %v", f.requests[1]["temperature"])
 	}
 }
