@@ -17,9 +17,6 @@ import (
 // MaxDepth 是内层命令的最大递归深度（spec §5.3）。更深的内容不再展开，按原文匹配。
 const MaxDepth = 3
 
-// MaxUnits 是一条命令最多展开出的单元数；超出后不再展开，已有单元（含原文）照常检查。
-const MaxUnits = 64
-
 // Unit 是一段要按命令检查的文本。
 type Unit struct {
 	Text   string      // 剥离数据 heredoc 后的全文；超过深度的单元为原文
@@ -56,11 +53,13 @@ func (u Unit) Unquoted() string {
 // Expansion 是一条命令展开的结果。
 type Expansion struct {
 	Units []Unit
-	// Limited 为真表示有内容因超过 MaxDepth 或 MaxUnits 未再展开（只用于记录，不影响结论）。
+	// Limited 为真表示有内容因超过 MaxDepth 未再展开、按原文检查（只用于记录，不影响结论）。
 	Limited bool
 }
 
-// Expand 展开 cmd。每展开一个单元前检查 ctx，预算耗尽时返回 ctx 的错误与已展开的部分。
+// Expand 展开 cmd。每展开一个单元前检查 ctx，预算耗尽时返回 ctx 的错误与已展开的部分。单元数不设上限：
+// 同一深度的单元是互不重叠的原文片段，总量与命令长度成线性（至多 MaxDepth+1 层）；数量再多也不丢弃内容，
+// 耗时由截止时间约束（评审 M1 终审）。
 func Expand(ctx context.Context, cmd string, shell guard.Shell) (Expansion, error) {
 	var e Expansion
 	err := e.expand(ctx, cmd, shell, 0)
@@ -70,10 +69,6 @@ func Expand(ctx context.Context, cmd string, shell guard.Shell) (Expansion, erro
 func (e *Expansion) expand(ctx context.Context, text string, shell guard.Shell, depth int) error {
 	if err := ctx.Err(); err != nil {
 		return err
-	}
-	if len(e.Units) >= MaxUnits {
-		e.Limited = true
-		return nil
 	}
 	if depth > MaxDepth || shell != guard.ShellPOSIX {
 		if depth > MaxDepth {

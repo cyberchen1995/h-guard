@@ -324,6 +324,8 @@ func TestShellContextDecides(t *testing.T) {
 		{"single-quoted process substitution in parameter default", "echo ${x:-'<(rm -rf ~)'}", guard.DecisionPass},
 		{"double-quoted process substitution in parameter default", "echo ${x:-\">(rm -rf ~)\"}", guard.DecisionPass},
 		{"parameter default in double quotes", "echo \"${x:-<(rm -rf ~)}\"", guard.DecisionPass},
+		// 命令替换再多，后面的内容也要检查（评审 M1 终审）
+		{"after many substitutions", "echo" + strings.Repeat(" $(true)", 70) + " $(rm -rf /)", guard.DecisionDeny},
 	}
 	for _, tt := range tests {
 		if v := run(t, c, event(nil, tt.cmd)); v.Decision != tt.want {

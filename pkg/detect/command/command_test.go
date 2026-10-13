@@ -349,10 +349,17 @@ func TestDepthLimit(t *testing.T) {
 	}
 }
 
-func TestUnitLimit(t *testing.T) {
-	cmd := strings.Repeat("echo $(true) ; ", command.MaxUnits+10)
-	if e := expand(t, cmd); len(e.Units) > command.MaxUnits || !e.Limited {
-		t.Errorf("units = %d, limited = %v", len(e.Units), e.Limited)
+// TestManySubstitutionsAreAllExpanded：单元数不设上限，很多个命令替换之后（含嵌套在里面的）的内容照常提取，
+// 不会因数量多而被丢掉（评审 M1 终审）。耗时由截止时间约束。
+func TestManySubstitutionsAreAllExpanded(t *testing.T) {
+	cmd := strings.Repeat("echo $(true) ; ", 80) + "echo $(echo $(" + MARK + "))"
+	e := expand(t, cmd)
+	found := false
+	for _, u := range e.Units {
+		found = found || slices.Contains(u.Positions(), MARK)
+	}
+	if !found || e.Limited {
+		t.Errorf("units = %d, limited = %v, MARK extracted = %v", len(e.Units), e.Limited, found)
 	}
 }
 
@@ -454,8 +461,8 @@ func FuzzExpand(f *testing.F) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(e.Units) == 0 || len(e.Units) > command.MaxUnits {
-			t.Fatalf("units = %d", len(e.Units))
+		if len(e.Units) == 0 {
+			t.Fatalf("no units")
 		}
 		for _, u := range e.Units {
 			_ = u.Positions()
