@@ -1,0 +1,418 @@
+// Package config 读取并校验 h-guard 的配置（spec §9）：YAML 严格解析（未知字段、类型不匹配报错），
+// 每个文件都要声明 version: 1，合并顺序为内置默认（default.yaml）→ 用户配置 → 命令行 --config。
+//
+// 结构体字段逐项覆盖；map 型字段（backends、profiles、rules、harnesses）按键合并，同名条目整条替换。
+package config
+
+import (
+	"bytes"
+	_ "embed"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"regexp"
+	"slices"
+	"strings"
+
+	"github.com/cyberchen1995/h-guard/pkg/detect/secrets"
+	"github.com/cyberchen1995/h-guard/pkg/guard"
+	"go.yaml.in/yaml/v3"
+)
+
+// Version 是配置格式的版本号（与规则包、协议的版本号相互独立，spec §14）。
+const Version = 1
+
+//go:embed default.yaml
+var defaultYAML []byte
+
+// Config 是完整配置，字段与 spec §9 的顶层结构一一对应。
+type Config struct {
+	Version   int                      `yaml:"version"`
+	Locale    string                   `yaml:"locale"`
+	Judge     Judge                    `yaml:"judge"`
+	Action    Action                   `yaml:"action"`
+	Outbound  Outbound                 `yaml:"outbound"`
+	Rules     map[string]RuleSwitch    `yaml:"rules"`
+	Backends  map[string]BackendConfig `yaml:"backends"`
+	Profiles  map[string]Profile       `yaml:"profiles"`
+	Policy    Policy                   `yaml:"policy"`
+	Harnesses map[string]Harness       `yaml:"harnesses"`
+	Log       Log                      `yaml:"log"`
+}
+
+// Judge 是判断层开关与所用后端（spec §4）。
+type Judge struct {
+	Enabled bool   `yaml:"enabled"`
+	Backend string `yaml:"backend"`
+}
+
+// Action 是 action 检查的档位（spec §4）。
+type Action struct {
+	Tier int `yaml:"tier"`
+}
+
+// Outbound 是 outbound 检查的配置（spec §6）。类别内容在 M4 解析，这里原样保留。
+type Outbound struct {
+	Tier           int                  `yaml:"tier"`
+	JudgeMaxChunks int                  `yaml:"judge_max_chunks"`
+	JudgeMinChars  int                  `yaml:"judge_min_chars"`
+	Categories     map[string]yaml.Node `yaml:"categories"`
+}
+
+// RuleSwitch 按规则 id 覆盖开关（spec §5.2）。
+type RuleSwitch struct {
+	Enabled *bool `yaml:"enabled"`
+}
+
+// Profile 是一个后端的校准档案（spec §8.3）。指纹在 M2 生成与核对。
+type Profile struct {
+	Thresholds  ProfileThresholds `yaml:"thresholds"`
+	Fingerprint map[string]string `yaml:"fingerprint"`
+}
+
+// ProfileThresholds 是档案中写下的阈值。用指针区分「没写」与「写了 0」：三个阈值都必须写明，
+// 缺失不能当作 0（否则任何 requested 答案都能达到授权门槛）。
+type ProfileThresholds struct {
+	Hit         *float64           `yaml:"hit"`
+	Veto        *float64           `yaml:"veto"`
+	Requested   *float64           `yaml:"requested"`
+	RadiusFloor map[string]float64 `yaml:"radius_floor"`
+}
+
+// Thresholds 是策略用到的阈值。RadiusFloor 按规则 id 覆盖规则包里的影响范围下限。
+type Thresholds struct {
+	Hit         float64
+	Veto        float64
+	Requested   float64
+	RadiusFloor map[string]float64
+}
+
+// Policy 是故障与输入相关的策略（spec §5.1、§9）。
+type Policy struct {
+	OnUnavailable      string `yaml:"on_unavailable"`
+	WhenAskUnsupported string `yaml:"when_ask_unsupported"`
+	RequestWindow      int    `yaml:"request_window"`
+	MaxCommandChars    int    `yaml:"max_command_chars"`
+	MaxRequestChars    int    `yaml:"max_request_chars"`
+}
+
+// Harness 是按 harness 的设置；Shell 用于 harness 标不出 shell 时（spec §5.3）。
+type Harness struct {
+	Shell guard.Shell `yaml:"shell"`
+}
+
+// Log 是决策日志的设置（spec §10.3）；健康记录总是开启。
+type Log struct {
+	Decisions     bool `yaml:"decisions"`
+	RetentionDays int  `yaml:"retention_days"`
+}
+
+// ConservativeThresholds 在档案缺失时使用，偏向请求确认（spec §8.3）：
+// 命中门槛低、否决与授权门槛严，不放宽任何规则的影响范围下限。
+var ConservativeThresholds = Thresholds{Hit: 0.3, Veto: 0.05, Requested: 0.9}
+
+// Issue 是一条配置问题：字段路径（或 YAML 行号）与约束说明。说明里不含用户写下的值——
+// 写错的值可能正是凭据（如带密码的 base_url），而这些说明会显示给 harness 与用户（spec §10.1）。
+type Issue struct {
+	Path string
+	Msg  string
+}
+
+// Error 是配置错误，带出错的文件（叠加完成后的整体校验出错时为空）。
+type Error struct {
+	File   string
+	Issues []Issue
+}
+
+func (e *Error) Error() string {
+	parts := make([]string, len(e.Issues))
+	for i, is := range e.Issues {
+		parts[i] = is.Path + ": " + is.Msg
+	}
+	prefix := "config: "
+	if e.File != "" {
+		prefix += e.File + ": "
+	}
+	return prefix + strings.Join(parts, "; ")
+}
+
+// Brief 只给出文件名与出问题的字段路径，用于 hook 的原因文本。
+func (e *Error) Brief() string {
+	paths := make([]string, 0, len(e.Issues))
+	for _, is := range e.Issues {
+		if !slices.Contains(paths, is.Path) {
+			paths = append(paths, is.Path)
+		}
+	}
+	name := "config"
+	if e.File != "" {
+		name = filepath.Base(e.File)
+	}
+	return name + ": " + strings.Join(paths, ", ")
+}
+
+// Defaults 返回内置默认配置。
+func Defaults() *Config {
+	c := &Config{}
+	if issues := overlay(c, defaultYAML); len(issues) > 0 {
+		panic("config: built-in default.yaml: " + (&Error{Issues: issues}).Error())
+	}
+	return c
+}
+
+// Load 从内置默认开始，依次叠加 paths 中存在的文件（空路径与不存在的文件跳过，空文件不改动），
+// 每叠加一个文件就校验一次，错误带上该文件名。
+func Load(paths ...string) (*Config, error) {
+	c := Defaults()
+	for _, p := range paths {
+		if p == "" {
+			continue
+		}
+		b, err := os.ReadFile(p)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return nil, &Error{File: p, Issues: []Issue{{Path: "file", Msg: "cannot be read"}}}
+		}
+		if len(bytes.TrimSpace(b)) == 0 {
+			continue
+		}
+		if issues := overlay(c, b); len(issues) > 0 {
+			return nil, &Error{File: p, Issues: issues}
+		}
+		if issues := c.issues(); len(issues) > 0 {
+			return nil, &Error{File: p, Issues: issues}
+		}
+	}
+	if issues := c.issues(); len(issues) > 0 {
+		return nil, &Error{Issues: issues}
+	}
+	return c, nil
+}
+
+// overlay 把一个 YAML 文档严格解析后叠加到 c 上。
+func overlay(c *Config, b []byte) []Issue {
+	var probe struct {
+		Version *int `yaml:"version"`
+	}
+	if err := yaml.Unmarshal(b, &probe); err != nil {
+		return yamlIssues(err)
+	}
+	if probe.Version == nil {
+		return []Issue{{Path: "version", Msg: fmt.Sprintf("missing, want %d", Version)}}
+	}
+	if *probe.Version != Version {
+		return []Issue{{Path: "version", Msg: fmt.Sprintf("got %d, want %d", *probe.Version, Version)}}
+	}
+	if err := strictDecode(b, c); err != nil {
+		return yamlIssues(err)
+	}
+	return nil
+}
+
+// errMultipleDocuments 表示文件里有不止一个 YAML 文档；后面的文档不会被读取，所以一律拒绝。
+var errMultipleDocuments = errors.New("multiple YAML documents are not supported")
+
+// strictDecode 严格解码唯一的一个 YAML 文档：未知字段、类型不匹配、多个文档都是错误。
+func strictDecode(b []byte, v any) error {
+	dec := yaml.NewDecoder(bytes.NewReader(b))
+	dec.KnownFields(true)
+	if err := dec.Decode(v); err != nil {
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+		return err
+	}
+	var extra yaml.Node
+	if err := dec.Decode(&extra); !errors.Is(err, io.EOF) {
+		return errMultipleDocuments
+	}
+	return nil
+}
+
+var (
+	yamlLine   = regexp.MustCompile(`^(?:yaml: )?line (\d+): `)
+	yamlQuoted = regexp.MustCompile("`[^`]*`|\"[^\"]*\"|'[^']*'")
+)
+
+// yamlIssues 把 YAML 错误转成 Issue：路径为「line N」，说明里去掉 YAML 引用的原值（反引号或引号中的内容），
+// 再遮蔽可能残留的凭据形状。
+func yamlIssues(err error) []Issue {
+	if errors.Is(err, errMultipleDocuments) {
+		return []Issue{{Path: "document", Msg: errMultipleDocuments.Error()}}
+	}
+	msgs := []string{err.Error()}
+	var te *yaml.TypeError
+	if errors.As(err, &te) {
+		msgs = te.Errors
+	}
+	issues := make([]Issue, 0, len(msgs))
+	for _, m := range msgs {
+		path := "yaml"
+		if sub := yamlLine.FindStringSubmatch(m); sub != nil {
+			path = "line " + sub[1]
+		}
+		m = strings.TrimPrefix(yamlLine.ReplaceAllString(m, ""), "yaml: ")
+		m = yamlQuoted.ReplaceAllString(m, "…")
+		issues = append(issues, Issue{Path: path, Msg: secrets.MaskForLog(m)})
+	}
+	return issues
+}
+
+// Validate 检查取值范围与引用关系；有问题时返回 *Error（每条 Issue 以字段路径开头，说明里不含写下的值）。
+func (c *Config) Validate() error {
+	if issues := c.issues(); len(issues) > 0 {
+		return &Error{Issues: issues}
+	}
+	return nil
+}
+
+func (c *Config) issues() []Issue {
+	var out []Issue
+	bad := func(path, format string, args ...any) {
+		out = append(out, Issue{Path: path, Msg: fmt.Sprintf(format, args...)})
+	}
+	if c.Version != Version {
+		bad("version", "got %d, want %d", c.Version, Version)
+	}
+	if c.Action.Tier < 1 || c.Action.Tier > 3 {
+		bad("action.tier", "got %d, want 1..3", c.Action.Tier)
+	}
+	if c.Outbound.Tier < 1 || c.Outbound.Tier > 3 {
+		bad("outbound.tier", "got %d, want 1..3", c.Outbound.Tier)
+	}
+	if _, ok := c.Backends[c.Judge.Backend]; !ok {
+		bad("judge.backend", "refers to an undefined backend")
+	}
+	for _, name := range sortedKeys(c.Backends) {
+		path := "backends." + name
+		if !guard.ValidName(name) {
+			bad(path, "invalid backend name")
+			continue
+		}
+		if _, err := c.NewBackend(name); err != nil {
+			bad(path, "%s", backendMessage(err))
+		}
+		if p := c.Backends[name].Profile; p != "" {
+			if _, ok := c.Profiles[p]; !ok {
+				bad(path+".profile", "refers to an undefined profile")
+			}
+		}
+	}
+	for _, name := range sortedKeys(c.Profiles) {
+		t := c.Profiles[name].Thresholds
+		for _, f := range []struct {
+			field string
+			v     *float64
+		}{{"hit", t.Hit}, {"veto", t.Veto}, {"requested", t.Requested}} {
+			path := "profiles." + name + ".thresholds." + f.field
+			switch {
+			case f.v == nil:
+				bad(path, "missing")
+			case !(*f.v >= 0 && *f.v <= 1):
+				bad(path, "got %g, want 0..1", *f.v)
+			}
+		}
+		for _, rule := range sortedKeys(t.RadiusFloor) {
+			if v := t.RadiusFloor[rule]; !(v >= 0 && v <= 3) {
+				bad("profiles."+name+".thresholds.radius_floor."+rule, "got %g, want 0..3", v)
+			}
+		}
+	}
+	switch c.Policy.OnUnavailable {
+	case "pass", "ask", "deny":
+	default:
+		bad("policy.on_unavailable", "want pass, ask or deny")
+	}
+	switch c.Policy.WhenAskUnsupported {
+	case "pass", "deny":
+	default:
+		bad("policy.when_ask_unsupported", "want deny or pass")
+	}
+	for _, f := range []struct {
+		field string
+		v     int
+	}{
+		{"policy.request_window", c.Policy.RequestWindow},
+		{"policy.max_command_chars", c.Policy.MaxCommandChars},
+		{"policy.max_request_chars", c.Policy.MaxRequestChars},
+		{"outbound.judge_max_chunks", c.Outbound.JudgeMaxChunks},
+		{"log.retention_days", c.Log.RetentionDays},
+	} {
+		if f.v < 1 {
+			bad(f.field, "got %d, want a positive integer", f.v)
+		}
+	}
+	if c.Outbound.JudgeMinChars < 0 {
+		bad("outbound.judge_min_chars", "must not be negative")
+	}
+	for _, name := range sortedKeys(c.Harnesses) {
+		if s := c.Harnesses[name].Shell; s != "" && !s.Valid() {
+			bad("harnesses."+name+".shell", "want posix or powershell")
+		}
+	}
+	for _, id := range sortedKeys(c.Rules) {
+		if !guard.ValidName(id) {
+			bad("rules."+id, "invalid rule id")
+		} else if c.Rules[id].Enabled == nil {
+			bad("rules."+id+".enabled", "missing")
+		}
+	}
+	slices.SortStableFunc(out, func(a, b Issue) int { return strings.Compare(a.Path, b.Path) })
+	return out
+}
+
+// backendMessage 把后端工厂的错误变成可以显示的说明：去掉引号里的原值，再遮蔽凭据形状。
+// 内置后端的错误本身不含配置值；第三方工厂的错误内容不可控，这里是兜底。
+func backendMessage(err error) string {
+	m := yamlQuoted.ReplaceAllString(err.Error(), "…")
+	return secrets.MaskForLog(m)
+}
+
+// RuleEnabled 返回配置对规则 id 的开关覆盖；set 为假表示未覆盖（spec §5.2）。
+func (c *Config) RuleEnabled(id string) (enabled, set bool) {
+	s, ok := c.Rules[id]
+	if !ok || s.Enabled == nil {
+		return false, false
+	}
+	return *s.Enabled, true
+}
+
+// Thresholds 返回当前后端所用档案的阈值副本；后端未指定档案、档案不存在或档案不完整时用保守默认值
+// （spec §8.3；不完整的档案在 Validate 中已是配置错误）。
+func (c *Config) Thresholds() Thresholds {
+	t := Thresholds{Hit: ConservativeThresholds.Hit, Veto: ConservativeThresholds.Veto, Requested: ConservativeThresholds.Requested}
+	if name := c.Backends[c.Judge.Backend].Profile; name != "" {
+		if p, ok := c.Profiles[name]; ok && p.Thresholds.Hit != nil && p.Thresholds.Veto != nil && p.Thresholds.Requested != nil {
+			t = Thresholds{Hit: *p.Thresholds.Hit, Veto: *p.Thresholds.Veto, Requested: *p.Thresholds.Requested,
+				RadiusFloor: p.Thresholds.RadiusFloor}
+		}
+	}
+	floors := make(map[string]float64, len(t.RadiusFloor))
+	for k, v := range t.RadiusFloor {
+		floors[k] = v
+	}
+	t.RadiusFloor = floors
+	return t
+}
+
+// ShellFor 返回 harness 标不出 shell 时使用的 shell：配置值，未配置时为 posix（spec §5.3；
+// Windows 上由 install 询问并写入配置，见 M3）。
+func (c *Config) ShellFor(harness string) guard.Shell {
+	if h, ok := c.Harnesses[harness]; ok && h.Shell != "" {
+		return h.Shell
+	}
+	return guard.ShellPOSIX
+}
+
+func sortedKeys[V any](m map[string]V) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	slices.Sort(keys)
+	return keys
+}

@@ -1,0 +1,18 @@
+# h-guard 内置默认配置（spec §4、§9）。用户配置与 --config 依次叠加在它之上。
+version: 1
+judge: {enabled: false, backend: jev}
+action: {tier: 2}
+outbound: {tier: 1, judge_max_chunks: 4, judge_min_chars: 200}
+backends:
+  jev: {type: typesafe, model: jev-latest, profile: jev, api_key_env: TYPESAFE_API_KEY}
+profiles:
+  # Python 版在 84 条语料上校准出的阈值（spec §8.3）
+  jev:
+    thresholds: {hit: 0.5, veto: 0.2, requested: 0.7, radius_floor: {recursive_delete: 1.25}}
+policy:
+  on_unavailable: pass
+  when_ask_unsupported: deny
+  request_window: 3
+  max_command_chars: 8000
+  max_request_chars: 2000
+log: {decisions: false, retention_days: 14}
