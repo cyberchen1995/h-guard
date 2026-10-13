@@ -354,6 +354,9 @@ func nativeProblems(fs []fixtures.Fixture) (batchesChecked int, problems []strin
 				}
 				ev, err := a.Parse(f.Stdin)
 				switch {
+				case errors.Is(err, claudecode.ErrNoAction) && actionTools[in.ToolName]:
+					// 输入字段名与 adapter 的假设不符：这类工具的调用会不受检查（评审 M1 终审）
+					bad("%s: %s yielded no action; did its tool_input fields change?", f.Path, in.ToolName)
 				case errors.Is(err, claudecode.ErrNoAction):
 				case err != nil:
 					bad("%s: %v", f.Path, err)
@@ -370,6 +373,10 @@ func nativeProblems(fs []fixtures.Fixture) (batchesChecked int, problems []strin
 	}
 	return batchesChecked, problems
 }
+
+// actionTools 是一定能解析出动作的工具（spec §5.5）：录到的样本解析不出动作说明字段名变了。不带 path 的 Grep、
+// MCP 与其他工具本来就没有可检查的动作。
+var actionTools = map[string]bool{"Bash": true, "Monitor": true, "PowerShell": true, "Read": true, "Write": true, "Edit": true, "NotebookEdit": true}
 
 // TestRecordedPreToolUse 核对 M1 补录的 PreToolUse 原生样本（见 nativeProblems）。没有 PreToolUse 样本时 SKIP；
 // 验收时设 HG_NATIVE_REQUIRED=1，没有即失败。
@@ -392,15 +399,19 @@ func TestRecordedPreToolUse(t *testing.T) {
 
 // TestNativeEvidenceMatrix 用合成样本确认证据矩阵会拒绝不完整的录制（评审 M1-11）。
 func TestNativeEvidenceMatrix(t *testing.T) {
-	type rec struct{ scenario, run, event, session, tool, mode string }
+	type rec struct{ scenario, run, event, session, tool, mode, input string } // input 非空时替换 tool_input
 	build := func(recs []rec) []fixtures.Fixture {
 		var out []fixtures.Fixture
 		for i, r := range recs {
 			var stdin []byte
 			if r.event == "PreToolUse" {
+				var input any = map[string]any{"command": "ls", "file_path": "a", "path": "."}
+				if r.input != "" {
+					input = json.RawMessage(r.input)
+				}
 				stdin, _ = json.Marshal(map[string]any{"session_id": r.session, "transcript_path": "/t.jsonl", "cwd": "/w",
 					"hook_event_name": "PreToolUse", "permission_mode": r.mode, "tool_name": r.tool,
-					"tool_input": map[string]any{"command": "ls", "file_path": "a", "path": "."}, "tool_use_id": fmt.Sprint(i)})
+					"tool_input": input, "tool_use_id": fmt.Sprint(i)})
 			} else {
 				stdin = ext("prompt.submit", map[string]any{"text": "x", "origin": map[string]string{"kind": "sdk"}}, nil)
 				stdin = []byte(strings.Replace(string(stdin), `"id":"s1"`, `"id":"`+r.session+`"`, 1))
@@ -416,9 +427,9 @@ func TestNativeEvidenceMatrix(t *testing.T) {
 			"pre-monitor": {"Monitor"}, "pre-mcp": {"mcp__hgm0__hg_m0_report"},
 			"pre-mode-default": {"Bash"}, "pre-mode-auto": {"Bash"}, "pre-mode-bypass": {"Bash"}}
 		for name, mode := range nativeScenarios {
-			recs = append(recs, rec{name, "r1", "prompt.submit", "sess-" + name, "", ""})
+			recs = append(recs, rec{name, "r1", "prompt.submit", "sess-" + name, "", "", ""})
 			for _, tool := range tools[name] {
-				recs = append(recs, rec{name, "r1", "PreToolUse", "sess-" + name, tool, mode})
+				recs = append(recs, rec{name, "r1", "PreToolUse", "sess-" + name, tool, mode, ""})
 			}
 		}
 		return recs
@@ -465,6 +476,23 @@ func TestNativeEvidenceMatrix(t *testing.T) {
 			for i := range rs {
 				if rs[i].scenario == "pre-mode-bypass" && rs[i].event == "PreToolUse" {
 					rs[i].mode = "acceptEdits"
+				}
+			}
+			return rs
+		},
+		// 录到的输入字段名与 adapter 的假设不符时，Bash 解析不出动作，命令会不受检查（评审 M1 终审）
+		"bash input field renamed": func(rs []rec) []rec {
+			for i := range rs {
+				if rs[i].scenario == "pre-bash" && rs[i].event == "PreToolUse" {
+					rs[i].input = `{"cmd":"ls"}`
+				}
+			}
+			return rs
+		},
+		"write input field renamed": func(rs []rec) []rec {
+			for i := range rs {
+				if rs[i].tool == "Write" {
+					rs[i].input = `{"filename":"a","content":"x"}`
 				}
 			}
 			return rs
