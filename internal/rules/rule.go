@@ -20,6 +20,7 @@ import (
 
 	"github.com/cyberchen1995/h-guard/internal/i18n"
 	"github.com/cyberchen1995/h-guard/pkg/detect/command"
+	"github.com/cyberchen1995/h-guard/pkg/detect/paths"
 	"github.com/cyberchen1995/h-guard/pkg/guard"
 	"github.com/cyberchen1995/h-guard/pkg/judge"
 	"github.com/dlclark/regexp2"
@@ -45,6 +46,7 @@ type Rule struct {
 	Match         Match              `yaml:"match"`
 	RadiusFloor   float64            `yaml:"radius_floor"`
 	BypassableRaw *bool              `yaml:"bypassable_by_request"`
+	VetoableRaw   *bool              `yaml:"vetoable_by_judge"`
 	Question      *Question          `yaml:"question"`
 	Examples      Examples           `yaml:"examples"`
 
@@ -54,10 +56,25 @@ type Rule struct {
 	exec    *compiledExec
 }
 
-// Match 是规则的本地检测。M1 只有 exec；路径匹配在 M3 加入。
+// Match 是规则的本地检测：exec 动作用命令正则，文件动作用路径模式（spec §5.2、§5.5）。
 type Match struct {
 	Exec *ExecMatch `yaml:"exec"`
+	File *FileMatch `yaml:"file"`
 }
+
+// FileMatch 是文件动作的路径模式，写法见 pkg/detect/paths。模式开头的占位符：{config}、{cache} 是 h-guard
+// 实际使用的配置目录与缓存目录（含 XDG_CONFIG_HOME 等自定义位置）；{extra_config} 是这次 --config 加载的
+// 配置文件的绝对路径（没有时该模式不匹配）。
+type FileMatch struct {
+	Paths []string `yaml:"paths"`
+}
+
+// 路径模式的占位符。
+const (
+	VarConfig      = "config"
+	VarCache       = "cache"
+	VarExtraConfig = "extra_config"
+)
 
 // ExecMatch 是命令正则，按 shell 分组（spec §5.3）：any 用于所有 shell。
 type ExecMatch struct {
@@ -66,6 +83,10 @@ type ExecMatch struct {
 	PowerShell      []string `yaml:"powershell"`
 	CommandPosition bool     `yaml:"command_position"` // 只在命令位置上匹配（deny 级规则必须开）
 	StripQuotes     bool     `yaml:"strip_quotes"`     // 匹配前抹掉引号内容（无法切段的形态）
+	// Redirects 只在重定向视图上匹配（POSIX，见 command.Redirections）：每个重定向写成
+	// 「命令词 文件描述符运算符目标词」，如 "dd 2>/dev/sda"。重定向由词法分析给出，注释与引号里的字符不会被当作
+	// 重定向；目标是完整的词，白名单可以用 $ 锚定（评审 R3-01）。
+	Redirects []string `yaml:"redirects"`
 }
 
 // Question 是规则的判断题（发给模型，固定英文）。
@@ -85,14 +106,25 @@ type Examples struct {
 	Miss []Example `yaml:"miss"`
 }
 
-// Example 是一条样例命令。
+// Example 是一条样例：命令样例写 shell 与 command；文件样例写 action（文件动作类型）与 path。
+// 文件样例在固定环境 ExampleEnv 中按字面匹配，不访问文件系统。
 type Example struct {
-	Shell   guard.Shell `yaml:"shell"`
-	Command string      `yaml:"command"`
+	Shell   guard.Shell      `yaml:"shell"`
+	Command string           `yaml:"command"`
+	Action  guard.ActionKind `yaml:"action"`
+	Path    string           `yaml:"path"`
+}
+
+// ExampleEnv 是文件样例的环境：主目录 /home/user，工作目录 /home/user/project，
+// {config} 为 /xdg/config/h-guard，{cache} 为 /xdg/cache/h-guard，{extra_config} 为 /etc/guard/extra.yaml，区分大小写。
+var ExampleEnv = paths.Env{
+	Home: "/home/user", Cwd: "/home/user/project", Lexical: true,
+	Vars: map[string]string{VarConfig: "/xdg/config/h-guard", VarCache: "/xdg/cache/h-guard", VarExtraConfig: "/etc/guard/extra.yaml"},
 }
 
 type compiledExec struct {
 	any, posix, powershell []*regexp2.Regexp
+	redirects              []*regexp2.Regexp
 	commandPosition        bool
 	stripQuotes            bool
 }
@@ -102,6 +134,10 @@ func (r *Rule) Enabled() bool { return r.enabled }
 
 // Bypassable 报告用户明确要求能否放行该规则（默认能；护栏自我保护不能）。
 func (r *Rule) Bypassable() bool { return r.BypassableRaw == nil || *r.BypassableRaw }
+
+// Vetoable 报告模型有把握的否定能否撤销该规则的本地命中（默认能；护栏自我保护不能）。
+// 它与 Bypassable 是两条独立的轴：一个回答「用户要求过能否放行」，一个回答「模型说没命中能否撤销」。
+func (r *Rule) Vetoable() bool { return r.VetoableRaw == nil || *r.VetoableRaw }
 
 // AppliesTo 报告规则是否作用于该动作类型。
 func (r *Rule) AppliesTo(kind guard.ActionKind) bool { return slices.Contains(r.On, kind) }
@@ -226,7 +262,10 @@ func (r *Rule) validate() error {
 		switch {
 		case !k.Valid():
 			return fieldErr("on", "unknown action kind")
-		case k != guard.ActionExec:
+		case k == guard.ActionExec:
+		case isFile(k) && r.Locked:
+			// M2 只有内置的护栏自我保护作用于文件动作；用户的文件规则随第 2 档在 M3 加入
+		default:
 			return fieldErr("on", "%s rules are not supported yet (only exec)", k)
 		}
 	}
@@ -254,13 +293,45 @@ func (r *Rule) validate() error {
 		}
 		r.exec = c
 	}
+	if r.appliesToFiles() {
+		if r.Match.File == nil || len(r.Match.File.Paths) == 0 {
+			return fieldErr("match.file.paths", "missing for a file rule")
+		}
+		for i, p := range r.Match.File.Paths {
+			path := fmt.Sprintf("match.file.paths[%d]", i)
+			if err := paths.ValidPattern(p); err != nil {
+				return fieldErr(path, "%v", err)
+			}
+			if name, ok := paths.Placeholder(p); ok && name != VarConfig && name != VarCache && name != VarExtraConfig {
+				return fieldErr(path, "unknown placeholder (want {config}, {cache} or {extra_config})")
+			}
+		}
+	} else if r.Match.File != nil {
+		return fieldErr("match.file", "the rule has no file action in on")
+	}
 	for i, ex := range append(slices.Clone(r.Examples.Hit), r.Examples.Miss...) {
-		if !ex.Shell.Valid() || ex.Command == "" {
-			return fieldErr(fmt.Sprintf("examples[%d]", i), "needs a valid shell and a command")
+		path := fmt.Sprintf("examples[%d]", i)
+		switch {
+		case ex.Path != "":
+			if !isFile(ex.Action) || !r.AppliesTo(ex.Action) || ex.Command != "" || ex.Shell != "" {
+				return fieldErr(path, "a file example needs one of the rule's file actions and a path, and no command")
+			}
+		case !ex.Shell.Valid() || ex.Command == "" || (ex.Action != "" && ex.Action != guard.ActionExec):
+			return fieldErr(path, "needs a valid shell and a command")
 		}
 	}
 	return nil
 }
+
+func isFile(k guard.ActionKind) bool {
+	switch k {
+	case guard.ActionFileRead, guard.ActionFileWrite, guard.ActionFileDelete, guard.ActionFileRename:
+		return true
+	}
+	return false
+}
+
+func (r *Rule) appliesToFiles() bool { return slices.ContainsFunc(r.On, isFile) }
 
 func compileExec(m *ExecMatch) (*compiledExec, error) {
 	c := &compiledExec{commandPosition: m.CommandPosition, stripQuotes: m.StripQuotes}
@@ -268,7 +339,8 @@ func compileExec(m *ExecMatch) (*compiledExec, error) {
 		name string
 		src  []string
 		dst  *[]*regexp2.Regexp
-	}{{"any", m.Any, &c.any}, {"posix", m.POSIX, &c.posix}, {"powershell", m.PowerShell, &c.powershell}}
+	}{{"any", m.Any, &c.any}, {"posix", m.POSIX, &c.posix}, {"powershell", m.PowerShell, &c.powershell},
+		{"redirects", m.Redirects, &c.redirects}}
 	total := 0
 	for _, g := range groups {
 		for i, p := range g.src {
@@ -295,7 +367,7 @@ type Result struct {
 	TimedOut bool // 有正则匹配超时（spec §3.4：action 规则按命中处理）
 }
 
-// MatchExec 在命令展开出的各单元上匹配：每个单元用 any 组加该单元 shell 的组；
+// MatchExec 在命令展开出的各单元上匹配：每个单元用 any 组加该单元 shell 的组，redirects 组另在重定向视图上匹配；
 // command_position 时匹配各段的命令位置文本（deny 级规则另匹配规范写法：去掉引号、命令词取路径最后一段，
 // 只收紧，评审 M1 终审），strip_quotes 时匹配去引号后的文本，否则匹配全文。
 // 每次正则匹配之前都检查 ctx：预算耗尽时不再开始新的匹配，返回已得出的结果与 ctx 的错误
@@ -328,25 +400,51 @@ func (r *Rule) MatchExec(ctx context.Context, e command.Expansion) (Result, erro
 		default:
 			hay = u.FullTexts()
 		}
-		for _, re := range patterns {
-			for _, h := range hay {
-				if err := ctx.Err(); err != nil {
-					return res, err
-				}
-				ok, err := re.MatchString(h)
-				if err != nil {
-					res.TimedOut = true
-					res.Hit = true
-					continue
-				}
-				if ok {
-					// 确定命中优先于此前任何模式的超时：结论是确定命中（否则 deny 级规则会被降为请求确认）
-					return Result{Hit: true}, nil
+		groups := []struct {
+			patterns []*regexp2.Regexp
+			hay      []string
+		}{{patterns, hay}}
+		if len(r.exec.redirects) > 0 {
+			groups = append(groups, struct {
+				patterns []*regexp2.Regexp
+				hay      []string
+			}{r.exec.redirects, u.Redirections()})
+		}
+		for _, g := range groups {
+			for _, re := range g.patterns {
+				for _, h := range g.hay {
+					if err := ctx.Err(); err != nil {
+						return res, err
+					}
+					ok, err := re.MatchString(h)
+					if err != nil {
+						res.TimedOut = true
+						res.Hit = true
+						continue
+					}
+					if ok {
+						// 确定命中优先于此前任何模式的超时：结论是确定命中（否则 deny 级规则会被降为请求确认）
+						return Result{Hit: true}, nil
+					}
 				}
 			}
 		}
 	}
 	return res, nil
+}
+
+// MatchFile 报告解析后的目标 target 是否命中规则的路径模式；env 提供 ~ 与占位符的值。complete 为 false
+// 表示受保护目录里的符号链接没有收集完整（见 paths.Matcher.Complete），调用方应带降级标记。
+// 规则不作用于文件动作时返回 false, true。
+func (r *Rule) MatchFile(target paths.Resolved, env paths.Env) (hit, complete bool) {
+	if r.Match.File == nil {
+		return false, true
+	}
+	m, err := paths.Compile(r.Match.File.Paths, env)
+	if err != nil {
+		return true, true // 模式在加载时已校验，走到这里说明有 bug：按命中处理（只收紧）
+	}
+	return m.Match(target), m.Complete()
 }
 
 // CheckExamples 运行规则的样例（spec §5.2）：hit 必须命中、miss 必须不命中；超时不算命中。
@@ -357,6 +455,12 @@ func (r *Rule) CheckExamples(ctx context.Context) error {
 		list []Example
 	}{{true, r.Examples.Hit}, {false, r.Examples.Miss}} {
 		for _, ex := range set.list {
+			if ex.Path != "" {
+				if got, _ := r.MatchFile(paths.Resolve(ex.Path, ExampleEnv), ExampleEnv); got != set.want {
+					errs = append(errs, fmt.Errorf("rule %q: %s example %q: hit = %v, want %v", r.ID, ex.Action, ex.Path, got, set.want))
+				}
+				continue
+			}
 			e, err := command.Expand(ctx, ex.Command, ex.Shell)
 			if err != nil {
 				return err

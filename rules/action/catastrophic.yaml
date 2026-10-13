@@ -13,16 +13,37 @@ match:
     any:
       - '^rm(?:\.exe)?\s+(?:-\S+\s+)*-[a-z]*r[a-z]*\s+(?:-\S+\s+)*(?:/|/\*|~|~/|~/\*|\$HOME|\$\{HOME\}|\$HOME/\*)(?:\s|$|[;&|])'
       - '^rm(?:\.exe)?\s+(?:-\S+\s+)*--recursive\b[^\n]*\s(?:/|/\*|~|~/|~/\*|\$HOME|\$\{HOME\}|\$HOME/\*)(?:\s|$)'
-      - '^dd\b[^\n]*\bof=/dev/'
+      # dd 写设备（M2 修复误拦，评审 M2-04、R2-01 收窄）：只豁免去向固定、写入无害的设备，名字须完整匹配
+      # ——/dev/null、/dev/zero、/dev/random、/dev/urandom、/dev/tty（控制终端）。目录不豁免（/dev/shm/../sda
+      # 会回到 /dev）；/dev/stdout、/dev/stderr、/dev/fd/N 只是文件描述符的别名，去向取决于 shell 先做的重定向
+      # （同一段、组合命令或前面的 exec），正则确认不了。后两类与 M1 一样拒绝
+      - '^dd\b[^\n]*\bof=/dev/(?!(?:null|zero|tty|u?random)(?![\w./-]))'
       - '^(?:mkfs(?:\.\w+)?|mke2fs|mkdosfs|mkntfs)\b[^\n]*/dev/'
       - '^(?:remove-item|rd|rmdir)\b[^\n]*-(?:recurse|r)\b[^\n]*[a-z]:\\?(?:\s|$)'
     command_position: true
+    # 重定向视图（词法分析给出的「命令词 重定向」，评审 R2-04、R3-01）：dd 的输出、或没有命令词的重定向
+    # （组合命令 ( … ) >/dev/sda、bash 的 &>）写到设备时拒绝。of=/dev/null 2>/dev/sda 会把状态信息写进磁盘。
+    # 目标是完整的词，白名单用 $ 锚定（2>"/dev/null"b0 的目标是 /dev/nullb0）；注释与引号里的 > 不是重定向
+    redirects:
+      - '^(?:dd)? (?:[0-9]+)?(?:>|>>|>\||>&)/dev/(?!(?:null|zero|tty|u?random|stdout|stderr)$)'
 examples:
   hit:
     - {shell: posix, command: "rm -rf /"}
     - {shell: posix, command: "sudo rm -rf ~"}
     - {shell: posix, command: "rm -rf $HOME/*"}
     - {shell: posix, command: "dd if=/dev/zero of=/dev/disk2"}
+    - {shell: posix, command: "dd if=img of=/dev/nullb0"}
+    - {shell: posix, command: "dd if=image.bin of=/dev/stdout >/dev/disk2"}
+    - {shell: posix, command: "dd if=image.bin of=/dev/fd/3 3>/dev/disk2"}
+    - {shell: posix, command: "dd if=/dev/zero of=/dev/null 2>/dev/sda"}
+    - {shell: posix, command: "dd if=/dev/zero of=/dev/shm/../sda count=1"}
+    - {shell: posix, command: "dd if='a #b' of=/dev/null 2>/dev/sda"}
+    - {shell: posix, command: "dd if=a\\ #b of=/dev/null 2>/dev/sda"}
+    - {shell: posix, command: "dd if=x of=/dev/null 2>\"/dev/null\"b0"}
+    - {shell: posix, command: "( dd if=x of=/dev/null ) 2>/dev/sda"}
+    # 文件描述符的别名：去向确认不了，保守拒绝（M1 同样拒绝；即使同一段把标准输出重定向到普通文件）
+    - {shell: posix, command: "dd if=disk.img of=/dev/stdout | gzip > disk.gz"}
+    - {shell: posix, command: "dd if=image.bin of=/dev/stdout >./copy.bin"}
     - {shell: posix, command: "mkfs.ext4 /dev/sdb1"}
     - {shell: posix, command: "cd /tmp && rm -rf /"}
     - {shell: posix, command: "sudo -u root rm -rf /"}
@@ -31,6 +52,10 @@ examples:
     - {shell: posix, command: "/bin/rm -rf /"}
     - {shell: posix, command: "timeout 5 rm -rf /"}
   miss:
+    - {shell: posix, command: "dd if=/dev/zero of=/dev/null bs=1m count=100"}
+    - {shell: posix, command: "dd if=/dev/zero of=/dev/null 2>/dev/null"}
+    - {shell: posix, command: "dd if=/dev/zero of=/dev/null bs=1M count=1 # example alternative: >/dev/sda"}
+    - {shell: posix, command: "dd if=\">/dev/sda\" count=0"}
     - {shell: posix, command: "rm -rf ./build"}
     - {shell: posix, command: "rm -rf \"./build\""}
     - {shell: posix, command: "rm -rf node_modules"}

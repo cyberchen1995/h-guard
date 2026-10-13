@@ -2,34 +2,67 @@ schema: 1
 id: guard_tampering
 enabled: true
 action: ask
-on: [exec]
+on: [exec, file_write, file_delete, file_rename]
 locked: true
 reason:
   en: 'Changes the guard''s own configuration or the harness''s hook settings'
   zh-CN: '改动安全护栏自身的配置或 harness 的 hook 设置'
 match:
   exec:
-    # 沿用 Python 版正则，M1 全部放在 any 组；M3 加入 PowerShell 检测时再按 shell 分组
+    # 沿用 Python 版正则，全部放在 any 组；M3 加入 PowerShell 检测时再按 shell 分组。
+    # 动词前的 (?<![\w.-]) 是 M2 加的词边界：grep confirm、--format、--rm 里的 rm 不算改动
     any:
-      - '(?:rm|unlink|mv|cp|install|ln|truncate|tee|chmod|chown|shred|sed\s+-i|perl\s+-[a-z]*i|python[0-9.]*\s+-c|node\s+-e|jq\b[^\n;&|]*>)\b[^\n;&|]*\.config/h-guard'
+      - '(?<![\w.-])(?:rm|unlink|mv|cp|install|ln|truncate|tee|chmod|chown|shred|sed\s+-i|perl\s+-[a-z]*i|python[0-9.]*\s+-c|node\s+-e|jq\b[^\n;&|]*>)\b[^\n;&|]*\.config/h-guard'
       - '>>?\s*[^\n;&|]*\.config/h-guard'
       - '\.config/h-guard[^\n;&|]*\|\s*(?:tee|sponge)\b'
-      - '(?:rm|unlink|mv|cp|install|ln|truncate|tee|chmod|chown|shred|sed\s+-i|perl\s+-[a-z]*i|python[0-9.]*\s+-c|node\s+-e|jq\b[^\n;&|]*>)\b[^\n;&|]*\.cache/h-guard'
+      - '(?<![\w.-])(?:rm|unlink|mv|cp|install|ln|truncate|tee|chmod|chown|shred|sed\s+-i|perl\s+-[a-z]*i|python[0-9.]*\s+-c|node\s+-e|jq\b[^\n;&|]*>)\b[^\n;&|]*\.cache/h-guard'
       - '>>?\s*[^\n;&|]*\.cache/h-guard'
       - '\.cache/h-guard[^\n;&|]*\|\s*(?:tee|sponge)\b'
-      - '(?:rm|unlink|mv|cp|install|ln|truncate|tee|chmod|chown|shred|sed\s+-i|perl\s+-[a-z]*i|python[0-9.]*\s+-c|node\s+-e|jq\b[^\n;&|]*>)\b[^\n;&|]*\.claude/settings(?:\.local)?\.json'
+      - '(?<![\w.-])(?:rm|unlink|mv|cp|install|ln|truncate|tee|chmod|chown|shred|sed\s+-i|perl\s+-[a-z]*i|python[0-9.]*\s+-c|node\s+-e|jq\b[^\n;&|]*>)\b[^\n;&|]*\.claude/settings(?:\.local)?\.json'
       - '>>?\s*[^\n;&|]*\.claude/settings(?:\.local)?\.json'
       - '\.claude/settings(?:\.local)?\.json[^\n;&|]*\|\s*(?:tee|sponge)\b'
-      - '(?:rm|unlink|mv|cp|install|ln|truncate|tee|chmod|chown|shred|sed\s+-i|perl\s+-[a-z]*i|python[0-9.]*\s+-c|node\s+-e|jq\b[^\n;&|]*>)\b[^\n;&|]*\.codex/hooks\.json'
+      - '(?<![\w.-])(?:rm|unlink|mv|cp|install|ln|truncate|tee|chmod|chown|shred|sed\s+-i|perl\s+-[a-z]*i|python[0-9.]*\s+-c|node\s+-e|jq\b[^\n;&|]*>)\b[^\n;&|]*\.codex/hooks\.json'
       - '>>?\s*[^\n;&|]*\.codex/hooks\.json'
       - '\.codex/hooks\.json[^\n;&|]*\|\s*(?:tee|sponge)\b'
-      - '(?:rm|unlink|mv|cp|install|ln|truncate|tee|chmod|chown|shred|sed\s+-i|perl\s+-[a-z]*i|python[0-9.]*\s+-c|node\s+-e|jq\b[^\n;&|]*>)\b[^\n;&|]*\.codex/config\.toml'
+      - '(?<![\w.-])(?:rm|unlink|mv|cp|install|ln|truncate|tee|chmod|chown|shred|sed\s+-i|perl\s+-[a-z]*i|python[0-9.]*\s+-c|node\s+-e|jq\b[^\n;&|]*>)\b[^\n;&|]*\.codex/config\.toml'
       - '>>?\s*[^\n;&|]*\.codex/config\.toml'
       - '\.codex/config\.toml[^\n;&|]*\|\s*(?:tee|sponge)\b'
-      - '(?:rm|unlink|mv|cp|install|ln|truncate|tee|chmod|chown|shred|sed\s+-i|perl\s+-[a-z]*i|python[0-9.]*\s+-c|node\s+-e|jq\b[^\n;&|]*>)\b[^\n;&|]*Library/(?:Application(?:\\ | )Support|Caches)/h-guard'
+      - '(?<![\w.-])(?:rm|unlink|mv|cp|install|ln|truncate|tee|chmod|chown|shred|sed\s+-i|perl\s+-[a-z]*i|python[0-9.]*\s+-c|node\s+-e|jq\b[^\n;&|]*>)\b[^\n;&|]*Library/(?:Application(?:\\ | )Support|Caches)/h-guard'
       - '>>?\s*[^\n;&|]*Library/(?:Application(?:\\ | )Support|Caches)/h-guard'
       - 'Library/(?:Application(?:\\ | )Support|Caches)/h-guard[^\n;&|]*\|\s*(?:tee|sponge)\b'
+  file:
+    # 文件动作（Write、Edit、NotebookEdit 等）按路径匹配，不调模型（spec §5.2）。
+    # {config}、{cache} 是 h-guard 实际使用的目录；~ 开头的写法另覆盖默认位置。
+    # 符号链接的目标同样受保护（pkg/detect/paths 的别名）：受保护文件本身是链接、目录这一层里的链接、
+    # 以及 cwd 与各级上级目录里的 .claude/settings.json 等项目级 hook 配置
+    paths:
+      - '{config}/**'
+      # 正在使用的文件写出固定路径：它们是符号链接时，链接目标直接受保护，不依赖目录扫描（评审 R2-02）
+      - '{config}/config.yaml'
+      - '{config}/consent.json'
+      - '{config}/.env'
+      - '{config}/rules/**' # 让规则目录这一层的符号链接（链接到别处的规则文件）也受保护
+      # hook 用 --config 加载的配置文件（评审 R3-03）：它同样控制护栏的行为
+      - '{extra_config}'
+      - '{cache}/**'
+      - '~/.config/h-guard/**'
+      - '~/.cache/h-guard/**'
+      - '~/Library/Application Support/h-guard/**'
+      - '~/Library/Caches/h-guard/**'
+      - '~/.claude/settings.json'
+      - '~/.claude/settings.local.json'
+      - '~/.codex/hooks.json'
+      - '~/.codex/config.toml'
+      - '**/.claude/settings.json'
+      - '**/.claude/settings.local.json'
+      - '**/.codex/hooks.json'
+      - '**/.codex/config.toml'
 bypassable_by_request: false
+# 本地命中不能被模型的低分否决（维护者决定，2026-10-13）：本地模型曾把往指令缓存写假指令的命令判为 0。
+# 代价：动词组只看动词与路径的先后，不分读写方向，只读的用法也会命中并请求确认，例如
+# cp ~/.claude/settings.json /tmp/backup.json、python3 -c "…open('~/.claude/settings.json')…"。
+# 模型关闭时它们本来就请求确认；按读写方向收窄正则留待以后（见 spec §5.2）
+vetoable_by_judge: false
 question:
   kind: probability
   instructions:
@@ -48,9 +81,28 @@ examples:
     - {shell: posix, command: "truncate -s 0 ~/.codex/hooks.json"}
     - {shell: posix, command: "rm -rf ~/Library/Application\\ Support/h-guard"}
     - {shell: posix, command: "cp /tmp/x \"$HOME/Library/Application Support/h-guard/config.yaml\""}
+    - {shell: posix, command: "/bin/rm ~/.codex/hooks.json"}
+    # 已知误报（只读，暂时保守处理）：动词在路径之前就命中，模型也不能撤销
+    - {shell: posix, command: "cp ~/.claude/settings.json /tmp/backup.json"}
+    - {shell: posix, command: "python3 -c \"print(open('/home/u/.claude/settings.json').read())\""}
+    - {action: file_write, path: "~/.claude/settings.json"}
+    - {action: file_write, path: ".claude/settings.local.json"}
+    - {action: file_write, path: "/xdg/config/h-guard/config.yaml"}
+    - {action: file_write, path: "/xdg/cache/h-guard/requests/s1/1.json"}
+    - {action: file_write, path: "~/.cache/h-guard/requests/s1/1.json"}
+    - {action: file_delete, path: "~/.codex/hooks.json"}
+    - {action: file_rename, path: "~/Library/Application Support/h-guard/config.yaml"}
+    - {action: file_write, path: "/etc/guard/extra.yaml"}
   miss:
     - {shell: posix, command: "cat ~/.claude/settings.json"}
     - {shell: posix, command: "jq . ~/.codex/hooks.json"}
     - {shell: posix, command: "ls ~/.config/h-guard"}
     - {shell: posix, command: "h-guard check 'git push'"}
     - {shell: posix, command: "grep -n hooks ~/.claude/settings.json"}
+    - {shell: posix, command: "grep confirm ~/.claude/settings.json"}
+    - {shell: posix, command: "stat --format=%a ~/.codex/hooks.json"}
+    - {action: file_write, path: "src/settings.json"}
+    - {action: file_write, path: "~/.config/h-guard-notes/todo.md"}
+    - {action: file_write, path: "~/.claude/CLAUDE.md"}
+    - {action: file_write, path: "/home/user/project/x.claude/settings.json"}
+    - {action: file_write, path: "/etc/guard/other.yaml"}

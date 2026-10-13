@@ -11,6 +11,7 @@ import (
 
 	"github.com/cyberchen1995/h-guard/internal/rules"
 	"github.com/cyberchen1995/h-guard/pkg/detect/command"
+	"github.com/cyberchen1995/h-guard/pkg/detect/paths"
 	"github.com/cyberchen1995/h-guard/pkg/guard"
 )
 
@@ -72,6 +73,11 @@ func TestBuiltinRules(t *testing.T) {
 	}
 	if s.Get("guard_tampering").Bypassable() || !s.Get("publish").Bypassable() {
 		t.Error("only guard_tampering is not bypassable")
+	}
+	for _, r := range s.All() {
+		if r.Vetoable() != (r.ID != "guard_tampering") {
+			t.Errorf("%s: vetoable = %v; only guard_tampering cannot be vetoed by the judge", r.ID, r.Vetoable())
+		}
 	}
 	if s.Get("recursive_delete").RadiusFloor != 1.25 {
 		t.Error("recursive_delete radius_floor must be 1.25")
@@ -137,6 +143,23 @@ match:
   exec:
     any: ['\bship-it\b']
 `
+
+// TestVetoableIsIndependentOfBypassable：vetoable_by_judge 与 bypassable_by_request 各自独立，默认都为 true。
+func TestVetoableIsIndependentOfBypassable(t *testing.T) {
+	dir := t.TempDir()
+	writeRule(t, dir, "a.yaml", strings.Replace(userPublish, "id: publish", "id: no_veto\nvetoable_by_judge: false", 1))
+	writeRule(t, dir, "b.yaml", strings.Replace(userPublish, "id: publish", "id: no_bypass\nbypassable_by_request: false", 1))
+	s, err := rules.Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r := s.Get("no_veto"); r.Vetoable() || !r.Bypassable() {
+		t.Errorf("no_veto: vetoable %v, bypassable %v", r.Vetoable(), r.Bypassable())
+	}
+	if r := s.Get("no_bypass"); !r.Vetoable() || r.Bypassable() {
+		t.Errorf("no_bypass: vetoable %v, bypassable %v", r.Vetoable(), r.Bypassable())
+	}
+}
 
 func TestUserRulesOverrideByID(t *testing.T) {
 	dir := t.TempDir()
@@ -314,5 +337,114 @@ match:
 	res, err := s.Get("slow").MatchExec(context.Background(), e)
 	if err != nil || !res.Hit || !res.TimedOut {
 		t.Errorf("res = %+v, err = %v", res, err)
+	}
+}
+
+func TestGuardTamperingCoversFileActions(t *testing.T) {
+	r := builtinSet(t).Get("guard_tampering")
+	for _, k := range []guard.ActionKind{guard.ActionFileWrite, guard.ActionFileDelete, guard.ActionFileRename} {
+		if !r.AppliesTo(k) {
+			t.Errorf("guard_tampering does not apply to %s", k)
+		}
+	}
+	if r.AppliesTo(guard.ActionFileRead) {
+		t.Error("reading the guard's files is not tampering")
+	}
+	env := rules.ExampleEnv
+	hit, complete := r.MatchFile(paths.Resolve("~/.codex/config.toml", env), env)
+	miss, _ := r.MatchFile(paths.Resolve("README.md", env), env)
+	if !hit || miss || !complete {
+		t.Error("MatchFile does not follow the rule's paths")
+	}
+	if hit, _ := builtinSet(t).Get("publish").MatchFile(paths.Resolve("~/.codex/config.toml", env), env); hit {
+		t.Error("an exec-only rule matched a path")
+	}
+	// 动词前要有词边界（M1 遗留的误拦）
+	s := builtinSet(t)
+	for _, cmd := range []string{"grep confirm ~/.claude/settings.json", "git log --format=%s -- ~/.codex/hooks.json",
+		"docker run --rm -v ~/.codex/config.toml:/c.toml:ro img"} {
+		if hits(t, s, cmd)["guard_tampering"] {
+			t.Errorf("%q matched guard_tampering", cmd)
+		}
+	}
+}
+
+// TestHarmlessDdTargetsAreNotCatastrophic：只豁免去向固定、写入无害的设备。/dev/stdout、/dev/stderr、/dev/fd/N
+// 可能已被 shell 重定向到块设备（评审 M2-04），与 M1 一样拒绝——包括同一段把标准输出重定向到普通文件的
+// 写法（已知的保守误报）。dd 的输出重定向指向设备时同样拒绝。
+func TestHarmlessDdTargetsAreNotCatastrophic(t *testing.T) {
+	s := builtinSet(t)
+	for _, cmd := range []string{"dd if=/dev/zero of=/dev/null count=1",
+		`dd if=x "of=/dev/null"`, "dd if=x of=/dev/tty", "dd if=/dev/zero of=/dev/null bs=1 count=1 2>/dev/null",
+		"dd if=/dev/zero of=/dev/null >./log 2>&1",
+		// 注释与引号里的 > 不是重定向（评审 R2-04）
+		"dd if=/dev/zero of=/dev/null bs=1M count=1 # example alternative: >/dev/sda",
+		"dd if=/dev/zero of=/dev/null count=1 #>/dev/sda", `dd if=/dev/zero of=/dev/null status='x >/dev/sda'`,
+		// 输入文件名里的字面 >（引号或转义）不是重定向（评审 R3-01）
+		`dd if=">/dev/sda" count=0`, `dd if=\>/dev/sda count=0`} {
+		if hits(t, s, cmd)["catastrophic"] {
+			t.Errorf("%q matched catastrophic", cmd)
+		}
+	}
+	for _, cmd := range []string{"dd if=x of=/dev/sda", "dd if=x of=/dev/nullb0", "sudo dd if=x of=/dev/rdisk4 bs=4m", `dd if=x "of=/dev/sdb"`,
+		"dd if=image.bin of=/dev/stdout >/dev/disk2", "dd if=image.bin of=/dev/fd/3 3>/dev/disk2", "dd if=x of=/dev/stderr",
+		"dd if=x of=/dev/fd/3", "dd if=/dev/zero of=/dev/null 2>/dev/sda", "dd if=x of=/dev/stdout", "dd if=x of=/dev/stdout | gzip",
+		"dd if=x of=/dev/stdout >./copy.bin", "dd if=/dev/zero of=/dev/null >>/dev/disk2", `dd if=x of=/dev/null 2>"/dev/sda"`,
+		// 目录不豁免：/dev/shm/../sda 回到 /dev（评审 R2-01）；/dev/shm 下的普通文件因此也拒绝（保守误报）
+		"dd if=/dev/zero of=/dev/shm/../sda count=1", "dd if=image.bin of=/dev/shm/../disk2", "dd if=/dev/urandom of=/dev/shm/blob bs=1k count=1",
+		"dd if=/dev/zero of=/dev/null/../sda",
+		// 引号里的 #、写在词中间的 #、被转义的引号都不开始注释，后面的重定向照常识别
+		"dd if='a #b' of=/dev/null 2>/dev/sda", "dd if=a#b of=/dev/null 2>/dev/sda", `dd if=a\'b of=/dev/null 2>/dev/sda`,
+		// 转义空格后的 # 不是注释；目标按完整的词比较；组合命令与 &> 的重定向；重定向写在命令前（评审 R3-01）
+		`dd if=a\ #b of=/dev/null 2>/dev/sda`, `dd if=x of=/dev/null 2>"/dev/null"b0`, "( dd if=x of=/dev/null ) 2>/dev/sda",
+		"dd if=x of=/dev/null &>/dev/sda", ">/dev/sda dd if=x of=/dev/null"} {
+		if !hits(t, s, cmd)["catastrophic"] {
+			t.Errorf("%q did not match catastrophic", cmd)
+		}
+	}
+}
+
+const builtinFileRule = `schema: 1
+id: protect
+action: ask
+on: [file_write]
+locked: true
+reason: {en: protected}
+match:
+  file:
+    paths: ['{config}/**']
+examples:
+  hit: [{action: file_write, path: /xdg/config/h-guard/x}]
+  miss: [{action: file_write, path: /tmp/x}]
+`
+
+func TestBuiltinFileRuleValidation(t *testing.T) {
+	r, err := rules.ParseBuiltin([]byte(builtinFileRule))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.CheckExamples(context.Background()); err != nil {
+		t.Error(err)
+	}
+	for name, body := range map[string]string{
+		"no paths":             strings.Replace(builtinFileRule, "paths: ['{config}/**']", "paths: []", 1),
+		"bad pattern":          strings.Replace(builtinFileRule, "'{config}/**'", "'relative/**'", 1),
+		"unknown placeholder":  strings.Replace(builtinFileRule, "'{config}/**'", "'{home}/**'", 1),
+		"file match, no file":  strings.Replace(strings.Replace(builtinFileRule, "on: [file_write]", "on: [exec]", 1), "  file:", "  exec: {any: [x]}\n  file:", 1),
+		"example action":       strings.Replace(builtinFileRule, "miss: [{action: file_write", "miss: [{action: file_delete", 1),
+		"example with command": strings.Replace(builtinFileRule, "path: /tmp/x}", "path: /tmp/x, command: ls}", 1),
+		"unlocked file rule":   strings.Replace(builtinFileRule, "locked: true\n", "", 1),
+	} {
+		if _, err := rules.ParseBuiltin([]byte(body)); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+	// 样例不命中时 CheckExamples 报错
+	bad, err := rules.ParseBuiltin([]byte(strings.Replace(builtinFileRule, "path: /tmp/x}", "path: /xdg/config/h-guard/y}", 1)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := bad.CheckExamples(context.Background()); err == nil || !strings.Contains(err.Error(), "/xdg/config/h-guard/y") {
+		t.Errorf("CheckExamples = %v", err)
 	}
 }
