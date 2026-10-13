@@ -95,11 +95,23 @@ func runEval(args []string, o Options) int {
 	// 调用失败时结论来自保守处理，不扫描、不建议；退出码为 1，并在 stderr 写明——stdout 常被重定向到文件，
 	// 否则用户只看到退出码 0（如 API key 没传进来，全部调用都以 auth 失败）
 	if failed := eval.Failed(outs); failed > 0 {
-		fmt.Fprintf(o.Stderr, "h-guard: %d of %d calls failed: %s. Nothing was swept or suggested; fix the backend and run again.\n",
-			failed, calledCount(outs), eval.FailureSummary(outs))
+		next := "Fix the backend and run again."
+		if *sweep {
+			next = "Nothing was swept or suggested; fix the backend and run again."
+		}
+		fmt.Fprintf(o.Stderr, "h-guard: %d of %d calls failed: %s. %s\n", failed, calledCount(outs), eval.FailureSummary(outs), next)
 		return 1
 	}
+	// 答案不完整同样不能作为证据（评审 M2-05）：照常扫描给出参考，但不建议档案，退出码为 1 并在 stderr 写明
+	incomplete := eval.Incomplete(outs)
+	if incomplete > 0 {
+		fmt.Fprintf(o.Stderr, "h-guard: %d cases had questions without a valid answer (see === Incomplete answers in the report). "+
+			"Fix the backend and run again.\n", incomplete)
+	}
 	if !*sweep {
+		if incomplete > 0 {
+			return 1
+		}
 		return 0
 	}
 	tables, th, score, err := eval.Sweep(ctx, env, outs, st.thresholds)
@@ -108,11 +120,10 @@ func runEval(args []string, o Options) int {
 		return 1
 	}
 	eval.WriteSweep(o.Stdout, tables)
-	// 调用失败或答案不完整时，结论靠保守处理得出，不是模型的判断：不给建议档案（评审 M2-05）
-	if failed, incomplete := eval.Failed(outs), eval.Incomplete(outs); failed > 0 || incomplete > 0 {
-		fmt.Fprintf(o.Stdout, "\nNo profile suggested: %d calls failed and %d cases had questions without a valid answer. "+
-			"Fix the backend and run again.\n", failed, incomplete)
-		return 0
+	// 答案不完整时，结论靠缺题时的保守处理得出，不是模型的判断：不给建议档案（评审 M2-05）
+	if incomplete > 0 {
+		fmt.Fprintf(o.Stdout, "\nNo profile suggested: %d cases had questions without a valid answer. Fix the backend and run again.\n", incomplete)
+		return 1
 	}
 	profile := st.cal.Profile
 	if profile == "" {

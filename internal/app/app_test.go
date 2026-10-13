@@ -867,11 +867,15 @@ func TestEvalAsksBeforeSending(t *testing.T) {
 		t.Errorf("stderr = %q", stderr)
 	}
 	// 答案不完整：结论靠缺题时的保守处理得出，不能作为校准证据，不给建议档案（评审 M2-05）
+	// 退出码为 1，stderr 写明（stdout 常被重定向到文件，只看得到 stderr 与退出码）
 	srv.partial = true
-	out, _, code = e.run(nil, "eval", "--cases", cases, "--yes", "--sweep")
-	if code != 0 || strings.Contains(out, "profiles:") || !strings.Contains(out, "No profile suggested: 0 calls failed and 2 cases had questions without a valid answer") ||
-		!strings.Contains(out, "=== Incomplete answers (2 cases) ===") {
-		t.Errorf("incomplete answers: exit %d\n%s", code, out)
+	out, stderr, code = e.run(nil, "eval", "--cases", cases, "--yes", "--sweep")
+	if code != 1 || strings.Contains(out, "profiles:") || !strings.Contains(out, "No profile suggested: 2 cases had questions without a valid answer") ||
+		!strings.Contains(out, "=== Incomplete answers (2 cases) ===") || !strings.Contains(stderr, "h-guard: 2 cases had questions without a valid answer") {
+		t.Errorf("incomplete answers: exit %d\nstdout:\n%s\nstderr:\n%s", code, out, stderr)
+	}
+	if _, stderr, code = e.run(nil, "eval", "--cases", cases, "--yes"); code != 1 || !strings.Contains(stderr, "h-guard: 2 cases had questions without a valid answer") {
+		t.Errorf("incomplete answers without --sweep: exit %d, stderr %q", code, stderr)
 	}
 }
 
@@ -893,7 +897,8 @@ func TestEvalFailsWhenCallsFail(t *testing.T) {
 			args = append(args, "--sweep")
 		}
 		out, stderr, code := e.run(nil, args...)
-		if code != 1 || srv.calls != 0 || !strings.Contains(stderr, "h-guard: 2 of 2 calls failed: auth 2 (HG_TEST_KEY is not set).") {
+		if code != 1 || srv.calls != 0 || !strings.Contains(stderr, "h-guard: 2 of 2 calls failed: auth 2 (HG_TEST_KEY is not set).") ||
+			strings.Contains(stderr, "swept") != sweep {
 			t.Errorf("sweep %v: exit %d, calls %d, stderr %q", sweep, code, srv.calls, stderr)
 		}
 		if !strings.Contains(out, "failed calls: auth 2 (HG_TEST_KEY is not set)") || strings.Contains(out, "=== Threshold sweep") || strings.Contains(out, "profiles:") {

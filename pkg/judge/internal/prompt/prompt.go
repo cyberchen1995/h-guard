@@ -11,6 +11,7 @@ package prompt
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"slices"
@@ -124,8 +125,9 @@ func ParseBatch(raw []byte, qs []judge.Question) (map[string]judge.Answer, error
 	var wire struct {
 		Answers map[string]json.RawMessage `json:"answers"`
 	}
+	// 错误只给固定说明：encoding/json 的错误里有出错位置的模型输出字符，而错误说明会显示给用户
 	if err := json.Unmarshal(raw, &wire); err != nil {
-		return nil, fmt.Errorf("answers are not a JSON object: %w", err)
+		return nil, errors.New("answers are not a JSON object")
 	}
 	// 模型有时把整个回复再包一层：{"answers": {"answers": {...}}}（anthropic 的工具输入本身就是回复对象）。
 	// 只有 answers 里唯一的键是 answers、且没有哪道题叫 answers 时才拆开；拆不开就按原样处理

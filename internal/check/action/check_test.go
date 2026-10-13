@@ -66,8 +66,8 @@ func with(a map[string]judge.Answer, kv ...any) map[string]judge.Answer {
 	return a
 }
 
-// jevThresholds 是 Python 版在 Jev 上校准的阈值（内置 jev 档案）。测试与 golden 回放钉住它们：
-// golden 的答案是在这套阈值下录制的（维护者决定，2026-10-13）。
+// jevThresholds 是 Python 版在 Jev 上校准的阈值（M1 的内置 jev 档案；M2 起内置档案按新措辞重新校准）。
+// 测试与 golden 回放钉住它们：golden 的答案是在这套阈值下录制的（维护者决定，2026-10-13）。
 var jevThresholds = config.Thresholds{Hit: 0.5, Veto: 0.2, Requested: 0.7, RadiusFloor: map[string]float64{"recursive_delete": 1.25}}
 
 // newCheck 返回用内置规则与默认配置的检查；j 没有注入阈值时用 jevThresholds。

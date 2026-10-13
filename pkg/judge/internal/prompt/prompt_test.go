@@ -193,3 +193,14 @@ func TestParseBatchUnwrapsARedundantAnswersLevel(t *testing.T) {
 		t.Errorf("answers beside other keys = %+v", got)
 	}
 }
+
+// TestParseBatchErrorIsFixedText：解析失败的错误只给固定说明，不带模型输出的任何字符——eval 会把错误说明显示出来，
+// 而 encoding/json 的语法错误里有出错位置的字符（如 invalid character 'S'）。
+func TestParseBatchErrorIsFixedText(t *testing.T) {
+	for _, raw := range []string{`Sure! {"answers": {}}`, `"just text"`, `[1, 2]`} {
+		_, err := ParseBatch([]byte(raw), []judge.Question{probQ})
+		if err == nil || err.Error() != "answers are not a JSON object" {
+			t.Errorf("%q: err = %v", raw, err)
+		}
+	}
+}
