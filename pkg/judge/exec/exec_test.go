@@ -1,0 +1,253 @@
+package exec_test
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	osexec "os/exec"
+	"path/filepath"
+	"sort"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/cyberchen1995/h-guard/pkg/judge"
+	"github.com/cyberchen1995/h-guard/pkg/judge/exec"
+	"github.com/cyberchen1995/h-guard/pkg/judge/judgetest"
+)
+
+var (
+	probQ  = judge.Question{ID: "publish", Kind: judge.KindProbability, Instructions: judge.Instructions{Question: "Would it publish?"}}
+	scaleQ = judge.Question{ID: "blast_radius", Kind: judge.KindScale, Instructions: judge.Instructions{Question: "How much?"},
+		Levels: []string{"a", "b", "c", "d"}}
+)
+
+// helperEnv 打开测试二进制的「判断程序」模式；它必须列在后端的 env 里才会传给程序，
+// 这本身也验证了环境变量白名单。
+const helperEnv = "HG_EXEC_HELPER"
+
+// TestMain 让测试二进制兼作判断程序：HG_EXEC_HELPER 指定行为。
+func TestMain(m *testing.M) {
+	if mode := os.Getenv(helperEnv); mode != "" {
+		os.Exit(helper(mode))
+	}
+	os.Exit(m.Run())
+}
+
+func helper(mode string) int {
+	switch mode {
+	case "exit3":
+		return 3
+	case "garbage":
+		fmt.Print("not json")
+		return 0
+	case "big":
+		fmt.Print(strings.Repeat("x", 1<<20+10))
+		return 0
+	case "orphan":
+		return orphan()
+	case "daemon", "daemon-holding":
+		return daemon(mode == "daemon-holding")
+	case "orphan-child":
+		os.WriteFile(os.Getenv("HG_EXEC_PIDFILE"), []byte(fmt.Sprint(os.Getpid())), 0o600)
+		time.Sleep(time.Minute)
+		return 0
+	}
+	var req struct {
+		Protocol  string           `json:"protocol"`
+		State     map[string]any   `json:"state"`
+		Questions []judge.Question `json:"questions"`
+	}
+	if err := json.NewDecoder(os.Stdin).Decode(&req); err != nil || req.Protocol != exec.Protocol {
+		return 2
+	}
+	answers := map[string]any{"unasked": map[string]any{"p": 0.9}}
+	for _, q := range req.Questions {
+		switch {
+		case mode == "nulls" && q.Kind == judge.KindScale:
+			answers[q.ID] = map[string]any{"dist": []any{0.5, nil, 0.5, 0}}
+		case mode == "nulls":
+			answers[q.ID] = map[string]any{"p": nil}
+		case q.Kind == judge.KindScale:
+			answers[q.ID] = map[string]any{"dist": []float64{0, 0.25, 0.75, 0}}
+		default:
+			answers[q.ID] = map[string]any{"p": 0.25}
+		}
+	}
+	model := "helper-model"
+	if mode == "env" { // 把收到的环境变量名与工作目录放进 model 字段带回
+		var keys []string
+		for _, kv := range os.Environ() {
+			keys = append(keys, strings.SplitN(kv, "=", 2)[0])
+		}
+		sort.Strings(keys)
+		wd, _ := os.Getwd()
+		model = strings.Join(keys, ",") + "|" + wd
+	}
+	json.NewEncoder(os.Stdout).Encode(map[string]any{"answers": answers, "model": model,
+		"usage": map[string]int{"input_tokens": 10, "output_tokens": 2}})
+	return 0
+}
+
+// orphan 启动一个继承 stdout 的子进程，等它写下 pid 后一直挂着：模拟遗留子进程的判断程序。
+func orphan() int {
+	self, _ := os.Executable()
+	child := osexec.Command(self)
+	child.Env = append(os.Environ(), helperEnv+"=orphan-child")
+	child.Stdout = os.Stdout
+	if child.Start() != nil {
+		return 1
+	}
+	for i := 0; i < 200; i++ {
+		if data, _ := os.ReadFile(os.Getenv("HG_EXEC_PIDFILE")); len(data) > 0 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	time.Sleep(time.Minute)
+	return 0
+}
+
+// daemon 启动一个子进程（写下 pid 后一直挂着），然后正常输出答案并退出：模拟留下后台进程的判断程序。
+// holding 为真时子进程继承 stdout，输出管道一直被占着。
+func daemon(holding bool) int {
+	self, _ := os.Executable()
+	child := osexec.Command(self)
+	child.Env = append(os.Environ(), helperEnv+"=orphan-child")
+	if holding {
+		child.Stdout = os.Stdout
+	}
+	if child.Start() != nil {
+		return 1
+	}
+	for i := 0; i < 200; i++ {
+		if data, _ := os.ReadFile(os.Getenv("HG_EXEC_PIDFILE")); len(data) > 0 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	fmt.Print(`{"answers": {}}`)
+	return 0
+}
+
+// newBackend 返回以测试二进制为判断程序、行为为 mode 的后端。
+func newBackend(t *testing.T, mode string, o exec.Options) *exec.Backend {
+	t.Helper()
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(helperEnv, mode)
+	o.Command = self
+	o.Env = append(o.Env, helperEnv)
+	b, err := exec.New("local-judge", o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
+func TestAnswersFromTheProgram(t *testing.T) {
+	b := newBackend(t, "answer", exec.Options{})
+	resp, err := b.Ask(context.Background(), map[string]any{"call": "x"}, []judge.Question{probQ, scaleQ})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p := resp.Answers["publish"].P; p == nil || *p != 0.25 {
+		t.Errorf("publish = %v", p)
+	}
+	if d := resp.Answers["blast_radius"].Dist; len(d) != 4 || d[2] != 0.75 {
+		t.Errorf("blast_radius = %v", d)
+	}
+	if _, ok := resp.Answers["unasked"]; ok {
+		t.Error("an answer to a question that was not asked was kept")
+	}
+	if resp.Model != "helper-model" || resp.Usage.InputTokens != 10 {
+		t.Errorf("model %q usage %+v", resp.Model, resp.Usage)
+	}
+}
+
+func TestNullAnswersStayMissing(t *testing.T) {
+	b := newBackend(t, "nulls", exec.Options{})
+	resp, err := b.Ask(context.Background(), map[string]any{}, []judge.Question{probQ, scaleQ})
+	if err != nil || len(resp.Answers) != 0 {
+		t.Errorf("answers %+v err %v", resp.Answers, err)
+	}
+}
+
+func TestOnlyListedEnvAndConfiguredDir(t *testing.T) {
+	t.Setenv("HG_EXEC_SECRET", "synthetic-secret")
+	t.Setenv("HG_EXEC_LISTED", "1")
+	b := newBackend(t, "env", exec.Options{Env: []string{"HG_EXEC_LISTED"}})
+	dir := t.TempDir()
+	b.SetDir(dir)
+	resp, err := b.Ask(context.Background(), map[string]any{}, []judge.Question{probQ})
+	if err != nil {
+		t.Fatal(err)
+	}
+	keys, wd, _ := strings.Cut(resp.Model, "|")
+	got := map[string]bool{}
+	for _, k := range strings.Split(keys, ",") {
+		got[k] = true
+	}
+	if got["HG_EXEC_SECRET"] || !got["HG_EXEC_LISTED"] || !got[helperEnv] || (os.Getenv("PATH") != "" && !got["PATH"]) {
+		t.Errorf("env keys = %s", keys)
+	}
+	want, _ := filepath.EvalSymlinks(dir)
+	if got, _ := filepath.EvalSymlinks(wd); got != want {
+		t.Errorf("working dir = %q, want %q", got, want)
+	}
+}
+
+func TestFailuresAreErrors(t *testing.T) {
+	for mode, kind := range map[string]judge.ErrorKind{
+		"exit3":   judge.Unavailable,
+		"garbage": judge.BadResponse,
+		"big":     judge.BadResponse,
+	} {
+		b := newBackend(t, mode, exec.Options{})
+		resp, err := b.Ask(context.Background(), map[string]any{}, []judge.Question{probQ})
+		if judge.KindOf(err) != kind || len(resp.Answers) != 0 {
+			t.Errorf("%s: err = %v (want %v), answers %+v", mode, err, kind, resp.Answers)
+		}
+	}
+	b, _ := exec.New("missing", exec.Options{Command: filepath.Join(t.TempDir(), "no-such-program")})
+	if _, err := b.Ask(context.Background(), map[string]any{}, []judge.Question{probQ}); judge.KindOf(err) != judge.Unavailable {
+		t.Errorf("missing program: %v", err)
+	}
+}
+
+func TestConformance(t *testing.T) {
+	judgetest.Run(t, func(t *testing.T) judge.Backend { return newBackend(t, "answer", exec.Options{}) },
+		[]judge.Question{probQ, scaleQ})
+}
+
+func TestNewAndDescribe(t *testing.T) {
+	for name, o := range map[string]exec.Options{
+		"relative command": {Command: "judge"},
+		"env with value":   {Command: "/opt/judge", Env: []string{"KEY=v"}},
+		"negative timeout": {Command: "/opt/judge", TimeoutMS: -1},
+		"bad probability":  {Command: "/opt/judge", Probability: "guess"},
+	} {
+		if _, err := exec.New("b", o); err == nil {
+			t.Errorf("%s: no error", name)
+		}
+	}
+	b, err := exec.New("local", exec.Options{Command: "/opt/judge/../judge/run", Args: []string{"--model", "a b"}, Model: "m1", Probability: "logprobs"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := b.Describe(); got != (judge.Info{Target: `"/opt/judge/run" "--model" "a b"`, Model: "m1", Probability: "logprobs"}) {
+		t.Errorf("Describe() = %+v", got)
+	}
+	if c := b.Caps(); !c.Calibrated || !c.Batch {
+		t.Errorf("caps = %+v", c)
+	}
+	if b2, _ := exec.New("v", exec.Options{Command: "/opt/judge"}); b2.Caps().Calibrated || b2.Describe().Probability != "verbalized" {
+		t.Errorf("default probability: caps %+v, info %+v", b2.Caps(), b2.Describe())
+	}
+	if _, ok := judge.LookupType(exec.Type); !ok {
+		t.Error("type not registered")
+	}
+}
