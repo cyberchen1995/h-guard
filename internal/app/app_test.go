@@ -943,10 +943,13 @@ func TestBackendTargetsAreMasked(t *testing.T) {
 	}
 }
 
+// credentialName 是像凭据的名字：用作后端名、profile 名、规则 id 时，任何输出都不能原样带出它。
+const credentialName = "sk-proj-abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmno"
+
 // TestCLINamesAreMasked：后端名、profile 名、自定义规则 id 都可能像凭据，CLI 的全部输出经过同一道遮蔽
 // （评审 R3-02）；遮蔽后的建议档案仍是合法的 YAML。普通的名字原样显示。
 func TestCLINamesAreMasked(t *testing.T) {
-	const name = "sk-proj-abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmno"
+	const name = credentialName
 	e := newEnv(t)
 	e.tty = true
 	srv := newJevServer(t, 0.9)
@@ -983,6 +986,24 @@ func TestCLINamesAreMasked(t *testing.T) {
 	os.WriteFile(p, []byte("version: 1\n"+yaml), 0o600)
 	if _, err := config.Load(p); err != nil {
 		t.Errorf("the masked suggestion is not valid config: %v\n%s", err, yaml)
+	}
+}
+
+// TestHookReasonMasksTheBackendName：hook 的原因同样是遮蔽边界（spec §9）。同意缺失时的提示带后端名，
+// 像凭据的后端名换成占位符；hook 的输出不经过 CLI 的遮蔽，必须在生成原因时遮蔽。
+func TestHookReasonMasksTheBackendName(t *testing.T) {
+	e := newEnv(t)
+	srv := newJevServer(t, 0.9)
+	e.t.Setenv("HG_TEST_KEY", "test-key-not-a-secret")
+	e.config("version: 1\njudge: {enabled: true, backend: '" + credentialName + "'}\n" +
+		"backends: {'" + credentialName + "': {type: typesafe, model: jev-latest, profile: jev, base_url: '" + srv.URL + "', api_key_env: HG_TEST_KEY}}\n")
+	out, stderr, _ := e.run(bash("git push origin main"), "hook", "claudecode", "--event", "PreToolUse")
+	d, reason := decisionOf(t, out)
+	if d != "ask" || srv.calls != 0 || !strings.Contains(reason, "h-guard backend enable [redacted]") {
+		t.Errorf("decision %s (calls %d), reason %q", d, srv.calls, reason)
+	}
+	if strings.Contains(out+stderr, credentialName) {
+		t.Errorf("the hook output leaked the backend name:\n%s%s", out, stderr)
 	}
 }
 

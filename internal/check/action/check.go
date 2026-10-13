@@ -412,7 +412,8 @@ func (c *Check) render(res Result, in Input) guard.Verdict {
 	case unbypassable:
 		add(i18n.KeyHintManual, nil)
 	case in.JudgeFallback == FallbackConsentMissing:
-		add(i18n.KeyHintConsent, map[string]string{"backend": c.Config.Judge.Backend})
+		// 后端名由用户起，可能像凭据；hook 的原因是遮蔽边界（spec §9），不经过 CLI 的遮蔽
+		add(i18n.KeyHintConsent, map[string]string{"backend": secrets.Redact(c.Config.Judge.Backend)})
 	case in.Judge == JudgeFailed:
 		add(i18n.KeyHintJudgeUnavailable, nil)
 	case in.Truncated:
