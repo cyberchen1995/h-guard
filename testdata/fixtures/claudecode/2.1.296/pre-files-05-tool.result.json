@@ -1,0 +1,43 @@
+{
+  "harness": "claudecode",
+  "version": "2.1.296",
+  "scenario": "pre-files",
+  "platform": "darwin-arm64",
+  "run_id": "20261013T020955Z",
+  "event": "tool.result",
+  "stdin": {
+    "protocol": "h-guard.ext/v1",
+    "harness": "claudecode",
+    "harness_version": "2.1.296",
+    "hook": "tool.result",
+    "session": {
+      "id": "01b2c648-49ab-4ecb-9fd6-f3708a42be13",
+      "cwd": "/tmp/hg-m0/claudecode/pre-files"
+    },
+    "data": {
+      "pattern": "hello",
+      "path": "/tmp/hg-m0/claudecode/pre-files",
+      "output_mode": "content",
+      "-n": true,
+      "tool": "Grep",
+      "tool_use_id": "toolu_01HJfULASxPVViJg6x9xAKEy"
+    },
+    "result": {
+      "ref": 1,
+      "result": {
+        "mode": "content",
+        "numFiles": 0,
+        "filenames": [],
+        "content": "notes.txt:1:hello",
+        "numLines": 1,
+        "totalLines": 1
+      },
+      "text": "notes.txt:1:hello",
+      "isReadOnly": true
+    }
+  },
+  "reply": {
+    "protocol": "h-guard.ext/v1",
+    "action": "pass"
+  }
+}

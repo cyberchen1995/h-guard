@@ -1,0 +1,40 @@
+{
+  "harness": "claudecode",
+  "version": "2.1.296",
+  "scenario": "pre-mode-default",
+  "platform": "darwin-arm64",
+  "run_id": "20261013T020955Z",
+  "event": "tool.result",
+  "stdin": {
+    "protocol": "h-guard.ext/v1",
+    "harness": "claudecode",
+    "harness_version": "2.1.296",
+    "hook": "tool.result",
+    "session": {
+      "id": "36e7b97e-a74d-400a-a62b-8bcd3196ff9f",
+      "cwd": "/tmp/hg-m0/claudecode/pre-mode-default"
+    },
+    "data": {
+      "command": "echo hg-m1-default",
+      "description": "Print the hg-m1-default string via echo",
+      "tool": "Bash",
+      "tool_use_id": "toolu_015dheqV3bRYBBmFvVrfgZB8"
+    },
+    "result": {
+      "ref": 1,
+      "result": {
+        "stdout": "hg-m1-default",
+        "stderr": "",
+        "interrupted": false,
+        "isImage": false,
+        "noOutputExpected": false
+      },
+      "text": "hg-m1-default",
+      "isReadOnly": true
+    }
+  },
+  "reply": {
+    "protocol": "h-guard.ext/v1",
+    "action": "pass"
+  }
+}

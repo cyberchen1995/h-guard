@@ -1,0 +1,26 @@
+{
+  "harness": "claudecode",
+  "version": "2.1.296",
+  "scenario": "pre-monitor",
+  "platform": "darwin-arm64",
+  "run_id": "20261013T020955Z",
+  "event": "PreToolUse",
+  "stdin": {
+    "session_id": "77d77097-fb48-4685-a23e-247d88608cb5",
+    "transcript_path": "/home/user/.claude/projects/-tmp-hg-m0-claudecode-pre-monitor/77d77097-fb48-4685-a23e-247d88608cb5.jsonl",
+    "cwd": "/tmp/hg-m0/claudecode/pre-monitor",
+    "scratchpad_dir": "/tmp/claude-uid/-tmp-hg-m0-claudecode-pre-monitor/77d77097-fb48-4685-a23e-247d88608cb5/scratchpad",
+    "prompt_id": "49c9c927-626b-4515-895b-e60affef095a",
+    "permission_mode": "acceptEdits",
+    "effort": {
+      "level": "medium"
+    },
+    "hook_event_name": "PreToolUse",
+    "tool_name": "ToolSearch",
+    "tool_input": {
+      "query": "select:Monitor",
+      "max_results": 1
+    },
+    "tool_use_id": "toolu_01UYj3GgmBjLqrDNMaBMCrRW"
+  }
+}

@@ -1,0 +1,40 @@
+{
+  "harness": "claudecode",
+  "version": "2.1.296",
+  "scenario": "pre-mcp",
+  "platform": "darwin-arm64",
+  "run_id": "20261013T020955Z",
+  "event": "tool.result",
+  "stdin": {
+    "protocol": "h-guard.ext/v1",
+    "harness": "claudecode",
+    "harness_version": "2.1.296",
+    "hook": "tool.result",
+    "session": {
+      "id": "d553115a-4bcc-4ced-a0ab-c6383b3ca6d8",
+      "cwd": "/tmp/hg-m0/claudecode/pre-mcp"
+    },
+    "data": {
+      "query": "select:mcp__hgm0__hg_m0_report",
+      "max_results": 1,
+      "tool": "ToolSearch",
+      "tool_use_id": "toolu_01VHzvD2VHAnv8zFJDGe8SRt"
+    },
+    "result": {
+      "ref": 1,
+      "result": {
+        "matches": [
+          "mcp__hgm0__hg_m0_report"
+        ],
+        "query": "select:mcp__hgm0__hg_m0_report",
+        "total_deferred_tools": 17
+      },
+      "text": "",
+      "isReadOnly": true
+    }
+  },
+  "reply": {
+    "protocol": "h-guard.ext/v1",
+    "action": "pass"
+  }
+}

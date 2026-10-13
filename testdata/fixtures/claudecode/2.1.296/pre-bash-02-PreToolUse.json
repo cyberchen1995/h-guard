@@ -1,0 +1,26 @@
+{
+  "harness": "claudecode",
+  "version": "2.1.296",
+  "scenario": "pre-bash",
+  "platform": "darwin-arm64",
+  "run_id": "20261013T020955Z",
+  "event": "PreToolUse",
+  "stdin": {
+    "session_id": "844fd10a-36a0-4bcf-8f6e-43593720827b",
+    "transcript_path": "/home/user/.claude/projects/-tmp-hg-m0-claudecode-pre-bash/844fd10a-36a0-4bcf-8f6e-43593720827b.jsonl",
+    "cwd": "/tmp/hg-m0/claudecode/pre-bash",
+    "scratchpad_dir": "/tmp/claude-uid/-tmp-hg-m0-claudecode-pre-bash/844fd10a-36a0-4bcf-8f6e-43593720827b/scratchpad",
+    "prompt_id": "acb2817a-7f23-46e2-86fb-a5d76a2091c6",
+    "permission_mode": "acceptEdits",
+    "effort": {
+      "level": "medium"
+    },
+    "hook_event_name": "PreToolUse",
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "echo hg-m1-bash",
+      "description": "Echo the requested test string"
+    },
+    "tool_use_id": "toolu_016symLbnd5pqhFPspYhR1HV"
+  }
+}

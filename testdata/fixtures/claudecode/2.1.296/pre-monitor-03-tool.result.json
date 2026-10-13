@@ -1,0 +1,40 @@
+{
+  "harness": "claudecode",
+  "version": "2.1.296",
+  "scenario": "pre-monitor",
+  "platform": "darwin-arm64",
+  "run_id": "20261013T020955Z",
+  "event": "tool.result",
+  "stdin": {
+    "protocol": "h-guard.ext/v1",
+    "harness": "claudecode",
+    "harness_version": "2.1.296",
+    "hook": "tool.result",
+    "session": {
+      "id": "77d77097-fb48-4685-a23e-247d88608cb5",
+      "cwd": "/tmp/hg-m0/claudecode/pre-monitor"
+    },
+    "data": {
+      "query": "select:Monitor",
+      "max_results": 1,
+      "tool": "ToolSearch",
+      "tool_use_id": "toolu_01UYj3GgmBjLqrDNMaBMCrRW"
+    },
+    "result": {
+      "ref": 1,
+      "result": {
+        "matches": [
+          "Monitor"
+        ],
+        "query": "select:Monitor",
+        "total_deferred_tools": 17
+      },
+      "text": "",
+      "isReadOnly": true
+    }
+  },
+  "reply": {
+    "protocol": "h-guard.ext/v1",
+    "action": "pass"
+  }
+}

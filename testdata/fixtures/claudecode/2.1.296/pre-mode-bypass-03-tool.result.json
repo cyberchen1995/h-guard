@@ -1,0 +1,40 @@
+{
+  "harness": "claudecode",
+  "version": "2.1.296",
+  "scenario": "pre-mode-bypass",
+  "platform": "darwin-arm64",
+  "run_id": "20261013T020955Z",
+  "event": "tool.result",
+  "stdin": {
+    "protocol": "h-guard.ext/v1",
+    "harness": "claudecode",
+    "harness_version": "2.1.296",
+    "hook": "tool.result",
+    "session": {
+      "id": "ca4c8806-73b3-422f-9daa-700cdd4a7eb0",
+      "cwd": "/tmp/hg-m0/claudecode/pre-mode-bypass"
+    },
+    "data": {
+      "command": "echo hg-m1-bypass",
+      "description": "Echo the requested string",
+      "tool": "Bash",
+      "tool_use_id": "toolu_01V4SzC5ZSDfyw46dz3Hy4yB"
+    },
+    "result": {
+      "ref": 1,
+      "result": {
+        "stdout": "hg-m1-bypass",
+        "stderr": "",
+        "interrupted": false,
+        "isImage": false,
+        "noOutputExpected": false
+      },
+      "text": "hg-m1-bypass",
+      "isReadOnly": true
+    }
+  },
+  "reply": {
+    "protocol": "h-guard.ext/v1",
+    "action": "pass"
+  }
+}
