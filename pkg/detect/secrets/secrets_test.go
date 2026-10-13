@@ -1,0 +1,246 @@
+package secrets_test
+
+import (
+	"regexp"
+	"strings"
+	"testing"
+
+	"github.com/cyberchen1995/h-guard/pkg/detect/secrets"
+)
+
+func rules(hits []secrets.Hit) []string {
+	var out []string
+	for _, h := range hits {
+		out = append(out, h.Rule)
+	}
+	return out
+}
+
+func TestFindPositives(t *testing.T) {
+	tests := []struct {
+		text, rule, value string
+	}{
+		{"export OPENAI=sk-abcdefghijklmnop1234", secrets.RulePrefixedToken, "sk-abcdefghijklmnop1234"},
+		{"gh auth login --with-token ghp_ABCDEFGHIJKLMNOPQRST", secrets.RulePrefixedToken, "ghp_ABCDEFGHIJKLMNOPQRST"},
+		{`curl -H "Authorization: Bearer abcdefghijklmnopqrstuv" x`, secrets.RuleBearer, "abcdefghijklmnopqrstuv"},
+		{"api_key=supersecretvalue", secrets.RuleAssignment, "supersecretvalue"},
+		{"PASSWORD: hunter2hunter2", secrets.RuleAssignment, "hunter2hunter2"},
+		{"aws configure set aws_access_key_id AKIAIOSFODNN7EXAMPL0", secrets.RuleAWSAccessKey, "AKIAIOSFODNN7EXAMPL0"},
+		{"psql postgres://admin:s3cr3tP4ss@db.internal:5432/app", secrets.RuleURLPassword, "s3cr3tP4ss"},
+		{"-----BEGIN RSA PRIVATE KEY-----\nMIIEow\n-----END RSA PRIVATE KEY-----", secrets.RulePrivateKey,
+			"-----BEGIN RSA PRIVATE KEY-----\nMIIEow\n-----END RSA PRIVATE KEY-----"},
+	}
+	for _, tt := range tests {
+		hits := secrets.Find(tt.text)
+		if len(hits) != 1 || hits[0].Rule != tt.rule || tt.text[hits[0].Start:hits[0].End] != tt.value {
+			t.Errorf("Find(%q) = %+v, want one %s hit on %q", tt.text, hits, tt.rule, tt.value)
+		}
+	}
+}
+
+func TestFindNegatives(t *testing.T) {
+	for _, text := range []string{
+		"id 123e4567-e89b-12d3-a456-426614174000",           // UUID
+		"git show a94a8fe5ccb19ba61c4c0873d391e987982fbbd3", // git 哈希
+		"token=abc",                     // 太短
+		"git push origin main",          // 普通命令
+		"https://example.com/path@v1.2", // URL 里没有用户名密码
+		"echo skill-issue",              // 不是 sk- 前缀 token
+	} {
+		if hits := secrets.Find(text); len(hits) != 0 {
+			t.Errorf("Find(%q) = %v, want none", text, rules(hits))
+		}
+	}
+}
+
+func TestQuotedAssignments(t *testing.T) {
+	tests := []struct{ text, want string }{
+		{`export PASSWORD="syntheticPassword123"`, `export PASSWORD="[redacted]"`},
+		{`password='syntheticPassword123'`, `password='[redacted]'`},
+		{`{"api_key":"syntheticPassword123"}`, `{"api_key":"[redacted]"}`},
+		{`{"api_key": "two words here"}`, `{"api_key": "[redacted]"}`},
+		{`token="escaped \" quote inside"`, `token="[redacted]"`},
+		{`secret="unterminatedValue`, `secret="[redacted]`},
+	}
+	for _, tt := range tests {
+		if got := secrets.Redact(tt.text); got != tt.want {
+			t.Errorf("Redact(%s) = %s, want %s", tt.text, got, tt.want)
+		}
+	}
+}
+
+func TestOverlappingHitsAreMergedIntoTheirUnion(t *testing.T) {
+	for _, text := range []string{
+		`password=prefix:sk-abcdefghijklmnop:syntheticSuffix123`,
+		`postgres://u:prefix:sk-abcdefghijklmnop:syntheticSuffix123@host/db`,
+	} {
+		got := secrets.Redact(text)
+		if strings.Contains(got, "prefix") || strings.Contains(got, "syntheticSuffix123") || strings.Count(got, "[redacted]") != 1 {
+			t.Errorf("Redact(%s) = %s", text, got)
+		}
+	}
+}
+
+func TestOverlappingRulesReportedOnce(t *testing.T) {
+	// 赋值里的值本身是带前缀的 token：只报一次，取更具体的规则
+	hits := secrets.Find("token=ghp_ABCDEFGHIJKLMNOPQRST")
+	if len(hits) != 1 || hits[0].Rule != secrets.RulePrefixedToken {
+		t.Errorf("hits = %+v", hits)
+	}
+}
+
+func TestRedactKeepsContext(t *testing.T) {
+	got := secrets.Redact(`curl -H "Authorization: Bearer abcdefghijklmnopqrstuv" -d api_key=supersecretvalue`)
+	want := `curl -H "Authorization: Bearer [redacted]" -d api_key=[redacted]`
+	if got != want {
+		t.Errorf("Redact =\n%s\nwant\n%s", got, want)
+	}
+	if secrets.Redact("ls -la") != "ls -la" {
+		t.Error("Redact changed text without secrets")
+	}
+}
+
+func TestMaskForLog(t *testing.T) {
+	got := secrets.MaskForLog("token: 123e4567-e89b-12d3-a456-426614174000")
+	want := "token: [secret:credentials.assignment len=36 charset=hex shape=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx]"
+	if got != want {
+		t.Errorf("MaskForLog =\n%s\nwant\n%s", got, want)
+	}
+	long := "password=" + strings.Repeat("Gz9", 30)
+	if got := secrets.MaskForLog(long); strings.Contains(got, "shape=") || !strings.Contains(got, "len=90 charset=alnum") {
+		t.Errorf("long value mask = %s", got)
+	}
+	if strings.Contains(secrets.MaskForLog("api_key=supersecretvalue"), "supersecretvalue") {
+		t.Error("MaskForLog leaked the value")
+	}
+	// 非 ASCII 的值：shape 不能把字符原样留下
+	if got := secrets.MaskForLog("password=中文口令测试值"); strings.Contains(got, "中文") || !strings.Contains(got, "len=7 charset=mixed shape=xxxxxxx]") {
+		t.Errorf("unicode mask = %s", got)
+	}
+	if got := secrets.MaskForLog("pwd=ab!#$%cd"); !strings.Contains(got, "shape=xxxxxxxx]") {
+		t.Errorf("symbols must not survive in shape: %s", got)
+	}
+}
+
+// TestMaskShapeNeverReplaysTheValue：shape 只在实际替换了至少一半字符时输出，且绝不等于原值（评审 N05）。
+func TestMaskShapeNeverReplaysTheValue(t *testing.T) {
+	tests := []struct {
+		value     string
+		wantShape string // 空表示不输出 shape
+	}{
+		{"~@+=/-_.:~@+=", ""},    // 全是分隔符
+		{"a~@+=/-_.:", ""},       // 1/10 被替换
+		{"ab-_cd-_", "xx-_xx-_"}, // 恰好一半：输出
+		{"ab-_c-_.", ""},         // 3/8 被替换
+		{"中文口令测试值", "xxxxxxx"},   // Unicode 全部替换
+		{"口令-_/:", ""},           // Unicode 2/6
+		{"xxxxxxxx", ""},         // 原值本身就是 x：shape 会等于原值，不输出
+	}
+	for _, tt := range tests {
+		got := secrets.MaskForLog("password=" + tt.value)
+		hasShape := strings.Contains(got, " shape=")
+		switch {
+		case tt.wantShape == "" && hasShape:
+			t.Errorf("%q: shape must be omitted: %s", tt.value, got)
+		case tt.wantShape != "" && !strings.Contains(got, "shape="+tt.wantShape+"]"):
+			t.Errorf("%q: want shape %q: %s", tt.value, tt.wantShape, got)
+		case strings.Contains(got, tt.value) || strings.Contains(got, "shape="+tt.value+"]"):
+			t.Errorf("%q: the value is replayed: %s", tt.value, got)
+		}
+	}
+}
+
+// TestMaskIsIdempotent：遮蔽过的文本再遮蔽一次不变，占位符本身不会被当成凭据；伪造的占位符藏不住真正的凭据。
+func TestMaskIsIdempotent(t *testing.T) {
+	for _, text := range []string{
+		"token: 123e4567-e89b-12d3-a456-426614174000 and Bearer abcdefghijklmnopqrstuv",
+		"password=中文口令测试值 api_key=supersecretvalue",
+	} {
+		once := secrets.MaskForLog(text)
+		if twice := secrets.MaskForLog(once); twice != once {
+			t.Errorf("MaskForLog is not idempotent:\n%s\n%s", once, twice)
+		}
+		if r := secrets.Redact(secrets.Redact(text)); r != secrets.Redact(text) {
+			t.Errorf("Redact is not idempotent: %s", r)
+		}
+	}
+	forged := "x [secret:sk_abcdefghijklmnop len=1 charset=hex] y"
+	if got := secrets.MaskForLog(forged); strings.Contains(got, "sk_abcdefghijklmnop") {
+		t.Errorf("a forged placeholder hid a token: %s", got)
+	}
+}
+
+// TestPlaceholderDoesNotHideAdjacentCredentials：原文里的占位符写法只让完全落在它里面的命中免于遮蔽；
+// 紧挨着占位符、或把占位符夹在中间的原始凭据照常遮蔽（评审 R3-01）。
+func TestPlaceholderDoesNotHideAdjacentCredentials(t *testing.T) {
+	const canary = "syntheticPassword123"
+	const marker = "[secret:credentials.assignment len=20 charset=alnum]"
+	for _, text := range []string{
+		"password=" + canary + "[redacted]",
+		"password=[redacted]" + canary,
+		"password=" + marker + canary,
+		`password="` + canary + " " + marker + `"`,
+		`{"api_key": "[redacted]` + canary + `"}`,
+		"postgres://admin:" + canary + "[redacted]@db/app",
+		"postgres://admin:[redacted]" + canary + "@db/app",
+		"-----BEGIN RSA PRIVATE KEY-----\n" + canary + "[redacted]\n-----END RSA PRIVATE KEY-----",
+		"Bearer " + canary + "[redacted]",
+	} {
+		for name, apply := range map[string]func(string) string{"Redact": secrets.Redact, "MaskForLog": secrets.MaskForLog} {
+			out := apply(text)
+			if strings.Contains(out, canary) {
+				t.Errorf("%s(%q) left the credential: %s", name, text, out)
+			}
+			if again := apply(out); again != out {
+				t.Errorf("%s is not idempotent on %q:\n%s\n%s", name, text, out, again)
+			}
+		}
+	}
+	// 只有占位符的赋值不是凭据：遮蔽过的输出保持不变
+	for _, text := range []string{"password=[redacted]", `"api_key": "[redacted]"`, "password=" + marker, "postgres://admin:[redacted]@db"} {
+		if hits := secrets.Find(text); len(hits) != 0 {
+			t.Errorf("%q: placeholder treated as a credential: %+v", text, hits)
+		}
+	}
+}
+
+// generated 匹配本包生成的占位符（测试用的宽松写法）。
+var generated = regexp.MustCompile(`\[redacted\]|\[secret:[a-z_.]+ len=\d+ charset=[a-z0-9]+(?: shape=[^\]]*)?\]`)
+
+// FuzzMaskNeverLeaksFoundValues：找到的值不会原样留在输出里（生成的占位符之外），shape 不重放值；再遮蔽一次时，
+// 生成的占位符不会单独被当作凭据。任意拼接的输入再遮蔽一次可能多遮住与占位符相邻的原文（替换改变了相邻匹配的上下文），
+// 所以这里不要求逐字节不变；正常输出的不变性由 TestMaskIsIdempotent 等用例覆盖。
+func FuzzMaskNeverLeaksFoundValues(f *testing.F) {
+	for _, seed := range []string{"api_key=supersecretvalue", "Bearer abcdefghijklmnopqrstuv", "x sk-abcdefghijklmnop y",
+		`export PASSWORD="syntheticPassword123"`, `password=prefix:sk-abcdefghijklmnop:syntheticSuffix123`, "password=中文口令测试值",
+		"password=~@+=/-_.:~@+=", "password=ab-_cd-_", "password=[redacted]syntheticPassword123",
+		"password=[secret:credentials.assignment len=20 charset=alnum]syntheticPassword123",
+		"password=[secret:credentials.assignment rset=0 charset=alnum]syntheticPassword123",
+		"password=xxxxxx sk-000vw000pAssword=00Q00s"} {
+		f.Add(seed)
+	}
+	f.Fuzz(func(t *testing.T, text string) {
+		masked := secrets.MaskForLog(text)
+		// 找到的值可能恰好是占位符的开头（如原文里不完整的 [secret:credentials.assignment），所以先去掉生成的占位符
+		rest := generated.ReplaceAllString(masked, "\x00")
+		hits := secrets.Find(text)
+		for _, h := range hits {
+			// 同一串字符也可能出现在别处（不是凭据，原样保留），所以只检查只出现一次的值
+			value := text[h.Start:h.End]
+			if len(value) >= 12 && strings.Count(text, value) == 1 && strings.Contains(rest, value) {
+				t.Fatalf("MaskForLog leaked %q", value)
+			}
+			// shape 只含 x 与分隔符，别的值的 shape 可能碰巧等于这个值；只有一个命中、原文也没有 shape 时才能确定归属
+			if len(hits) == 1 && !strings.Contains(text, "shape=") && strings.Contains(masked, "shape="+value+"]") {
+				t.Fatalf("shape replays %q", value)
+			}
+		}
+		for _, h := range secrets.Find(masked) {
+			for _, p := range generated.FindAllStringIndex(masked, -1) {
+				if p[0] <= h.Start && h.End <= p[1] {
+					t.Fatalf("a generated placeholder was treated as a credential: %q", masked)
+				}
+			}
+		}
+	})
+}
