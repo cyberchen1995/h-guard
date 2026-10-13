@@ -339,6 +339,40 @@ func TestWatchdogKeepsACommittedDeny(t *testing.T) {
 	}
 }
 
+// TestNoDirsMeansNoRelativePaths：配置目录、缓存目录都取不到（HOME 与 XDG 变量都没有）时，不从当前目录读配置、
+// 规则与 .env，也不往当前目录写指令缓存与日志：项目里的 config.yaml 停用不了灾难性规则，提示词不会落到项目目录
+// （评审 M1 终审）。
+func TestNoDirsMeansNoRelativePaths(t *testing.T) {
+	proj := t.TempDir()
+	t.Setenv("HOME", "")
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("XDG_CACHE_HOME", "")
+	t.Chdir(proj)
+	if err := os.WriteFile("config.yaml", []byte("version: 1\nrules: {catastrophic: {enabled: false}}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(".env", []byte("HG_FROM_PROJECT=1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	Main([]string{"hook", "claudecode", "--event", "PreToolUse"}, Options{Stdin: bytes.NewReader(bash("rm -rf /")), Stdout: &out, Stderr: io.Discard})
+	if d, _ := decisionOf(t, out.String()); d != "deny" {
+		t.Errorf("a project config.yaml disabled a built-in rule: %s", d)
+	}
+	if os.Getenv("HG_FROM_PROJECT") != "" {
+		t.Error("the project's .env was applied")
+	}
+	Main([]string{"hook", "claudecode", "--event", "prompt.submit"}, Options{Stdin: bytes.NewReader(promptReq("HG_PRIVATE_PROMPT", "composer")), Stdout: io.Discard, Stderr: io.Discard})
+	entries, _ := os.ReadDir(proj)
+	var names []string
+	for _, e := range entries {
+		names = append(names, e.Name())
+	}
+	if !slices.Equal(names, []string{".env", "config.yaml"}) {
+		t.Errorf("h-guard wrote into the project directory: %v", names)
+	}
+}
+
 // TestWatchdogAggregatesCommits：看门狗按 guard.Run 的规则累计提交——同样严时取后一次更完整的结论，
 // 较宽提交的降级原因也保留；提交后 Check 改动自己的切片不影响已记下的内容（评审 R3-04）。
 func TestWatchdogAggregatesCommits(t *testing.T) {

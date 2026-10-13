@@ -6,7 +6,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
@@ -156,7 +155,7 @@ func (h *hookRun) run(ctx context.Context, extra string) {
 	}
 	h.logs.Decisions, h.logs.RetentionDays = s.cfg.Log.Decisions, s.cfg.Log.RetentionDays
 
-	prompts := &cache.Prompts{Dir: filepath.Join(h.o.CacheDir, "prompts"), Now: h.o.Now}
+	prompts := &cache.Prompts{Dir: under(h.o.CacheDir, "prompts"), Now: h.o.Now}
 	switch ev.Kind {
 	case guard.EventPrompt:
 		// M1 没有 outbound 检查，提示词不会被拦截，全部写入指令缓存（spec §5.4）

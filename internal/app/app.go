@@ -30,8 +30,18 @@ type Options struct {
 	Stdout, Stderr io.Writer
 	Getenv         func(string) string
 	Now            func() time.Time
-	ConfigDir      string // 默认 store.ConfigDir()
-	CacheDir       string // 默认 store.CacheDir()
+	// 默认 store.ConfigDir()、store.CacheDir()。取不到时为空：不读用户配置、规则与 .env（只用内置默认），
+	// 也不写指令缓存与日志——不能退回相对路径，否则当前项目里的文件会配置护栏、提示词会写进项目（评审 M1 终审）。
+	ConfigDir string
+	CacheDir  string
+}
+
+// under 返回 dir 下的 name；dir 为空（目录取不到）时返回空串，调用方据此跳过读写。
+func under(dir, name string) string {
+	if dir == "" {
+		return ""
+	}
+	return filepath.Join(dir, name)
 }
 
 func (o *Options) fill() {
@@ -120,13 +130,13 @@ func load(o Options, extra string) (setup, error) {
 	}
 	s.catalog = cat
 	s.locale = i18n.SelectLocale("", o.Getenv)
-	cfg, err := config.Load(filepath.Join(o.ConfigDir, "config.yaml"), extra)
+	cfg, err := config.Load(under(o.ConfigDir, "config.yaml"), extra)
 	if err != nil {
 		return s, err
 	}
 	s.cfg = cfg
 	s.locale = i18n.SelectLocale(cfg.Locale, o.Getenv)
-	set, err := rules.Load(filepath.Join(o.ConfigDir, "rules"))
+	set, err := rules.Load(under(o.ConfigDir, "rules"))
 	if err != nil {
 		return s, err
 	}
@@ -140,6 +150,9 @@ func load(o Options, extra string) (setup, error) {
 		return s, err
 	}
 	s.rules = set
+	if o.ConfigDir == "" {
+		return s, nil
+	}
 	if err := config.ApplyDotEnv(o.ConfigDir); err != nil {
 		return s, &config.Error{File: filepath.Join(o.ConfigDir, ".env"), Issues: []config.Issue{{Path: "file", Msg: "cannot be read"}}}
 	}

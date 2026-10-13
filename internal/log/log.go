@@ -37,7 +37,7 @@ type Health struct {
 	Where   string    `json:"where,omitempty"` // 内部异常时 panic 所在的函数与行号
 }
 
-// Writer 写两类记录。Dir 为 <cache_dir>/h-guard。
+// Writer 写两类记录。Dir 为 <cache_dir>/h-guard；为空（缓存目录取不到）时什么都不写。
 type Writer struct {
 	Dir           string
 	Decisions     bool // log.decisions
@@ -54,7 +54,7 @@ func (w *Writer) now() time.Time {
 
 // Health 追加健康记录（每个原因码一条），并清理 7 天前的文件。失败忽略。
 func (w *Writer) Health(recs []Health) {
-	if len(recs) == 0 {
+	if w.Dir == "" || len(recs) == 0 { // 缓存目录取不到时不写（不能退回相对路径）
 		return
 	}
 	now := w.now()
@@ -105,7 +105,7 @@ type Latency struct {
 
 // Decision 追加一条决策日志（log.decisions 关闭时什么都不做），并按 retention_days 清理。
 func (w *Writer) Decision(d Decision) {
-	if !w.Decisions {
+	if w.Dir == "" || !w.Decisions {
 		return
 	}
 	now := w.now()

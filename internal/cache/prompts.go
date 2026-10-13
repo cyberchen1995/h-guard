@@ -27,7 +27,7 @@ const MaxEntries = 50
 
 // Prompts 是指令缓存，根目录通常为 <cache_dir>/h-guard/prompts。
 type Prompts struct {
-	Dir string
+	Dir string           // 为空（缓存目录取不到）时不读不写
 	Now func() time.Time // 为 nil 时用 time.Now
 }
 
@@ -61,7 +61,7 @@ func (p *Prompts) sessionDir(harness, session string) string {
 // Add 写入一条指令（遮蔽凭据后），并顺带清理过期会话与本会话多余的条目。
 // 会话 ID 为空或指令为空白时不写。r.At 为零时取当前时间。
 func (p *Prompts) Add(harness, session string, r guard.Request) error {
-	if session == "" || strings.TrimSpace(r.Text) == "" {
+	if p.Dir == "" || session == "" || strings.TrimSpace(r.Text) == "" {
 		return nil
 	}
 	if r.At.IsZero() {
@@ -85,7 +85,7 @@ func (p *Prompts) Add(harness, session string, r guard.Request) error {
 
 // Recent 返回会话中最近的至多 max 条未过期指令，按时间先后排列（最新的在最后）。
 func (p *Prompts) Recent(harness, session string, max int) []guard.Request {
-	if session == "" || max <= 0 {
+	if p.Dir == "" || session == "" || max <= 0 {
 		return nil
 	}
 	names := entryNames(p.sessionDir(harness, session))
