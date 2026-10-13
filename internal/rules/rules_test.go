@@ -362,14 +362,19 @@ func TestGuardTamperingCoversFileActions(t *testing.T) {
 	// 动词前要有词边界（M1 遗留的误拦）
 	s := builtinSet(t)
 	for _, cmd := range []string{"grep confirm ~/.claude/settings.json", "git log --format=%s -- ~/.codex/hooks.json",
-		"docker run --rm -v ~/.codex/config.toml:/c.toml:ro img"} {
+		"docker run --rm -v ~/.codex/config.toml:/c.toml:ro img", "tool -rm ~/.claude/settings.json",
+		"-rm ~/.claude/settings.json"} {
 		if hits(t, s, cmd)["guard_tampering"] {
 			t.Errorf("%q matched guard_tampering", cmd)
 		}
 	}
-	// g 前缀的 GNU 工具（Homebrew 的 gsed、grm 等）同样是改动
+	// 单字母前缀的工具（Homebrew 的 gsed、grm 等 GNU 工具，scp、srm、xcp、rcp、ipython）与连字符连着的工具名
+	// （uu-rm）同样是改动：M1 覆盖它们，词边界不能丢掉
 	for _, cmd := range []string{"gsed -i 's/h-guard//' ~/.claude/settings.json", "grm ~/.claude/settings.json",
-		"gcp /tmp/x ~/.codex/hooks.json", "gtee ~/.config/h-guard/config.yaml"} {
+		"gcp /tmp/x ~/.codex/hooks.json", "gtee ~/.config/h-guard/config.yaml",
+		"scp /tmp/evil.yaml ~/.config/h-guard/config.yaml", "srm ~/.config/h-guard/config.yaml",
+		"xcp /tmp/x ~/.claude/settings.json", "rcp /tmp/x ~/.codex/hooks.json",
+		`ipython -c "open('/home/u/.claude/settings.json','w').write('{}')"`, "uu-rm ~/.codex/config.toml"} {
 		if !hits(t, s, cmd)["guard_tampering"] {
 			t.Errorf("%q did not match guard_tampering", cmd)
 		}
