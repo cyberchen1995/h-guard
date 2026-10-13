@@ -401,6 +401,12 @@ var specs = map[string]harnessSpec{
 			"prompt.submit": {"data.text", "data.origin"},
 		},
 	},
+	// Claude Code 插件内经典 PreToolUse 的原生输入（M1 补录，spec §7.7）
+	"claudecode-native": {
+		nameKey: "hook_event_name",
+		common:  []string{"session_id", "transcript_path", "cwd", "hook_event_name", "permission_mode"},
+		events:  map[string][]string{"PreToolUse": {"tool_name", "tool_input", "tool_use_id"}},
+	},
 	"codex": {
 		nameKey: "hook_event_name",
 		common:  []string{"session_id", "cwd", "hook_event_name", "transcript_path"},
@@ -414,7 +420,7 @@ var specs = map[string]harnessSpec{
 
 // Validate 检查样本的元信息与必备字段，并确认事件名与 Event 一致。
 func Validate(f Fixture) error {
-	spec, ok := specs[f.Harness]
+	spec, ok := specs[specName(f)]
 	if !ok {
 		return fmt.Errorf("unknown harness %q", f.Harness)
 	}
@@ -441,12 +447,20 @@ func Validate(f Fixture) error {
 	return nil
 }
 
-// cwdKeys 是各 harness 记录中工作目录所在的字段。
-var cwdKeys = map[string]string{"claudecode": "session.cwd", "codex": "cwd"}
+// specName 返回样本适用的字段表：Claude Code 的 PreToolUse 是经典 hook 的原生输入，其余是扩展请求。
+func specName(f Fixture) string {
+	if f.Harness == "claudecode" && f.Event == "PreToolUse" {
+		return "claudecode-native"
+	}
+	return f.Harness
+}
+
+// cwdKeys 是各类记录中工作目录所在的字段。
+var cwdKeys = map[string]string{"claudecode": "session.cwd", "claudecode-native": "cwd", "codex": "cwd"}
 
 // CwdOf 返回样本记录的工作目录；harness 未知或没有该字段时返回空串。
 func CwdOf(f Fixture) string {
-	key, ok := cwdKeys[f.Harness]
+	key, ok := cwdKeys[specName(f)]
 	if !ok {
 		return ""
 	}

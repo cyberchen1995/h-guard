@@ -217,6 +217,8 @@ func TestValidate(t *testing.T) {
 		`"session":{"id":"s","cwd":"/tmp/hg-m0"},"data":{"tool":"Bash","input":{"command":"ls"}},"decided":"allow"}`
 	pre := `{"session_id":"s","cwd":"/tmp/hg-m0","hook_event_name":"PreToolUse","transcript_path":"/x",` +
 		`"tool_name":"Bash","tool_input":{"command":"ls"},"tool_use_id":"t1","turn_id":"u1"}`
+	ccPre := `{"session_id":"s","cwd":"/tmp/hg-m0","hook_event_name":"PreToolUse","transcript_path":"/x",` +
+		`"permission_mode":"default","tool_name":"Bash","tool_input":{"command":"ls"},"tool_use_id":"t1"}`
 	fx := func(h, ev, stdin string) Fixture {
 		return Fixture{Harness: h, Version: "1", Scenario: "s", Event: ev, Stdin: json.RawMessage(stdin)}
 	}
@@ -232,6 +234,8 @@ func TestValidate(t *testing.T) {
 		{"claudecode wrong protocol", fx("claudecode", "tool.check", `{"protocol":"other","harness":"claudecode",`+
 			`"harness_version":"x","hook":"tool.check","session":{"id":"s","cwd":"/c"},"data":{"tool":"Bash"},"decided":"allow"}`), true},
 		{"codex pre ok", fx("codex", "PreToolUse", pre), false},
+		{"claudecode native pre ok", fx("claudecode", "PreToolUse", ccPre), false},
+		{"claudecode native pre lacks permission_mode", fx("claudecode", "PreToolUse", pre), true},
 		{"codex event mismatch", fx("codex", "PostToolUse", pre), true},
 		{"unknown harness", fx("other", "PreToolUse", pre), true},
 		{"stdin not object", fx("codex", "PreToolUse", `"x"`), true},
@@ -291,6 +295,7 @@ func TestCwdOf(t *testing.T) {
 		{Fixture{Harness: "codex", Stdin: json.RawMessage(`{"cwd":"/tmp/hg-m0/codex/proj"}`)}, "/tmp/hg-m0/codex/proj"},
 		{Fixture{Harness: "claudecode", Stdin: json.RawMessage(`{"session":{"cwd":"/tmp/hg-m0/claudecode/s"}}`)}, "/tmp/hg-m0/claudecode/s"},
 		{Fixture{Harness: "claudecode", Stdin: json.RawMessage(`{"session":{}}`)}, ""},
+		{Fixture{Harness: "claudecode", Event: "PreToolUse", Stdin: json.RawMessage(`{"cwd":"/tmp/hg-m0/claudecode/p"}`)}, "/tmp/hg-m0/claudecode/p"},
 		{Fixture{Harness: "other", Stdin: json.RawMessage(`{"cwd":"/x"}`)}, ""},
 	}
 	for _, tt := range tests {

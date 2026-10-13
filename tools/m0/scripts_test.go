@@ -64,7 +64,7 @@ func TestScriptsRunEveryJudgedScenario(t *testing.T) {
 // 每条 harness 调用都要显式从 /dev/null 读 stdin。
 func TestHarnessRunsDoNotReadStdin(t *testing.T) {
 	stmt := regexp.MustCompile(`(?ms)^\s*(?:\(cd [^\n]*&& )?(?:codex exec|claude -p)\b.*?\n[^\n]*\|\| rc=\$\?`)
-	for _, script := range []string{"claude-scripted.sh", "codex-scripted.sh"} {
+	for _, script := range []string{"claude-scripted.sh", "codex-scripted.sh", "../m1/claude-pretooluse.sh"} {
 		src, err := os.ReadFile(script)
 		if err != nil {
 			t.Fatal(err)
