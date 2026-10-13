@@ -6,7 +6,10 @@ package config
 
 import (
 	"bytes"
+	"crypto/sha256"
 	_ "embed"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -18,6 +21,7 @@ import (
 
 	"github.com/cyberchen1995/h-guard/pkg/detect/secrets"
 	"github.com/cyberchen1995/h-guard/pkg/guard"
+	"github.com/cyberchen1995/h-guard/pkg/judge"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -66,10 +70,18 @@ type RuleSwitch struct {
 	Enabled *bool `yaml:"enabled"`
 }
 
-// Profile 是一个后端的校准档案（spec §8.3）。指纹在 M2 生成与核对。
+// Profile 是一个后端的校准档案（spec §8.3）。没有指纹或指纹不一致的档案不使用（未校准）。
 type Profile struct {
 	Thresholds  ProfileThresholds `yaml:"thresholds"`
-	Fingerprint map[string]string `yaml:"fingerprint"`
+	Fingerprint *Fingerprint      `yaml:"fingerprint"`
+}
+
+// Fingerprint 是校准档案的指纹（spec §8.3）：档案只对同一模型、同一种概率获取方式、同一套题目有效。
+// h-guard eval --sweep 输出的建议档案带着它。
+type Fingerprint struct {
+	Model       string `yaml:"model"`
+	Probability string `yaml:"probability"`
+	Questions   string `yaml:"questions"` // QuestionsDigest 的结果
 }
 
 // ProfileThresholds 是档案中写下的阈值。用指针区分「没写」与「写了 0」：三个阈值都必须写明，
@@ -321,6 +333,15 @@ func (c *Config) issues() []Issue {
 				bad("profiles."+name+".thresholds.radius_floor."+rule, "got %g, want 0..3", v)
 			}
 		}
+		if fp := c.Profiles[name].Fingerprint; fp != nil {
+			path := "profiles." + name + ".fingerprint"
+			if fp.Model == "" || fp.Probability == "" {
+				bad(path, "needs model, probability and questions")
+			}
+			if !digestPattern.MatchString(fp.Questions) {
+				bad(path+".questions", "want sha256:<64 hex digits>")
+			}
+		}
 	}
 	switch c.Policy.OnUnavailable {
 	case "pass", "ask", "deny":
@@ -381,22 +402,71 @@ func (c *Config) RuleEnabled(id string) (enabled, set bool) {
 	return *s.Enabled, true
 }
 
-// Thresholds 返回当前后端所用档案的阈值副本；后端未指定档案、档案不存在或档案不完整时用保守默认值
-// （spec §8.3；不完整的档案在 Validate 中已是配置错误）。
-func (c *Config) Thresholds() Thresholds {
-	t := Thresholds{Hit: ConservativeThresholds.Hit, Veto: ConservativeThresholds.Veto, Requested: ConservativeThresholds.Requested}
-	if name := c.Backends[c.Judge.Backend].Profile; name != "" {
-		if p, ok := c.Profiles[name]; ok && p.Thresholds.Hit != nil && p.Thresholds.Veto != nil && p.Thresholds.Requested != nil {
-			t = Thresholds{Hit: *p.Thresholds.Hit, Veto: *p.Thresholds.Veto, Requested: *p.Thresholds.Requested,
-				RadiusFloor: p.Thresholds.RadiusFloor}
-		}
+// 未校准的原因码（spec §8.3，status 显示）。
+const (
+	UncalibratedNoProfile     = "no_profile"          // 后端没有指定档案，或档案不完整
+	UncalibratedNoFingerprint = "no_fingerprint"      // 档案没有指纹
+	UncalibratedUndescribed   = "backend_undescribed" // 后端说不出自己的模型与概率获取方式
+	UncalibratedModel         = "model_changed"
+	UncalibratedProbability   = "probability_changed"
+	UncalibratedQuestions     = "questions_changed" // 题目措辞或题集变了
+)
+
+// Calibration 说明阈值的来源。
+type Calibration struct {
+	Profile string // 后端引用的档案名；没有时为空
+	Reason  string // 未校准的原因码；为空表示用的是档案
+}
+
+// Calibrated 报告阈值是否来自指纹一致的档案。
+func (c Calibration) Calibrated() bool { return c.Reason == "" }
+
+var digestPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+
+// QuestionsDigest 返回题集指纹：题目按 ID 排序后的 JSON 的 SHA-256，写作 sha256:<hex>。
+// 任一题的措辞、级别或题集组成变化，指纹随之变化。
+func QuestionsDigest(qs []judge.Question) string {
+	sorted := slices.Clone(qs)
+	slices.SortFunc(sorted, func(a, b judge.Question) int { return strings.Compare(a.ID, b.ID) })
+	data, _ := json.Marshal(sorted) // judge.Question 只含字符串、切片与字符串 map，不会失败
+	sum := sha256.Sum256(data)
+	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
+// ThresholdsFor 返回后端 name（已构造为 b）使用的阈值：档案完整、有指纹，且指纹与 b 的模型、概率获取方式
+// 及题集指纹 digest 一致时用档案，否则用保守默认值（spec §8.3）。返回的 RadiusFloor 是副本。
+func (c *Config) ThresholdsFor(name string, b judge.Backend, digest string) (Thresholds, Calibration) {
+	conservative := Thresholds{Hit: ConservativeThresholds.Hit, Veto: ConservativeThresholds.Veto,
+		Requested: ConservativeThresholds.Requested, RadiusFloor: map[string]float64{}}
+	cal := Calibration{Profile: c.Backends[name].Profile}
+	p, ok := c.Profiles[cal.Profile]
+	if cal.Profile == "" || !ok || p.Thresholds.Hit == nil || p.Thresholds.Veto == nil || p.Thresholds.Requested == nil {
+		cal.Reason = UncalibratedNoProfile
+		return conservative, cal
 	}
-	floors := make(map[string]float64, len(t.RadiusFloor))
-	for k, v := range t.RadiusFloor {
-		floors[k] = v
+	d, ok := b.(judge.Describer)
+	fp := p.Fingerprint
+	switch {
+	case fp == nil:
+		cal.Reason = UncalibratedNoFingerprint
+	case !ok:
+		cal.Reason = UncalibratedUndescribed
+	case fp.Model != d.Describe().Model:
+		cal.Reason = UncalibratedModel
+	case fp.Probability != d.Describe().Probability:
+		cal.Reason = UncalibratedProbability
+	case fp.Questions != digest:
+		cal.Reason = UncalibratedQuestions
 	}
-	t.RadiusFloor = floors
-	return t
+	if cal.Reason != "" {
+		return conservative, cal
+	}
+	t := Thresholds{Hit: *p.Thresholds.Hit, Veto: *p.Thresholds.Veto, Requested: *p.Thresholds.Requested,
+		RadiusFloor: make(map[string]float64, len(p.Thresholds.RadiusFloor))}
+	for k, v := range p.Thresholds.RadiusFloor {
+		t.RadiusFloor[k] = v
+	}
+	return t, cal
 }
 
 // ShellFor 返回 harness 标不出 shell 时使用的 shell：配置值，未配置时为 posix（spec §5.3；

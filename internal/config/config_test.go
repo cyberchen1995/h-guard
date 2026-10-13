@@ -1,13 +1,33 @@
 package config
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/cyberchen1995/h-guard/pkg/judge"
 	_ "github.com/cyberchen1995/h-guard/pkg/judge/typesafe"
+)
+
+// described 是说得出自己模型与概率获取方式的后端。
+type described struct{ info judge.Info }
+
+func (described) Name() string            { return "d" }
+func (described) Caps() judge.BackendCaps { return judge.BackendCaps{} }
+func (described) Ask(context.Context, map[string]any, []judge.Question) (judge.Response, error) {
+	return judge.Response{}, nil
+}
+func (d described) Describe() judge.Info { return d.info }
+
+// undescribed 没有实现 judge.Describer。
+type undescribed struct{ judge.Backend }
+
+var (
+	digestA = QuestionsDigest([]judge.Question{{ID: "a", Kind: judge.KindProbability, Instructions: judge.Instructions{Question: "A?"}}})
+	jevInfo = judge.Info{Target: "https://api.typesafe.ai:443", Model: "jev-latest", Probability: "native"}
 )
 
 func write(t *testing.T, dir, name, content string) string {
@@ -27,9 +47,9 @@ func TestDefaultsAreValid(t *testing.T) {
 	if c.Judge.Enabled || c.Judge.Backend != "jev" || c.Action.Tier != 2 || c.Outbound.Tier != 1 {
 		t.Errorf("defaults = %+v", c)
 	}
-	th := c.Thresholds()
-	if th.Hit != 0.5 || th.Veto != 0.2 || th.Requested != 0.7 || th.RadiusFloor["recursive_delete"] != 1.25 {
-		t.Errorf("jev thresholds = %+v", th)
+	p := c.Profiles["jev"].Thresholds
+	if *p.Hit != 0.5 || *p.Veto != 0.2 || *p.Requested != 0.7 || p.RadiusFloor["recursive_delete"] != 1.25 {
+		t.Errorf("jev profile = %+v", p)
 	}
 	if c.Policy.RequestWindow != 3 || c.Policy.MaxCommandChars != 8000 || c.Policy.MaxRequestChars != 2000 ||
 		c.Policy.OnUnavailable != "pass" || c.Policy.WhenAskUnsupported != "deny" {
@@ -135,8 +155,10 @@ func TestExplicitZeroThresholdIsKept(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if th := c.Thresholds(); th.Veto != 0 || th.Requested != 0.9 || len(th.RadiusFloor) != 0 {
-		t.Errorf("thresholds = %+v", th)
+	c.Profiles["jev"] = Profile{Thresholds: c.Profiles["jev"].Thresholds,
+		Fingerprint: &Fingerprint{Model: jevInfo.Model, Probability: jevInfo.Probability, Questions: digestA}}
+	if th, cal := c.ThresholdsFor("jev", described{jevInfo}, digestA); !cal.Calibrated() || th.Veto != 0 || th.Requested != 0.9 || len(th.RadiusFloor) != 0 {
+		t.Errorf("thresholds = %+v (%+v)", th, cal)
 	}
 }
 
@@ -150,8 +172,8 @@ func TestBackendEntriesReplaceWhole(t *testing.T) {
 	if b := c.Backends["jev"]; b.Type != "typesafe" || b.Profile != "" {
 		t.Errorf("jev = %+v", b)
 	}
-	if th := c.Thresholds(); th.Hit != ConservativeThresholds.Hit {
-		t.Errorf("a backend without a profile must use conservative thresholds, got %+v", th)
+	if th, cal := c.ThresholdsFor("jev", described{jevInfo}, digestA); th.Hit != ConservativeThresholds.Hit || cal.Reason != UncalibratedNoProfile {
+		t.Errorf("a backend without a profile must use conservative thresholds, got %+v (%+v)", th, cal)
 	}
 }
 
@@ -209,5 +231,72 @@ func TestApplyDotEnv(t *testing.T) {
 	}
 	if err := ApplyDotEnv(filepath.Join(dir, "missing")); err != nil {
 		t.Errorf("missing .env: %v", err)
+	}
+}
+
+// TestProfileNeedsAMatchingFingerprint：档案只在指纹与后端的模型、概率获取方式、题集一致时使用，
+// 否则用保守默认值并说明原因（spec §8.3）。
+func TestProfileNeedsAMatchingFingerprint(t *testing.T) {
+	c := Defaults()
+	if th, cal := c.ThresholdsFor("jev", described{jevInfo}, digestA); cal.Reason != UncalibratedNoFingerprint || cal.Profile != "jev" ||
+		th.Hit != ConservativeThresholds.Hit || th.Requested != ConservativeThresholds.Requested {
+		t.Errorf("built-in jev without a fingerprint: %+v (%+v)", th, cal)
+	}
+	jev := c.Profiles["jev"]
+	jev.Fingerprint = &Fingerprint{Model: "jev-latest", Probability: "native", Questions: digestA}
+	c.Profiles["jev"] = jev
+	th, cal := c.ThresholdsFor("jev", described{jevInfo}, digestA)
+	if !cal.Calibrated() || th.Hit != 0.5 || th.Veto != 0.2 || th.Requested != 0.7 || th.RadiusFloor["recursive_delete"] != 1.25 {
+		t.Errorf("matching fingerprint: %+v (%+v)", th, cal)
+	}
+	th.RadiusFloor["recursive_delete"] = 0
+	if *c.Profiles["jev"].Thresholds.Hit != 0.5 || c.Profiles["jev"].Thresholds.RadiusFloor["recursive_delete"] != 1.25 {
+		t.Error("ThresholdsFor must return a copy")
+	}
+	otherModel, otherProb := jevInfo, jevInfo
+	otherModel.Model, otherProb.Probability = "jev-2", "verbalized"
+	digestB := QuestionsDigest([]judge.Question{{ID: "a", Kind: judge.KindProbability, Instructions: judge.Instructions{Question: "A, reworded?"}}})
+	for want, call := range map[string]func() (Thresholds, Calibration){
+		UncalibratedModel:       func() (Thresholds, Calibration) { return c.ThresholdsFor("jev", described{otherModel}, digestA) },
+		UncalibratedProbability: func() (Thresholds, Calibration) { return c.ThresholdsFor("jev", described{otherProb}, digestA) },
+		UncalibratedQuestions:   func() (Thresholds, Calibration) { return c.ThresholdsFor("jev", described{jevInfo}, digestB) },
+		UncalibratedUndescribed: func() (Thresholds, Calibration) { return c.ThresholdsFor("jev", undescribed{}, digestA) },
+	} {
+		if th, cal := call(); cal.Reason != want || cal.Calibrated() || th.Hit != ConservativeThresholds.Hit || len(th.RadiusFloor) != 0 {
+			t.Errorf("%s: %+v (%+v)", want, th, cal)
+		}
+	}
+}
+
+func TestQuestionsDigest(t *testing.T) {
+	a := judge.Question{ID: "a", Kind: judge.KindProbability, Instructions: judge.Instructions{Question: "A?"}}
+	b := judge.Question{ID: "b", Kind: judge.KindScale, Instructions: judge.Instructions{Question: "B?"}, Levels: []string{"x", "y"}}
+	if QuestionsDigest([]judge.Question{a, b}) != QuestionsDigest([]judge.Question{b, a}) {
+		t.Error("the digest must not depend on question order")
+	}
+	b2 := b
+	b2.Levels = []string{"x", "z"}
+	if QuestionsDigest([]judge.Question{a, b}) == QuestionsDigest([]judge.Question{a, b2}) || QuestionsDigest([]judge.Question{a}) == QuestionsDigest([]judge.Question{a, b}) {
+		t.Error("the digest must change with the levels or the set")
+	}
+	if !strings.HasPrefix(digestA, "sha256:") || len(digestA) != len("sha256:")+64 {
+		t.Errorf("digest = %q", digestA)
+	}
+}
+
+func TestFingerprintValidation(t *testing.T) {
+	for name, fp := range map[string]string{
+		"no model":   "{probability: native, questions: " + digestA + "}",
+		"bad digest": "{model: m, probability: native, questions: abc}",
+		"unknown":    "{model: m, probability: native, questions: " + digestA + ", extra: 1}",
+	} {
+		p := write(t, t.TempDir(), "c.yaml", "version: 1\nprofiles: {jev: {thresholds: {hit: 0.5, veto: 0.2, requested: 0.7}, fingerprint: "+fp+"}}\n")
+		if _, err := Load(p); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+	p := write(t, t.TempDir(), "c.yaml", "version: 1\nprofiles: {jev: {thresholds: {hit: 0.5, veto: 0.2, requested: 0.7}, fingerprint: {model: m, probability: native, questions: "+digestA+"}}}\n")
+	if _, err := Load(p); err != nil {
+		t.Errorf("valid fingerprint rejected: %v", err)
 	}
 }
