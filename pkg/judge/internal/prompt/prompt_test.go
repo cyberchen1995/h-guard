@@ -172,3 +172,24 @@ func TestPrefixKeepsShellCharacters(t *testing.T) {
 		}
 	}
 }
+
+// TestParseBatchUnwrapsARedundantAnswersLevel：模型有时把整个回复再包一层（{"answers": {"answers": {...}}}，
+// M2 验收时 claude-haiku-5-5 的工具输入出现过）。只在 answers 里唯一的键是 answers、且没有哪道题叫 answers 时拆开。
+func TestParseBatchUnwrapsARedundantAnswersLevel(t *testing.T) {
+	nested := `{"answers": {"answers": {"publish": 0.3, "blast_radius": [0.1, 0.2, 0.3, 0.4]}}}`
+	got, err := ParseBatch([]byte(nested), []judge.Question{probQ, scaleQ})
+	if err != nil || got["publish"].P == nil || *got["publish"].P != 0.3 || len(got["blast_radius"].Dist) != 4 {
+		t.Errorf("nested answers = %+v, %v", got, err)
+	}
+	// 有一道题的 ID 就是 answers 时，按字面理解：它的答案是那个对象（类型不符，视为没有给出），不拆开
+	answersQ := judge.Question{ID: "answers", Kind: judge.KindProbability}
+	got, err = ParseBatch([]byte(nested), []judge.Question{probQ, answersQ})
+	if err != nil || len(got) != 0 {
+		t.Errorf("a question named answers: %+v, %v", got, err)
+	}
+	// 与其他题并列的 answers 键不是多余的一层
+	got, _ = ParseBatch([]byte(`{"answers": {"answers": {"publish": 0.3}, "blast_radius": [0.1, 0.2, 0.3, 0.4]}}`), []judge.Question{probQ, scaleQ})
+	if _, ok := got["publish"]; ok || len(got["blast_radius"].Dist) != 4 {
+		t.Errorf("answers beside other keys = %+v", got)
+	}
+}

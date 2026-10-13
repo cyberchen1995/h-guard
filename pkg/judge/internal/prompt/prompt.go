@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"slices"
 	"strings"
 
 	"github.com/cyberchen1995/h-guard/pkg/judge"
@@ -125,6 +126,15 @@ func ParseBatch(raw []byte, qs []judge.Question) (map[string]judge.Answer, error
 	}
 	if err := json.Unmarshal(raw, &wire); err != nil {
 		return nil, fmt.Errorf("answers are not a JSON object: %w", err)
+	}
+	// 模型有时把整个回复再包一层：{"answers": {"answers": {...}}}（anthropic 的工具输入本身就是回复对象）。
+	// 只有 answers 里唯一的键是 answers、且没有哪道题叫 answers 时才拆开；拆不开就按原样处理
+	if inner, ok := wire.Answers["answers"]; ok && len(wire.Answers) == 1 &&
+		!slices.ContainsFunc(qs, func(q judge.Question) bool { return q.ID == "answers" }) {
+		var nested map[string]json.RawMessage
+		if json.Unmarshal(inner, &nested) == nil && nested != nil {
+			wire.Answers = nested
+		}
 	}
 	out := map[string]judge.Answer{}
 	for _, q := range qs {
