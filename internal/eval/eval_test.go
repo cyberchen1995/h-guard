@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -22,17 +23,19 @@ import (
 
 var jev = config.Thresholds{Hit: 0.5, Veto: 0.2, Requested: 0.7, RadiusFloor: map[string]float64{"recursive_delete": 1.25}}
 
-// oracle 按语料标注作答：标注的规则 0.9、其余 0.05；该放行且有指令时 requested 0.95；
-// 该打断时影响范围最高、该放行时最低。它不能批量（像 logprobs 后端一样按题提问）。
+// oracle 按语料标注作答：标注的规则为 hitYes（默认 0.9）、其余 0.05；该放行且有指令时 requested 为 reqYes
+// （默认 0.95）；该打断时影响范围最高、该放行时最低。它不能批量（像 logprobs 后端一样按题提问）。
 type oracle struct {
-	cases map[string]eval.Case
-	calls atomic.Int32
-	err   error
-	drop  string // 不回答这道题（答案不完整）
+	cases  map[string]eval.Case
+	calls  atomic.Int32
+	err    error
+	drop   string  // 不回答这道题（答案不完整）
+	reqYes float64 // 该放行且有指令时 requested 的概率
+	hitYes float64 // 标注的规则的概率
 }
 
 func newOracle(cases []eval.Case) *oracle {
-	o := &oracle{cases: map[string]eval.Case{}}
+	o := &oracle{cases: map[string]eval.Case{}, reqYes: 0.95, hitYes: 0.9}
 	for _, c := range cases {
 		o.cases[key(c.Command, c.UserRequests)] = c
 	}
@@ -65,7 +68,7 @@ func (o *oracle) Ask(_ context.Context, state map[string]any, qs []judge.Questio
 		case action.SignalRequested:
 			p := 0.05
 			if c.Expect == guard.DecisionPass && len(reqs) > 0 {
-				p = 0.95
+				p = o.reqYes
 			}
 			resp.Answers[q.ID] = judge.Answer{P: judge.Prob(p)}
 		case action.SignalRadius:
@@ -77,7 +80,7 @@ func (o *oracle) Ask(_ context.Context, state map[string]any, qs []judge.Questio
 		default:
 			p := 0.05
 			if slices.Contains(c.Rules, q.ID) {
-				p = 0.9
+				p = o.hitYes
 			}
 			resp.Answers[q.ID] = judge.Answer{P: judge.Prob(p)}
 		}
@@ -231,6 +234,73 @@ func TestSweepSuggestsCalibratedThresholds(t *testing.T) {
 	eval.WriteSweep(&buf, tables)
 	if !strings.Contains(buf.String(), "<- current") || !strings.Contains(buf.String(), "requested:") {
 		t.Errorf("sweep output = %s", buf.String())
+	}
+}
+
+// TestSweepFindsBetterThresholds：基线不满分时，扫描须找到使全部结论正确的阈值，两次结果一致，且不调用后端。
+func TestSweepFindsBetterThresholds(t *testing.T) {
+	cases := corpus(t)
+	b := newOracle(cases)
+	b.reqYes, b.hitYes = 0.8, 0.6
+	env := newEnv(t, b, config.ConservativeThresholds)
+	outs, err := eval.Run(context.Background(), env, cases)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if base := eval.ScoreOf(outs); base.Correct >= len(cases) {
+		t.Fatalf("base %+v is already perfect, so the sweep is not exercised", base)
+	}
+	calls := b.calls.Load()
+	tables, th, s, err := eval.Sweep(context.Background(), env, outs, config.ConservativeThresholds)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	eval.WriteSweep(&buf, tables)
+	if s != (eval.Score{Correct: len(cases)}) {
+		t.Errorf("suggestion %+v (%+v), want %d correct:\n%s", s, th, len(cases), buf.String())
+	}
+	if th.Requested != 0.8 || th.Hit != 0.3 || th.Veto != 0.05 {
+		t.Errorf("suggested hit %v, veto %v, requested %v; want 0.3, 0.05, 0.8:\n%s", th.Hit, th.Veto, th.Requested, buf.String())
+	}
+	tables2, th2, s2, err := eval.Sweep(context.Background(), env, outs, config.ConservativeThresholds)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(tables, tables2) || !reflect.DeepEqual(th, th2) || s != s2 {
+		t.Error("two sweeps over the same answers differ")
+	}
+	if b.calls.Load() != calls {
+		t.Error("Sweep called the backend")
+	}
+}
+
+// TestRescoreAtRecordedThresholdsReplaysExactly：在记录时的阈值上重算，每条的结论、命中与降级原因都与记录一致，且不调用后端。
+func TestRescoreAtRecordedThresholdsReplaysExactly(t *testing.T) {
+	cases := corpus(t)
+	b := newOracle(cases)
+	env := newEnv(t, b, jev)
+	outs, err := eval.Run(context.Background(), env, cases)
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := b.calls.Load()
+	again, err := eval.Rescore(context.Background(), env, outs, jev)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b.calls.Load() != calls {
+		t.Error("Rescore called the backend")
+	}
+	if len(again) != len(outs) {
+		t.Fatalf("%d outcomes, want %d", len(again), len(outs))
+	}
+	for i := range outs {
+		o, n := outs[i], again[i]
+		if n.Decision != o.Decision || !slices.Equal(n.Hits, o.Hits) || !slices.Equal(n.Fallbacks, o.Fallbacks) {
+			t.Errorf("%q: replayed %s hits %v fallbacks %v, recorded %s hits %v fallbacks %v",
+				o.Case.Command, n.Decision, n.Hits, n.Fallbacks, o.Decision, o.Hits, o.Fallbacks)
+		}
 	}
 }
 
