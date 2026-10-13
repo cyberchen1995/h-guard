@@ -367,6 +367,13 @@ func TestGuardTamperingCoversFileActions(t *testing.T) {
 			t.Errorf("%q matched guard_tampering", cmd)
 		}
 	}
+	// g 前缀的 GNU 工具（Homebrew 的 gsed、grm 等）同样是改动
+	for _, cmd := range []string{"gsed -i 's/h-guard//' ~/.claude/settings.json", "grm ~/.claude/settings.json",
+		"gcp /tmp/x ~/.codex/hooks.json", "gtee ~/.config/h-guard/config.yaml"} {
+		if !hits(t, s, cmd)["guard_tampering"] {
+			t.Errorf("%q did not match guard_tampering", cmd)
+		}
+	}
 }
 
 // TestHarmlessDdTargetsAreNotCatastrophic：只豁免去向固定、写入无害的设备。/dev/stdout、/dev/stderr、/dev/fd/N
@@ -381,7 +388,11 @@ func TestHarmlessDdTargetsAreNotCatastrophic(t *testing.T) {
 		"dd if=/dev/zero of=/dev/null bs=1M count=1 # example alternative: >/dev/sda",
 		"dd if=/dev/zero of=/dev/null count=1 #>/dev/sda", `dd if=/dev/zero of=/dev/null status='x >/dev/sda'`,
 		// 输入文件名里的字面 >（引号或转义）不是重定向（评审 R3-01）
-		`dd if=">/dev/sda" count=0`, `dd if=\>/dev/sda count=0`} {
+		`dd if=">/dev/sda" count=0`, `dd if=\>/dev/sda count=0`,
+		// bash 的 <> 打开的不是块设备（/dev/tcp 是网络连接）：<> 只对 dd 生效，exec 3<>… 照常放行
+		"exec 3<>/dev/tcp/example.com/80",
+		// 复合命令的结尾词带的重定向指向无害设备：照常放行
+		"for f in a b; do echo $f; done >/dev/null"} {
 		if hits(t, s, cmd)["catastrophic"] {
 			t.Errorf("%q matched catastrophic", cmd)
 		}
@@ -397,7 +408,12 @@ func TestHarmlessDdTargetsAreNotCatastrophic(t *testing.T) {
 		"dd if='a #b' of=/dev/null 2>/dev/sda", "dd if=a#b of=/dev/null 2>/dev/sda", `dd if=a\'b of=/dev/null 2>/dev/sda`,
 		// 转义空格后的 # 不是注释；目标按完整的词比较；组合命令与 &> 的重定向；重定向写在命令前（评审 R3-01）
 		`dd if=a\ #b of=/dev/null 2>/dev/sda`, `dd if=x of=/dev/null 2>"/dev/null"b0`, "( dd if=x of=/dev/null ) 2>/dev/sda",
-		"dd if=x of=/dev/null &>/dev/sda", ">/dev/sda dd if=x of=/dev/null"} {
+		"dd if=x of=/dev/null &>/dev/sda", ">/dev/sda dd if=x of=/dev/null",
+		// dd 的读写打开（1<>）与 >|、>& 写设备：拒绝
+		"dd if=x 1<>/dev/sda", "dd if=x >|/dev/sda", "dd if=x >&/dev/sda",
+		// 循环、条件语句的结尾词（done、fi、esac）带的重定向按组合命令处理
+		"for f in a b; do dd if=$f; done >/dev/sda", "if true; then dd if=x; fi >/dev/sda",
+		"case x in x) dd if=x;; esac >/dev/sda"} {
 		if !hits(t, s, cmd)["catastrophic"] {
 			t.Errorf("%q did not match catastrophic", cmd)
 		}

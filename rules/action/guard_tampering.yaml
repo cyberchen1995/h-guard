@@ -10,24 +10,24 @@ reason:
 match:
   exec:
     # 沿用 Python 版正则，全部放在 any 组；M3 加入 PowerShell 检测时再按 shell 分组。
-    # 动词前的 (?<![\w.-]) 是 M2 加的词边界：grep confirm、--format、--rm 里的 rm 不算改动
+    # 动词前的 (?<![\w.-]) 是 M2 加的词边界：grep confirm、--format、--rm 里的 rm 不算改动；动词前可带 g（Homebrew 的 GNU 工具：gsed、grm、gcp 等）
     any:
-      - '(?<![\w.-])(?:rm|unlink|mv|cp|install|ln|truncate|tee|chmod|chown|shred|sed\s+-i|perl\s+-[a-z]*i|python[0-9.]*\s+-c|node\s+-e|jq\b[^\n;&|]*>)\b[^\n;&|]*\.config/h-guard'
+      - '(?<![\w.-])g?(?:rm|unlink|mv|cp|install|ln|truncate|tee|chmod|chown|shred|sed\s+-i|perl\s+-[a-z]*i|python[0-9.]*\s+-c|node\s+-e|jq\b[^\n;&|]*>)\b[^\n;&|]*\.config/h-guard'
       - '>>?\s*[^\n;&|]*\.config/h-guard'
       - '\.config/h-guard[^\n;&|]*\|\s*(?:tee|sponge)\b'
-      - '(?<![\w.-])(?:rm|unlink|mv|cp|install|ln|truncate|tee|chmod|chown|shred|sed\s+-i|perl\s+-[a-z]*i|python[0-9.]*\s+-c|node\s+-e|jq\b[^\n;&|]*>)\b[^\n;&|]*\.cache/h-guard'
+      - '(?<![\w.-])g?(?:rm|unlink|mv|cp|install|ln|truncate|tee|chmod|chown|shred|sed\s+-i|perl\s+-[a-z]*i|python[0-9.]*\s+-c|node\s+-e|jq\b[^\n;&|]*>)\b[^\n;&|]*\.cache/h-guard'
       - '>>?\s*[^\n;&|]*\.cache/h-guard'
       - '\.cache/h-guard[^\n;&|]*\|\s*(?:tee|sponge)\b'
-      - '(?<![\w.-])(?:rm|unlink|mv|cp|install|ln|truncate|tee|chmod|chown|shred|sed\s+-i|perl\s+-[a-z]*i|python[0-9.]*\s+-c|node\s+-e|jq\b[^\n;&|]*>)\b[^\n;&|]*\.claude/settings(?:\.local)?\.json'
+      - '(?<![\w.-])g?(?:rm|unlink|mv|cp|install|ln|truncate|tee|chmod|chown|shred|sed\s+-i|perl\s+-[a-z]*i|python[0-9.]*\s+-c|node\s+-e|jq\b[^\n;&|]*>)\b[^\n;&|]*\.claude/settings(?:\.local)?\.json'
       - '>>?\s*[^\n;&|]*\.claude/settings(?:\.local)?\.json'
       - '\.claude/settings(?:\.local)?\.json[^\n;&|]*\|\s*(?:tee|sponge)\b'
-      - '(?<![\w.-])(?:rm|unlink|mv|cp|install|ln|truncate|tee|chmod|chown|shred|sed\s+-i|perl\s+-[a-z]*i|python[0-9.]*\s+-c|node\s+-e|jq\b[^\n;&|]*>)\b[^\n;&|]*\.codex/hooks\.json'
+      - '(?<![\w.-])g?(?:rm|unlink|mv|cp|install|ln|truncate|tee|chmod|chown|shred|sed\s+-i|perl\s+-[a-z]*i|python[0-9.]*\s+-c|node\s+-e|jq\b[^\n;&|]*>)\b[^\n;&|]*\.codex/hooks\.json'
       - '>>?\s*[^\n;&|]*\.codex/hooks\.json'
       - '\.codex/hooks\.json[^\n;&|]*\|\s*(?:tee|sponge)\b'
-      - '(?<![\w.-])(?:rm|unlink|mv|cp|install|ln|truncate|tee|chmod|chown|shred|sed\s+-i|perl\s+-[a-z]*i|python[0-9.]*\s+-c|node\s+-e|jq\b[^\n;&|]*>)\b[^\n;&|]*\.codex/config\.toml'
+      - '(?<![\w.-])g?(?:rm|unlink|mv|cp|install|ln|truncate|tee|chmod|chown|shred|sed\s+-i|perl\s+-[a-z]*i|python[0-9.]*\s+-c|node\s+-e|jq\b[^\n;&|]*>)\b[^\n;&|]*\.codex/config\.toml'
       - '>>?\s*[^\n;&|]*\.codex/config\.toml'
       - '\.codex/config\.toml[^\n;&|]*\|\s*(?:tee|sponge)\b'
-      - '(?<![\w.-])(?:rm|unlink|mv|cp|install|ln|truncate|tee|chmod|chown|shred|sed\s+-i|perl\s+-[a-z]*i|python[0-9.]*\s+-c|node\s+-e|jq\b[^\n;&|]*>)\b[^\n;&|]*Library/(?:Application(?:\\ | )Support|Caches)/h-guard'
+      - '(?<![\w.-])g?(?:rm|unlink|mv|cp|install|ln|truncate|tee|chmod|chown|shred|sed\s+-i|perl\s+-[a-z]*i|python[0-9.]*\s+-c|node\s+-e|jq\b[^\n;&|]*>)\b[^\n;&|]*Library/(?:Application(?:\\ | )Support|Caches)/h-guard'
       - '>>?\s*[^\n;&|]*Library/(?:Application(?:\\ | )Support|Caches)/h-guard'
       - 'Library/(?:Application(?:\\ | )Support|Caches)/h-guard[^\n;&|]*\|\s*(?:tee|sponge)\b'
   file:
@@ -85,6 +85,8 @@ examples:
     # 已知误报（只读，暂时保守处理）：动词在路径之前就命中，模型也不能撤销
     - {shell: posix, command: "cp ~/.claude/settings.json /tmp/backup.json"}
     - {shell: posix, command: "python3 -c \"print(open('/home/u/.claude/settings.json').read())\""}
+    - {shell: posix, command: "gsed -i 's/h-guard//' ~/.claude/settings.json"}
+    - {shell: posix, command: "grm ~/.config/h-guard/config.yaml"}
     - {action: file_write, path: "~/.claude/settings.json"}
     - {action: file_write, path: ".claude/settings.local.json"}
     - {action: file_write, path: "/xdg/config/h-guard/config.yaml"}

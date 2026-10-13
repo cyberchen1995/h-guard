@@ -24,8 +24,10 @@ match:
     # 重定向视图（词法分析给出的「命令词 重定向」，评审 R2-04、R3-01）：dd 的输出、或没有命令词的重定向
     # （组合命令 ( … ) >/dev/sda、bash 的 &>）写到设备时拒绝。of=/dev/null 2>/dev/sda 会把状态信息写进磁盘。
     # 目标是完整的词，白名单用 $ 锚定（2>"/dev/null"b0 的目标是 /dev/nullb0）；注释与引号里的 > 不是重定向
+    # 循环、条件语句的结尾词（done、fi、esac）带的重定向按组合命令处理；<> 只对 dd（exec 3<>/dev/tcp/… 照常放行）
     redirects:
-      - '^(?:dd)? (?:[0-9]+)?(?:>|>>|>\||>&)/dev/(?!(?:null|zero|tty|u?random|stdout|stderr)$)'
+      - '^(?:dd|done|fi|esac)? (?:[0-9]+)?(?:>|>>|>\||>&)/dev/(?!(?:null|zero|tty|u?random|stdout|stderr)$)'
+      - '^dd (?:[0-9]+)?<>/dev/(?!(?:null|zero|tty|u?random|stdout|stderr)$)'
 examples:
   hit:
     - {shell: posix, command: "rm -rf /"}
@@ -41,6 +43,8 @@ examples:
     - {shell: posix, command: "dd if=a\\ #b of=/dev/null 2>/dev/sda"}
     - {shell: posix, command: "dd if=x of=/dev/null 2>\"/dev/null\"b0"}
     - {shell: posix, command: "( dd if=x of=/dev/null ) 2>/dev/sda"}
+    - {shell: posix, command: "dd if=x 1<>/dev/sda"}
+    - {shell: posix, command: "for f in a b; do dd if=$f; done >/dev/sda"}
     # 文件描述符的别名：去向确认不了，保守拒绝（M1 同样拒绝；即使同一段把标准输出重定向到普通文件）
     - {shell: posix, command: "dd if=disk.img of=/dev/stdout | gzip > disk.gz"}
     - {shell: posix, command: "dd if=image.bin of=/dev/stdout >./copy.bin"}
@@ -56,6 +60,7 @@ examples:
     - {shell: posix, command: "dd if=/dev/zero of=/dev/null 2>/dev/null"}
     - {shell: posix, command: "dd if=/dev/zero of=/dev/null bs=1M count=1 # example alternative: >/dev/sda"}
     - {shell: posix, command: "dd if=\">/dev/sda\" count=0"}
+    - {shell: posix, command: "exec 3<>/dev/tcp/example.com/80"}
     - {shell: posix, command: "rm -rf ./build"}
     - {shell: posix, command: "rm -rf \"./build\""}
     - {shell: posix, command: "rm -rf node_modules"}
