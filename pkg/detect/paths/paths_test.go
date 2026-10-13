@@ -4,6 +4,8 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
+	"slices"
 	"strconv"
 	"testing"
 
@@ -336,5 +338,105 @@ func TestNewlineInPathIsMatchedByWildcards(t *testing.T) {
 	}
 	if !fm.Match(paths.Resolve("/home/u/A\nB/.Claude/Settings.JSON", env)) {
 		t.Error("case-insensitive matcher missed a path with a newline")
+	}
+}
+
+// TestRootAliasesAreStripped：指向根目录的别名前缀（macOS 的 /System/Volumes/Data）之下的路径与去掉前缀后的路径
+// 是同一个文件，realpath 不改写它，所以去掉前缀的写法另作候选。不区分大小写时前缀同样不区分大小写。
+func TestRootAliasesAreStripped(t *testing.T) {
+	env := paths.Env{Home: "/home/u", RootAliases: []string{"/alias"}}
+	m, err := paths.Compile([]string{"~/.config/h-guard/**"}, env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for path, want := range map[string]bool{
+		"/alias/home/u/.config/h-guard/x":  true,
+		"/alias/tmp/x":                     false,
+		"/aliasx/home/u/.config/h-guard/x": false,
+		"/ALIAS/home/u/.config/h-guard/x":  false, // 区分大小写
+	} {
+		if got := m.Match(paths.Resolve(path, env)); got != want {
+			t.Errorf("Match(%q) = %v, want %v", path, got, want)
+		}
+	}
+	if r := paths.Resolve("/alias", env); !slices.Contains(r.Candidates(), "/") {
+		t.Errorf("the alias itself is the root: Candidates() = %q", r.Candidates())
+	}
+	env.FoldCase = true
+	m, err = paths.Compile([]string{"~/.config/h-guard/**"}, env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !m.Match(paths.Resolve("/ALIAS/home/u/.config/h-guard/x", env)) {
+		t.Error("a case-insensitive env missed the alias in another case")
+	}
+	// 空列表关闭；按字面匹配（规则样例）时不处理别名
+	for _, e := range []paths.Env{{Home: "/home/u", RootAliases: []string{}}, {Home: "/home/u", RootAliases: []string{"/alias"}, Lexical: true}} {
+		m, _ := paths.Compile([]string{"~/.config/h-guard/**"}, e)
+		if m.Match(paths.Resolve("/alias/home/u/.config/h-guard/x", e)) {
+			t.Errorf("env %+v stripped the alias", e)
+		}
+	}
+}
+
+// TestOpaquePathsMatchAnyPattern：无法映射到规范位置的前缀（macOS 的 /.vol、Linux 的 /proc）之下的目标
+// 可能就是受保护的文件，有模式的 Matcher 一律按命中处理（fail-closed）；没有模式的 Matcher 不命中。
+func TestOpaquePathsMatchAnyPattern(t *testing.T) {
+	env := paths.Env{Home: "/home/u", Opaque: []string{"/opq"}}
+	m, err := paths.Compile([]string{"/etc/unrelated/**"}, env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r := paths.Resolve("/opq/1/2", env); !r.Opaque || !m.Match(r) {
+		t.Errorf("an opaque target did not match: %+v", r)
+	}
+	if r := paths.Resolve("/opq", env); !r.Opaque {
+		t.Errorf("the opaque prefix itself is opaque: %+v", r)
+	}
+	if r := paths.Resolve("/opqx/1", env); r.Opaque || m.Match(r) {
+		t.Errorf("/opqx is not under /opq: %+v", r)
+	}
+	// 全部模式都因缺少 ~ 而跳过：没有可匹配的模式，不命中
+	empty, err := paths.Compile([]string{"~/.config/h-guard/**"}, paths.Env{Opaque: []string{"/opq"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if empty.Match(paths.Resolve("/opq/1/2", paths.Env{Opaque: []string{"/opq"}})) {
+		t.Error("an empty matcher matched an opaque target")
+	}
+	for _, e := range []paths.Env{{Opaque: []string{}}, {Opaque: []string{"/opq"}, Lexical: true}} {
+		if r := paths.Resolve("/opq/1/2", e); r.Opaque {
+			t.Errorf("env %+v marked the target opaque", e)
+		}
+	}
+	env.FoldCase = true
+	if r := paths.Resolve("/OPQ/1", env); !r.Opaque {
+		t.Errorf("a case-insensitive env missed the opaque prefix: %+v", r)
+	}
+}
+
+// TestDarwinFirmlinkAndVolfs：macOS 上 /System/Volumes/Data/<路径> 与 <路径> 是同一个文件，/.vol/<dev>/<ino> 按
+// inode 打开文件；两者 realpath 都不改写。用平台默认值。
+func TestDarwinFirmlinkAndVolfs(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("macOS only")
+	}
+	d := filepath.Join(real(t, t.TempDir()), "d")
+	os.Mkdir(d, 0o755)
+	os.WriteFile(filepath.Join(d, "f"), []byte("x"), 0o600)
+	firm := "/System/Volumes/Data" + d + "/f"
+	if _, err := os.Stat(firm); err != nil {
+		t.Skip("no firmlink to the data volume:", err)
+	}
+	env := paths.Env{FoldCase: paths.FoldCaseDefault}
+	m, err := paths.Compile([]string{d + "/**"}, env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !m.Match(paths.Resolve(firm, env)) {
+		t.Errorf("the firmlink path %s did not match", firm)
+	}
+	if !m.Match(paths.Resolve("/.vol/1/2", env)) {
+		t.Error("a volfs path did not match")
 	}
 }

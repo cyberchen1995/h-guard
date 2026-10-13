@@ -5,6 +5,13 @@
 // （写入目标可能还不存在；指向不存在文件的符号链接解析为链接目标，因为写入它会创建目标）。
 // 原始路径与解析后的路径都参与匹配，任一命中即命中。解析失败（权限、循环链接）时只用规范化后的原始路径。
 //
+// 有些写法 realpath 不改写，却与另一个位置是同一个文件（Env.RootAliases、Env.Opaque，按平台取默认值）：
+//   - 指向根目录的别名前缀（macOS 的 firmlink /System/Volumes/Data）：前缀之下的路径去掉前缀后另作候选；
+//   - 无法映射到规范位置的前缀（macOS 的 volfs /.vol 按 inode 打开文件，Linux 的 /proc）：其下的目标标为 Opaque，
+//     有模式的 Matcher 一律按命中处理（fail-closed，可能就是受保护的文件）。
+//
+// 按字面匹配（Lexical，规则样例）时两者都不处理。
+//
 // 模式：`**/` 匹配零或多级目录，末尾的 `/**` 匹配目录本身及其下全部内容，其余 `**` 匹配任意字符，
 // `*`、`?` 不跨目录；以 `~/` 开头的按主目录展开，以 `{name}` 开头的按 Env.Vars 展开。模式开头的
 // 固定部分同样解析符号链接，所以受保护文件本身是符号链接时，改它的目标也命中。
@@ -22,6 +29,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"strings"
 	"syscall"
 	"unicode/utf8"
@@ -34,10 +42,22 @@ type Env struct {
 	Vars     map[string]string // 模式开头 {name} 的值；没有值的模式不匹配
 	FoldCase bool              // 不区分大小写比较
 	Lexical  bool              // 不访问文件系统、不解析符号链接（规则样例用）
+	// RootAliases 是指向根目录的别名前缀（绝对路径，用 / 分隔）；nil 时用 RootAliasesDefault，空切片表示没有
+	RootAliases []string
+	// Opaque 是无法映射到规范位置的前缀（绝对路径，用 / 分隔）；nil 时用 OpaqueDefault，空切片表示没有
+	Opaque []string
 }
 
 // FoldCaseDefault 报告当前平台的默认文件系统是否不区分大小写（macOS、Windows 是，Linux 否）。
 var FoldCaseDefault = runtime.GOOS == "darwin" || runtime.GOOS == "windows"
+
+// RootAliasesDefault 是当前平台指向根目录的别名前缀：macOS 的 firmlink /System/Volumes/Data（数据卷的挂载点，
+// /System/Volumes/Data$HOME 与 $HOME 是同一个目录，realpath 不改写它），其他平台没有。
+var RootAliasesDefault = map[string][]string{"darwin": {"/System/Volumes/Data"}}[runtime.GOOS]
+
+// OpaqueDefault 是当前平台无法映射到规范位置的前缀：macOS 的 volfs /.vol（/.vol/<dev>/<ino> 按 inode 打开文件），
+// Linux 的 /proc（/proc/<pid>/root、/proc/<pid>/cwd 等经由别的进程的视图打开文件），其他平台没有。
+var OpaqueDefault = map[string][]string{"darwin": {"/.vol"}, "linux": {"/proc"}}[runtime.GOOS]
 
 // 解析失败的原因。
 var (
@@ -54,14 +74,20 @@ type Resolved struct {
 	Clean string // 展开 ~、基于 cwd、规范化后的路径（不访问文件系统）
 	Real  string // 再解析符号链接后的路径；解析失败或 Lexical 时为空
 	Err   error  // 解析失败的原因；为 nil 时 Clean 是绝对路径
+	// Aliases 是 Clean、Real 去掉根目录别名前缀（Env.RootAliases）后的写法，与两者都不同；Lexical 时为空
+	Aliases []string
+	// Opaque 报告 Clean、Real 或 Aliases 之一在 Env.Opaque 的前缀之下：无法得知它是哪个文件，
+	// 有模式的 Matcher 一律按命中处理（见 Matcher.Match）。Lexical 时为 false
+	Opaque bool
 }
 
-// Candidates 返回参与匹配的路径：Clean，以及与它不同的 Real。
+// Candidates 返回参与匹配的路径：Clean，与它不同的 Real，以及 Aliases。
 func (r Resolved) Candidates() []string {
-	if r.Real == "" || r.Real == r.Clean {
-		return []string{r.Clean}
+	out := []string{r.Clean}
+	if r.Real != "" && r.Real != r.Clean {
+		out = append(out, r.Real)
 	}
-	return []string{r.Clean, r.Real}
+	return append(out, r.Aliases...)
 }
 
 // Resolve 解析 path（spec §5.5 第 1、2、5 步）。Real 由未规范化的绝对路径解析：`alias/../x` 中 alias 是
@@ -85,7 +111,74 @@ func Resolve(path string, env Env) Resolved {
 		return r
 	}
 	r.Real, r.Err = realpath(raw)
+	r.Aliases, r.Opaque = rootForms(r, env)
 	return r
+}
+
+// rootForms 按 env 的根目录别名与不透明前缀（nil 时取平台默认值）处理 Clean 与 Real：返回去掉别名前缀后的
+// 写法（反复去掉，直到不再以别名前缀开头；不含 Clean、Real 本身），以及其中是否有路径在不透明前缀之下。
+func rootForms(r Resolved, env Env) (aliases []string, opaque bool) {
+	roots, opq := env.RootAliases, env.Opaque
+	if roots == nil {
+		roots = RootAliasesDefault
+	}
+	if opq == nil {
+		opq = OpaqueDefault
+	}
+	seen := []string{r.Clean, r.Real}
+	pending := []string{r.Clean, r.Real}
+	for len(pending) > 0 {
+		c := filepath.ToSlash(pending[0])
+		pending = pending[1:]
+		if c == "" {
+			continue
+		}
+		for _, p := range opq {
+			if _, ok := cutDir(c, p, env.FoldCase); ok {
+				opaque = true
+			}
+		}
+		for _, p := range roots {
+			rest, ok := cutDir(c, p, env.FoldCase)
+			if !ok || rest == c {
+				continue
+			}
+			if alt := filepath.FromSlash(rest); !slices.Contains(seen, alt) {
+				seen = append(seen, alt)
+				aliases = append(aliases, alt)
+				pending = append(pending, alt)
+			}
+		}
+	}
+	return aliases, opaque
+}
+
+// cutDir 报告用 / 分隔的绝对路径 p 是否等于目录 dir 或在其下（fold 时不区分大小写），并返回去掉 dir 后的
+// 绝对路径（p 等于 dir 时为 /）。dir 末尾的 / 不计；dir 为 / 时一切绝对路径都在其下。
+func cutDir(p, dir string, fold bool) (rest string, ok bool) {
+	dir = strings.TrimRight(dir, "/")
+	i := 0
+	if fold {
+		// 按字符比较：大小写不同的字符编码长度可能不同（如 ſ 与 s），不能按字节切分前缀
+		for _, d := range dir {
+			c, n := utf8.DecodeRuneInString(p[i:])
+			if n == 0 || !strings.EqualFold(string(c), string(d)) {
+				return "", false
+			}
+			i += n
+		}
+	} else if strings.HasPrefix(p, dir) {
+		i = len(dir)
+	} else {
+		return "", false
+	}
+	switch rest = p[i:]; {
+	case rest == "":
+		return "/", true
+	case rest[0] == '/':
+		return rest, true
+	}
+	return "", false
 }
 
 // expandHome 展开开头的 ~ 与 ~/（~user 不展开）。不做规范化（见 Resolve）。
@@ -304,8 +397,12 @@ func readDir(dir string) (entries []fs.DirEntry, complete bool) {
 	return entries, true
 }
 
-// Match 报告 r 的任一候选路径是否命中任一模式。
+// Match 报告 r 的任一候选路径是否命中任一模式。r 是 Opaque 时，只要有模式就算命中（fail-closed）：
+// 无法得知它是哪个文件。所有模式都因缺少 ~ 或占位符的值而跳过时不命中。
 func (m *Matcher) Match(r Resolved) bool {
+	if r.Opaque && len(m.res) > 0 {
+		return true
+	}
 	for _, c := range r.Candidates() {
 		c = filepath.ToSlash(c)
 		for _, re := range m.res {
