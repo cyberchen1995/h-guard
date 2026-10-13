@@ -269,6 +269,24 @@ func TestBudgetExhaustionWithoutDenyAsks(t *testing.T) {
 	}
 }
 
+// TestRegexTimeoutDoesNotWeakenADefiniteDeny：某个模式超时不能让另一处的确定命中降为请求确认；只有超时命中时
+// 请求确认并说明正则超时，不能说成「修改护栏本身」（评审 M1 终审）。
+func TestRegexTimeoutDoesNotWeakenADefiniteDeny(t *testing.T) {
+	slow := "rmdir" + strings.Repeat(" -r", 20000) // 让灾难性规则的一个模式超时
+	c := newCheck(t, false, action.Judge{})
+	if v := run(t, c, event(nil, slow+"; echo $(rm -rf /)")); v.Decision != guard.DecisionDeny {
+		t.Errorf("a definite catastrophic match after a timeout: %s, want deny", v.Decision)
+	}
+	v := run(t, c, event(nil, slow))
+	codes := map[string]bool{}
+	for _, r := range v.Reasons {
+		codes[r.Code] = true
+	}
+	if v.Decision != guard.DecisionAsk || codes[i18n.KeyActionGuardSelf] || !codes[i18n.KeyActionRegexTimeout] {
+		t.Errorf("a timed-out match alone: %s, reasons %v", v.Decision, v.Reasons)
+	}
+}
+
 // TestShellContextDecides：同一个危险命令在不同的 shell 上下文里结论不同——真正执行时阻止，作为数据时放行
 // （评审 N01；命令只交给检测器，不执行）。
 func TestShellContextDecides(t *testing.T) {

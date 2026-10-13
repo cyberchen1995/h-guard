@@ -262,7 +262,10 @@ func (c *Check) render(res Result, in Input) guard.Verdict {
 	}
 
 	rulesText := c.describe(res.Dangerous)
-	unbypassable := slices.ContainsFunc(res.Dangerous, func(h Hit) bool { return !in.Rules[h.Rule].Bypassable || h.TimedOut })
+	// 超时的命中与不可豁免的规则一样不能被豁免（决定前进路径）；只有确定命中了不可豁免的规则才说「修改护栏本身」，
+	// 超时的命中不能确定（原因里另有正则超时的说明，评审 M1 终审）
+	guardSelf := slices.ContainsFunc(res.Dangerous, func(h Hit) bool { return !in.Rules[h.Rule].Bypassable && !h.TimedOut })
+	unbypassable := guardSelf || slices.ContainsFunc(res.Dangerous, func(h Hit) bool { return h.TimedOut })
 	add := func(code string, params map[string]string) {
 		v.Reasons = append(v.Reasons, guard.Reason{Code: code, Params: params})
 	}
@@ -274,7 +277,7 @@ func (c *Check) render(res Result, in Input) guard.Verdict {
 	case BranchUnavailable:
 		add(i18n.KeyActionJudgeUnavailable, map[string]string{"code": in.JudgeFallback, "rules": rulesText})
 	case BranchJudgeOff:
-		if unbypassable {
+		if guardSelf {
 			add(i18n.KeyActionGuardSelf, map[string]string{"rules": rulesText})
 		} else {
 			add(i18n.KeyActionDangerous, map[string]string{"rules": rulesText})

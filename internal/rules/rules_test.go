@@ -271,6 +271,30 @@ match:
 	}
 }
 
+// TestDefiniteMatchClearsEarlierTimeout：前面的模式超时之后，另一个模式确定命中时结论是确定命中，不带超时标记
+// （否则 deny 级规则的确定命中会被降为请求确认，评审 M1 终审）。
+func TestDefiniteMatchClearsEarlierTimeout(t *testing.T) {
+	dir := t.TempDir()
+	writeRule(t, dir, "slow.yaml", `schema: 1
+id: slow
+action: deny
+on: [exec]
+reason: {en: slow}
+match:
+  exec:
+    any: ['^(a+)+$', 'aaaa!']
+`)
+	s, err := rules.Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e, _ := command.Expand(context.Background(), strings.Repeat("a", 40)+"!", guard.ShellPOSIX)
+	res, err := s.Get("slow").MatchExec(context.Background(), e)
+	if err != nil || !res.Hit || res.TimedOut {
+		t.Errorf("res = %+v, err = %v; want a definite hit", res, err)
+	}
+}
+
 func TestRegexTimeoutCountsAsHit(t *testing.T) {
 	dir := t.TempDir()
 	writeRule(t, dir, "slow.yaml", `schema: 1

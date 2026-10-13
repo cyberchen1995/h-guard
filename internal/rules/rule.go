@@ -336,8 +336,8 @@ func (r *Rule) MatchExec(ctx context.Context, e command.Expansion) (Result, erro
 					continue
 				}
 				if ok {
-					res.Hit = true
-					return res, nil
+					// 确定命中优先于此前任何模式的超时：结论是确定命中（否则 deny 级规则会被降为请求确认）
+					return Result{Hit: true}, nil
 				}
 			}
 		}
