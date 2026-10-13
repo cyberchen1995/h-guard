@@ -32,6 +32,9 @@ match:
       - '(?<![\w.])(?<![^\w]-)(?<!^-)[a-z]?(?:rm|unlink|mv|cp|install|ln|truncate|tee|chmod|chown|shred|sed\s+-i|perl\s+-[a-z]*i|python[0-9.]*\s+-c|node\s+-e|jq\b[^\n;&|]*>)\b[^\n;&|]*Library/(?:Application(?:\\ | )Support|Caches)/h-guard'
       - '>>?\s*[^\n;&|]*Library/(?:Application(?:\\ | )Support|Caches)/h-guard'
       - 'Library/(?:Application(?:\\ | )Support|Caches)/h-guard[^\n;&|]*\|\s*(?:tee|sponge)\b'
+      # agent 运行 backend enable 会替用户记下同意（用 script 等伪终端可以绕过终端检查），在 hook 下一律请求确认；
+      # 用户在自己的终端里运行不经过 hook
+      - '(?<![\w.-])h-guard\b[^\n;&|]*\bbackend\s+enable\b'
   file:
     # 文件动作（Write、Edit、NotebookEdit 等）按路径匹配，不调模型（spec §5.2）。
     # {config}、{cache} 是 h-guard 实际使用的目录；~ 开头的写法另覆盖默认位置。
@@ -91,6 +94,8 @@ examples:
     - {shell: posix, command: "grm ~/.config/h-guard/config.yaml"}
     - {shell: posix, command: "scp /tmp/evil.yaml ~/.config/h-guard/config.yaml"}
     - {shell: posix, command: "uu-rm ~/.codex/config.toml"}
+    - {shell: posix, command: "h-guard backend enable local"}
+    - {shell: posix, command: "printf 'y\\n' | script -q /dev/null h-guard backend enable local"}
     - {action: file_write, path: "~/.claude/settings.json"}
     - {action: file_write, path: ".claude/settings.local.json"}
     - {action: file_write, path: "/xdg/config/h-guard/config.yaml"}
@@ -104,6 +109,8 @@ examples:
     - {shell: posix, command: "jq . ~/.codex/hooks.json"}
     - {shell: posix, command: "ls ~/.config/h-guard"}
     - {shell: posix, command: "h-guard check 'git push'"}
+    - {shell: posix, command: "h-guard backend list"}
+    - {shell: posix, command: "h-guard backend disable local"}
     - {shell: posix, command: "grep -n hooks ~/.claude/settings.json"}
     - {shell: posix, command: "grep confirm ~/.claude/settings.json"}
     - {shell: posix, command: "stat --format=%a ~/.codex/hooks.json"}

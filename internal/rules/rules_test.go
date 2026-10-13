@@ -381,6 +381,23 @@ func TestGuardTamperingCoversFileActions(t *testing.T) {
 	}
 }
 
+// TestAgentCannotEnableABackend：agent 在 hook 下运行 h-guard backend enable（哪怕用 script 之类的伪终端绕过
+// 终端检查）会替用户记下同意，必须请求确认；用户在自己终端里运行不经过 hook。查看与撤销同意不算。
+func TestAgentCannotEnableABackend(t *testing.T) {
+	s := builtinSet(t)
+	for _, cmd := range []string{"h-guard backend enable local", `printf 'y\n' | script -q /dev/null h-guard backend enable local`,
+		"/usr/local/bin/h-guard backend enable jev"} {
+		if !hits(t, s, cmd)["guard_tampering"] {
+			t.Errorf("%q did not match guard_tampering", cmd)
+		}
+	}
+	for _, cmd := range []string{"h-guard backend list", "h-guard backend disable local", "h-guard status"} {
+		if hits(t, s, cmd)["guard_tampering"] {
+			t.Errorf("%q matched guard_tampering", cmd)
+		}
+	}
+}
+
 // TestHarmlessDdTargetsAreNotCatastrophic：只豁免去向固定、写入无害的设备。/dev/stdout、/dev/stderr、/dev/fd/N
 // 可能已被 shell 重定向到块设备（评审 M2-04），与 M1 一样拒绝——包括同一段把标准输出重定向到普通文件的
 // 写法（已知的保守误报）。dd 的输出重定向指向设备时同样拒绝。
