@@ -200,6 +200,32 @@ func TestOnlyListedEnvAndConfiguredDir(t *testing.T) {
 	}
 }
 
+// 没有任何可传的变量（PATH、HOME、LANG 与列出的变量都为空）时，程序不能继承父进程的全部环境：
+// cmd.Env 为 nil 时 os/exec 会整体继承。HG_EXEC_HELPER 总是列在 env 里，测试二进制的判断程序模式
+// 碰不到这种情况，所以这里改用 /bin/sh，把它收到的秘密变量打印到 model 字段带回。
+func TestNoInheritanceWhenNoListedVariableIsSet(t *testing.T) {
+	if _, err := os.Stat("/bin/sh"); err != nil {
+		t.Skip("needs /bin/sh")
+	}
+	t.Setenv("HG_TEST_SECRET", "synthetic-not-a-key")
+	t.Setenv("PATH", "")
+	t.Setenv("HOME", "")
+	t.Setenv("LANG", "")
+	t.Setenv("HG_TEST_UNSET", "")
+	b, err := exec.New("sh", exec.Options{Command: "/bin/sh", Env: []string{"HG_TEST_UNSET"},
+		Args: []string{"-c", `printf '{"answers":{},"model":"%s"}' "$HG_TEST_SECRET"`}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := b.Ask(context.Background(), map[string]any{}, []judge.Question{probQ})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Model != "" {
+		t.Errorf("the program inherited the parent environment: it saw HG_TEST_SECRET=%q", resp.Model)
+	}
+}
+
 func TestFailuresAreErrors(t *testing.T) {
 	for mode, kind := range map[string]judge.ErrorKind{
 		"exit3":   judge.Unavailable,

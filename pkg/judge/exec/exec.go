@@ -209,7 +209,8 @@ func (b *Backend) Ask(ctx context.Context, state map[string]any, qs []judge.Ques
 
 // environ 只传 PATH、HOME、LANG 与配置列出的变量。
 func (b *Backend) environ() []string {
-	var env []string
+	// 不能返回 nil：cmd.Env 为 nil 时 os/exec 会整体继承父进程的环境，包括 API key。
+	env := make([]string, 0, len(baseEnv)+len(b.env))
 	for _, k := range append(append([]string(nil), baseEnv...), b.env...) {
 		if v := os.Getenv(k); v != "" {
 			env = append(env, k+"="+v)
