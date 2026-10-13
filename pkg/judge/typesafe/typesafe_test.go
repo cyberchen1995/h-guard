@@ -256,3 +256,19 @@ func TestConformance(t *testing.T) {
 		return newBackend(t, srv.URL, typesafe.Options{})
 	}, questions)
 }
+
+// TestDescribe：同意绑定 scheme、主机与端口（不含路径与凭据），指纹绑定模型与原生概率（spec §8.3、§8.5）。
+func TestDescribe(t *testing.T) {
+	b, err := typesafe.New("jev", typesafe.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var d judge.Describer = b
+	if got := d.Describe(); got != (judge.Info{Target: "https://api.typesafe.ai:443", Model: "jev-latest", Probability: "native"}) {
+		t.Errorf("Describe() = %+v", got)
+	}
+	b, _ = typesafe.New("jev", typesafe.Options{BaseURL: "http://localhost:8080/proxy", Model: "jev-1"})
+	if got := b.Describe(); got.Target != "http://localhost:8080" || got.Model != "jev-1" {
+		t.Errorf("Describe() = %+v", got)
+	}
+}

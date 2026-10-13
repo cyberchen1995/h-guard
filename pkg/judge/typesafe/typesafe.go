@@ -6,12 +6,10 @@
 package typesafe
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -19,6 +17,7 @@ import (
 	"time"
 
 	"github.com/cyberchen1995/h-guard/pkg/judge"
+	"github.com/cyberchen1995/h-guard/pkg/judge/internal/httpx"
 )
 
 // Type 是注册的后端类型名。
@@ -30,8 +29,6 @@ const (
 	DefaultAPIKeyEnv = "TYPESAFE_API_KEY"
 	DefaultTimeout   = 6 * time.Second // 单次请求，与 Python 版一致
 	DefaultRetries   = 1
-	maxResponseBytes = 1 << 20
-	retryBackoff     = 300 * time.Millisecond
 )
 
 // Options 是 typesafe 后端的配置项（spec §8.3 backends.<name>）。
@@ -59,20 +56,16 @@ func init() {
 type Backend struct {
 	name     string
 	model    string
+	base     *url.URL
 	endpoint *url.URL
 	keyEnv   string
-	timeout  time.Duration
-	retries  int
-	client   *http.Client
+	client   *httpx.Client
 	getenv   func(string) string
 }
 
 // New 按配置创建后端；配置非法时返回错误。
 func New(name string, o Options) (*Backend, error) {
-	b := &Backend{
-		name: name, model: o.Model, keyEnv: o.APIKeyEnv,
-		timeout: DefaultTimeout, retries: DefaultRetries, getenv: os.Getenv,
-	}
+	b := &Backend{name: name, model: o.Model, keyEnv: o.APIKeyEnv, getenv: os.Getenv}
 	if b.model == "" {
 		b.model = DefaultModel
 	}
@@ -83,42 +76,26 @@ func New(name string, o Options) (*Backend, error) {
 	if base == "" {
 		base = DefaultBaseURL
 	}
-	u, err := url.Parse(base)
-	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" || u.User != nil {
-		// 不回显 base_url：写错的地址里可能带着凭据
-		return nil, errors.New("typesafe: base_url must be an http(s) URL without user info")
+	u, err := httpx.ParseBase(Type, base) // 不回显 base_url：写错的地址里可能带着凭据
+	if err != nil {
+		return nil, err
 	}
-	b.endpoint = u.JoinPath("v1", "systemone")
-	switch {
-	case o.TimeoutMS < 0:
-		return nil, errors.New("typesafe: timeout_ms must not be negative")
-	case o.TimeoutMS > 0:
-		b.timeout = time.Duration(o.TimeoutMS) * time.Millisecond
+	b.base, b.endpoint = u, u.JoinPath("v1", "systemone")
+	timeout, retries, err := httpx.Settings(Type, o.TimeoutMS, o.Retries, DefaultTimeout, DefaultRetries)
+	if err != nil {
+		return nil, err
 	}
-	if o.Retries != nil {
-		if *o.Retries < 0 || *o.Retries > 5 {
-			return nil, fmt.Errorf("typesafe: retries = %d, want 0..5", *o.Retries)
-		}
-		b.retries = *o.Retries
-	}
-	b.client = &http.Client{CheckRedirect: sameOrigin}
+	b.client = httpx.New(timeout, retries)
 	return b, nil
 }
 
-// sameOrigin 只允许同 scheme、主机、端口的重定向（spec §8.5）。
-func sameOrigin(req *http.Request, via []*http.Request) error {
-	if len(via) >= 5 {
-		return errors.New("too many redirects")
-	}
-	first := via[0].URL
-	if req.URL.Scheme != first.Scheme || req.URL.Host != first.Host {
-		return fmt.Errorf("refusing cross-origin redirect to %s://%s", req.URL.Scheme, req.URL.Host)
-	}
-	return nil
-}
-
-// Endpoint 返回请求地址，供同意与 status 显示（不含凭据）。
+// Endpoint 返回请求地址，供 status 与 check 显示（不含凭据）。
 func (b *Backend) Endpoint() string { return b.endpoint.String() }
+
+// Describe 实现 judge.Describer：同意绑定 scheme、主机与端口，指纹绑定模型与原生概率。
+func (b *Backend) Describe() judge.Info {
+	return judge.Info{Target: httpx.Target(b.base), Model: b.model, Probability: "native"}
+}
 
 func (b *Backend) Name() string { return b.name }
 
@@ -193,8 +170,7 @@ func decodeAnswer(q judge.Question, w wireAnswer) judge.Answer {
 	return judge.Answer{}
 }
 
-// Ask 一次请求问完 qs。重试 Unavailable、Timeout（单次请求超时）、RateLimit，
-// 总时长受 ctx 截止时间约束；Auth、BadResponse 不重试。
+// Ask 一次请求问完 qs。重试与错误分类见 httpx.Client.PostJSON；总时长受 ctx 截止时间约束。
 func (b *Backend) Ask(ctx context.Context, state map[string]any, qs []judge.Question) (judge.Response, error) {
 	key := b.getenv(b.keyEnv)
 	if key == "" {
@@ -212,70 +188,15 @@ func (b *Backend) Ask(ctx context.Context, state map[string]any, qs []judge.Ques
 	if err != nil {
 		return judge.Response{}, &judge.Error{Kind: judge.BadResponse, Err: err}
 	}
-	var lastErr error
-	for attempt := 0; attempt <= b.retries; attempt++ {
-		if attempt > 0 {
-			select {
-			case <-ctx.Done():
-				return judge.Response{}, &judge.Error{Kind: judge.Timeout, Err: ctx.Err()}
-			case <-time.After(retryBackoff):
-			}
-		}
-		w, err := b.post(ctx, key, body)
-		if err == nil {
-			return b.convert(w, qs), nil
-		}
-		lastErr = err
-		if ctx.Err() != nil {
-			return judge.Response{}, &judge.Error{Kind: judge.Timeout, Err: ctx.Err()}
-		}
-		switch judge.KindOf(err) {
-		case judge.Auth, judge.BadResponse:
-			return judge.Response{}, err
-		}
-	}
-	return judge.Response{}, lastErr
-}
-
-func (b *Backend) post(ctx context.Context, key string, body []byte) (wireResponse, error) {
-	ctx, cancel := context.WithTimeout(ctx, b.timeout)
-	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, b.endpoint.String(), bytes.NewReader(body))
+	data, err := b.client.PostJSON(ctx, b.endpoint.String(), http.Header{"Authorization": {"Bearer " + key}}, body)
 	if err != nil {
-		return wireResponse{}, &judge.Error{Kind: judge.Unavailable, Err: err}
-	}
-	req.Header.Set("Authorization", "Bearer "+key)
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := b.client.Do(req)
-	if err != nil {
-		if ctx.Err() != nil {
-			return wireResponse{}, &judge.Error{Kind: judge.Timeout, Err: ctx.Err()}
-		}
-		return wireResponse{}, &judge.Error{Kind: judge.Unavailable, Err: redactURLError(err)}
-	}
-	defer resp.Body.Close()
-	data, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
-	if err != nil {
-		return wireResponse{}, &judge.Error{Kind: judge.Unavailable, Err: err}
-	}
-	switch {
-	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
-		return wireResponse{}, &judge.Error{Kind: judge.Auth, Err: fmt.Errorf("HTTP %d", resp.StatusCode)}
-	case resp.StatusCode == http.StatusTooManyRequests:
-		return wireResponse{}, &judge.Error{Kind: judge.RateLimit, Err: fmt.Errorf("HTTP %d", resp.StatusCode)}
-	case resp.StatusCode >= 500:
-		return wireResponse{}, &judge.Error{Kind: judge.Unavailable, Err: fmt.Errorf("HTTP %d", resp.StatusCode)}
-	case resp.StatusCode != http.StatusOK:
-		return wireResponse{}, &judge.Error{Kind: judge.BadResponse, Err: fmt.Errorf("HTTP %d", resp.StatusCode)}
-	}
-	if len(data) > maxResponseBytes {
-		return wireResponse{}, &judge.Error{Kind: judge.BadResponse, Err: errors.New("response larger than 1 MiB")}
+		return judge.Response{}, err
 	}
 	var w wireResponse
 	if err := json.Unmarshal(data, &w); err != nil {
-		return wireResponse{}, &judge.Error{Kind: judge.BadResponse, Err: errors.New("response is not valid JSON")}
+		return judge.Response{}, &judge.Error{Kind: judge.BadResponse, Err: errors.New("response is not valid JSON")}
 	}
-	return w, nil
+	return b.convert(w, qs), nil
 }
 
 func (b *Backend) convert(w wireResponse, qs []judge.Question) judge.Response {
@@ -286,13 +207,4 @@ func (b *Backend) convert(w wireResponse, qs []judge.Question) judge.Response {
 		}
 	}
 	return out
-}
-
-// redactURLError 去掉 *url.Error 里的 URL（避免把查询串等写进日志），只留操作与原因。
-func redactURLError(err error) error {
-	var ue *url.Error
-	if errors.As(err, &ue) {
-		return fmt.Errorf("%s: %w", ue.Op, ue.Err)
-	}
-	return err
 }

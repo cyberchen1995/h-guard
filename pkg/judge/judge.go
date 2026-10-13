@@ -66,3 +66,17 @@ type Backend interface {
 	// 返回的答案只能以 qs 中的题目 ID 为键。
 	Ask(ctx context.Context, state map[string]any, qs []Question) (Response, error)
 }
+
+// Info 描述后端：数据发往哪里，用什么模型与概率获取方式（spec §8.3、§8.5）。都不含凭据。
+type Info struct {
+	// Target 是数据的去向：HTTP 后端为 scheme://host:port，exec 后端为程序的绝对路径与参数。同意记录绑定它。
+	Target string
+	// Model 是配置里的模型标识；Probability 是概率获取方式（native、logprobs、verbalized）。校准指纹绑定这两项。
+	Model, Probability string
+}
+
+// Describer 是后端的可选接口。只有实现了它的后端才能记录同意与校准：不知道数据发往哪里就无法征得同意
+// （spec §8.5）。
+type Describer interface {
+	Describe() Info
+}
