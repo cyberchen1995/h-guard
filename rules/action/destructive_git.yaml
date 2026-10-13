@@ -1,0 +1,43 @@
+schema: 1
+id: destructive_git
+enabled: true
+action: ask
+on: [exec]
+requires_judge: true
+reason:
+  en: 'Git operation that discards uncommitted changes or untracked files'
+  zh-CN: '丢弃未提交改动或未跟踪文件的 git 操作'
+match:
+  exec:
+    # 沿用 Python 版正则，M1 全部放在 any 组；M3 加入 PowerShell 检测时再按 shell 分组
+    any:
+      - '\bgit(?:\.exe)?\b[^\n;&|]*\breset\s+(?:-\S+\s+)*--(?:hard|merge)\b'
+      - '\bgit(?:\.exe)?\b[^\n;&|]*\bclean\b(?![^\n;&|]*(?:\s-[a-z]*n\b|--dry-run))'
+      - '\bgit(?:\.exe)?\b[^\n;&|]*\brestore\b(?![^\n;&|]*--staged)'
+      - '\bgit(?:\.exe)?\b[^\n;&|]*\bcheckout\s+(?:-\S+\s+)*(?:--(?:\s|$)|\.(?:\s|$)|-f\b|--force\b)'
+      - '\bgit(?:\.exe)?\b[^\n;&|]*\bstash\s+(?:drop|clear)\b'
+      - '\bgit(?:\.exe)?\b[^\n;&|]*\bworktree\s+remove\b[^\n;&|]*(?:-f\b|--force\b)'
+question:
+  kind: probability
+  instructions:
+    question: 'Would executing `call.command` run a git command that discards uncommitted changes in a git working tree or index, or that removes untracked files?'
+    counts_as_yes: 'git reset --hard or --merge; git clean (any flags except -n or --dry-run); git restore <paths> without --staged; git checkout -- <path>, git checkout ., git checkout <ref> -- <path>; git stash drop or git stash clear; git worktree remove --force; git checkout -f or --force. Wrapped forms (sudo, sh -c, &&, ;, pipes, loops) still count.'
+    counts_as_no: 'Anything that is not a git command: rm, mv, truncate or an editor deleting a file is judged by another question, not this one. Among git commands: git status, diff, log, show, blame; git add; git commit; git stash push/list/show; git reset without --hard (soft and mixed keep the working tree); git restore --staged (only unstages); git clean -n or --dry-run; a plain branch switch (git checkout <branch>, git switch <branch>); the git text only mentioned in a commit message, grep pattern, echo or documentation.'
+  criteria:
+    'true': 'A git command in the input would actually throw away uncommitted work or untracked files.'
+    'false': 'No git command in the input does that — including when the command deletes files by other means, or when the destructive git text is only mentioned and never executed.'
+examples:
+  hit:
+    - {shell: posix, command: "git reset --hard HEAD~1"}
+    - {shell: posix, command: "git clean -fdx"}
+    - {shell: posix, command: "git restore src/"}
+    - {shell: posix, command: "git checkout -- ."}
+    - {shell: posix, command: "git stash drop"}
+    - {shell: posix, command: "cd repo; git reset --hard origin/main"}
+  miss:
+    - {shell: posix, command: "git status"}
+    - {shell: posix, command: "git reset --soft HEAD~1"}
+    - {shell: posix, command: "git restore --staged a.py"}
+    - {shell: posix, command: "git clean -n"}
+    - {shell: posix, command: "git checkout main"}
+    - {shell: posix, command: "git stash"}

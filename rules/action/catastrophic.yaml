@@ -1,0 +1,37 @@
+schema: 1
+id: catastrophic
+enabled: true
+action: deny
+on: [exec]
+locked: true
+reason:
+  en: 'Catastrophic operation: deleting the root or home directory, overwriting a block device, or formatting a file system'
+  zh-CN: '灾难性操作：删除根目录或家目录、覆写块设备、格式化文件系统'
+match:
+  exec:
+    # 沿用 Python 版正则，M1 全部放在 any 组；M3 加入 PowerShell 检测时再按 shell 分组
+    any:
+      - '^rm(?:\.exe)?\s+(?:-\S+\s+)*-[a-z]*r[a-z]*\s+(?:-\S+\s+)*(?:/|/\*|~|~/|~/\*|\$HOME|\$\{HOME\}|\$HOME/\*)(?:\s|$|[;&|])'
+      - '^rm(?:\.exe)?\s+(?:-\S+\s+)*--recursive\b[^\n]*\s(?:/|/\*|~|~/|~/\*|\$HOME|\$\{HOME\}|\$HOME/\*)(?:\s|$)'
+      - '^dd\b[^\n]*\bof=/dev/'
+      - '^(?:mkfs(?:\.\w+)?|mke2fs|mkdosfs|mkntfs)\b[^\n]*/dev/'
+      - '^(?:remove-item|rd|rmdir)\b[^\n]*-(?:recurse|r)\b[^\n]*[a-z]:\\?(?:\s|$)'
+    command_position: true
+examples:
+  hit:
+    - {shell: posix, command: "rm -rf /"}
+    - {shell: posix, command: "sudo rm -rf ~"}
+    - {shell: posix, command: "rm -rf $HOME/*"}
+    - {shell: posix, command: "dd if=/dev/zero of=/dev/disk2"}
+    - {shell: posix, command: "mkfs.ext4 /dev/sdb1"}
+    - {shell: posix, command: "cd /tmp && rm -rf /"}
+    - {shell: posix, command: "sudo -u root rm -rf /"}
+    - {shell: posix, command: "bash -c 'rm -rf ~'"}
+  miss:
+    - {shell: posix, command: "rm -rf ./build"}
+    - {shell: posix, command: "rm -rf node_modules"}
+    - {shell: posix, command: "rm -rf /home/dev/proj/dist"}
+    - {shell: posix, command: "echo \"rm -rf /\""}
+    - {shell: posix, command: "git commit -m \"docs: why not rm -rf /\""}
+    - {shell: posix, command: "cat > README.md <<'EOF'\nrm -rf /\nEOF"}
+    - {shell: posix, command: "python3 -c \"print('rm -rf /')\""}

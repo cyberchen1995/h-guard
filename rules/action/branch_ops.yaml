@@ -1,0 +1,45 @@
+schema: 1
+id: branch_ops
+enabled: true
+action: ask
+on: [exec]
+requires_judge: true
+reason:
+  en: 'Rewrites history, force-deletes a branch, changes an upstream, or creates a tracking branch'
+  zh-CN: '改写历史、强制删分支、改 upstream 或创建跟踪分支'
+match:
+  exec:
+    # 沿用 Python 版正则，M1 全部放在 any 组；M3 加入 PowerShell 检测时再按 shell 分组
+    any:
+      - '\bgit(?:\.exe)?\b[^\n;&|]*\brebase\b(?![^\n;&|]*--abort)'
+      - '\bgit(?:\.exe)?\b[^\n;&|]*\bbranch\s+(?:-\S+\s+)*(?-i:-D)(?:\s|$)'
+      - '\bgit(?:\.exe)?\b[^\n;&|]*\bbranch\s+(?:-\S+\s+)*(?:--delete\s+--force|--force\s+--delete)\b'
+      - '\bgit(?:\.exe)?\b[^\n;&|]*\bbranch\s+(?:-\S+\s+)*(?:-u\b|--set-upstream-to\b|--unset-upstream\b)'
+      - '\bgit(?:\.exe)?\b[^\n;&|]*\b(?:checkout\s+-b|switch\s+-c)\b[^\n;&|]*(?:\borigin/|--track\b)'
+      - '\bgit(?:\.exe)?\b[^\n;&|]*\bpush\b[^\n;&|]*(?:\s-f\b|--force\b|--force-with-lease\b|\s-u\b|--set-upstream\b)'
+      - '\bgit(?:\.exe)?\b[^\n;&|]*\b(?:filter-branch|filter-repo)\b'
+      - '\bgit(?:\.exe)?\b[^\n;&|]*\breflog\s+expire\b'
+      - '\bgit(?:\.exe)?\b[^\n;&|]*\bgc\b[^\n;&|]*--prune=now\b'
+question:
+  kind: probability
+  instructions:
+    question: 'Would executing `call.command` rewrite git history, force-delete a branch, change a branch''s upstream, or create a local branch that tracks a remote branch?'
+    counts_as_yes: 'git rebase in any form (including -i, --onto, --continue); git branch -D or --delete --force; git branch -u, --set-upstream-to, --unset-upstream; git push -u or --set-upstream; git checkout -b <name> origin/<branch> or with --track; git switch -c <name> --track or origin/<branch>; git push --force, --force-with-lease, -f; git filter-branch, git filter-repo, git reflog expire, git gc --prune=now. Wrapped forms still count.'
+    counts_as_no: 'git branch -d (safe delete, refuses unmerged branches); git branch with no arguments (list); git checkout -b <name> or git switch -c <name> with no remote tracking; git merge; git commit --amend (deliberately not counted in this rule); git rebase --abort; git fetch; the text only mentioned in a commit message, grep pattern, echo or documentation.'
+  criteria:
+    'true': 'Running the command would actually rewrite history, force-delete a branch, change upstream, or create a tracking branch.'
+    'false': 'It does none of those, or the text is only mentioned and never executed.'
+examples:
+  hit:
+    - {shell: posix, command: "git rebase -i HEAD~3"}
+    - {shell: posix, command: "git branch -D feature"}
+    - {shell: posix, command: "git branch -u origin/main"}
+    - {shell: posix, command: "git checkout -b fix origin/fix"}
+    - {shell: posix, command: "git switch -c x --track origin/x"}
+    - {shell: posix, command: "git push --force-with-lease"}
+  miss:
+    - {shell: posix, command: "git branch -d merged"}
+    - {shell: posix, command: "git branch"}
+    - {shell: posix, command: "git checkout -b feature"}
+    - {shell: posix, command: "git rebase --abort"}
+    - {shell: posix, command: "git merge main"}

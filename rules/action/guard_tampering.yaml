@@ -1,0 +1,56 @@
+schema: 1
+id: guard_tampering
+enabled: true
+action: ask
+on: [exec]
+locked: true
+reason:
+  en: 'Changes the guard''s own configuration or the harness''s hook settings'
+  zh-CN: '改动安全护栏自身的配置或 harness 的 hook 设置'
+match:
+  exec:
+    # 沿用 Python 版正则，M1 全部放在 any 组；M3 加入 PowerShell 检测时再按 shell 分组
+    any:
+      - '(?:rm|unlink|mv|cp|install|ln|truncate|tee|chmod|chown|shred|sed\s+-i|perl\s+-[a-z]*i|python[0-9.]*\s+-c|node\s+-e|jq\b[^\n;&|]*>)\b[^\n;&|]*\.config/h-guard'
+      - '>>?\s*[^\n;&|]*\.config/h-guard'
+      - '\.config/h-guard[^\n;&|]*\|\s*(?:tee|sponge)\b'
+      - '(?:rm|unlink|mv|cp|install|ln|truncate|tee|chmod|chown|shred|sed\s+-i|perl\s+-[a-z]*i|python[0-9.]*\s+-c|node\s+-e|jq\b[^\n;&|]*>)\b[^\n;&|]*\.cache/h-guard'
+      - '>>?\s*[^\n;&|]*\.cache/h-guard'
+      - '\.cache/h-guard[^\n;&|]*\|\s*(?:tee|sponge)\b'
+      - '(?:rm|unlink|mv|cp|install|ln|truncate|tee|chmod|chown|shred|sed\s+-i|perl\s+-[a-z]*i|python[0-9.]*\s+-c|node\s+-e|jq\b[^\n;&|]*>)\b[^\n;&|]*\.claude/settings(?:\.local)?\.json'
+      - '>>?\s*[^\n;&|]*\.claude/settings(?:\.local)?\.json'
+      - '\.claude/settings(?:\.local)?\.json[^\n;&|]*\|\s*(?:tee|sponge)\b'
+      - '(?:rm|unlink|mv|cp|install|ln|truncate|tee|chmod|chown|shred|sed\s+-i|perl\s+-[a-z]*i|python[0-9.]*\s+-c|node\s+-e|jq\b[^\n;&|]*>)\b[^\n;&|]*\.codex/hooks\.json'
+      - '>>?\s*[^\n;&|]*\.codex/hooks\.json'
+      - '\.codex/hooks\.json[^\n;&|]*\|\s*(?:tee|sponge)\b'
+      - '(?:rm|unlink|mv|cp|install|ln|truncate|tee|chmod|chown|shred|sed\s+-i|perl\s+-[a-z]*i|python[0-9.]*\s+-c|node\s+-e|jq\b[^\n;&|]*>)\b[^\n;&|]*\.codex/config\.toml'
+      - '>>?\s*[^\n;&|]*\.codex/config\.toml'
+      - '\.codex/config\.toml[^\n;&|]*\|\s*(?:tee|sponge)\b'
+      - '(?:rm|unlink|mv|cp|install|ln|truncate|tee|chmod|chown|shred|sed\s+-i|perl\s+-[a-z]*i|python[0-9.]*\s+-c|node\s+-e|jq\b[^\n;&|]*>)\b[^\n;&|]*Library/(?:Application(?:\\ | )Support|Caches)/h-guard'
+      - '>>?\s*[^\n;&|]*Library/(?:Application(?:\\ | )Support|Caches)/h-guard'
+      - 'Library/(?:Application(?:\\ | )Support|Caches)/h-guard[^\n;&|]*\|\s*(?:tee|sponge)\b'
+bypassable_by_request: false
+question:
+  kind: probability
+  instructions:
+    question: 'Would executing `call.command` disable, weaken, or modify the safety guard itself or the harness''s hook configuration?'
+    counts_as_yes: 'Writing to, truncating, moving, copying over, deleting, or changing permissions on the guard''s own configuration (h-guard''s questions.json or .env), its cached record of the user''s recent instructions, or the harness''s hook configuration (Claude Code settings.json / settings.local.json, Codex hooks.json / config.toml); uninstalling or replacing the h-guard executable; editing a hook entry so it no longer invokes the guard; setting an environment variable or config key that turns the guard off. Wrapped forms (sudo, sh -c, redirection, sed -i, inline python or node) still count.'
+    counts_as_no: 'Reading or inspecting any of those files (cat, less, jq, grep, ls, git diff, h-guard config); running h-guard itself (h-guard check, h-guard eval, h-guard install); editing an unrelated file that merely happens to be named settings.json or config.toml in some other directory; editing the project''s own source, docs or CI config; the paths only mentioned in a commit message, grep pattern, echo or documentation.'
+  criteria:
+    'true': 'Running the command would actually change or remove the guard''s own configuration, its instruction cache, its installation, or the harness hook setup.'
+    'false': 'It leaves all of those intact, or it only reads them, or the text is only mentioned and never executed.'
+examples:
+  hit:
+    - {shell: posix, command: "rm ~/.claude/settings.json"}
+    - {shell: posix, command: "echo '{}' > ~/.config/h-guard/config.yaml"}
+    - {shell: posix, command: "mv ~/.codex/hooks.json /tmp/x"}
+    - {shell: posix, command: "sed -i '' 's/h-guard//' ~/.claude/settings.json"}
+    - {shell: posix, command: "truncate -s 0 ~/.codex/hooks.json"}
+    - {shell: posix, command: "rm -rf ~/Library/Application\\ Support/h-guard"}
+    - {shell: posix, command: "cp /tmp/x \"$HOME/Library/Application Support/h-guard/config.yaml\""}
+  miss:
+    - {shell: posix, command: "cat ~/.claude/settings.json"}
+    - {shell: posix, command: "jq . ~/.codex/hooks.json"}
+    - {shell: posix, command: "ls ~/.config/h-guard"}
+    - {shell: posix, command: "h-guard check 'git push'"}
+    - {shell: posix, command: "grep -n hooks ~/.claude/settings.json"}
