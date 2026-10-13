@@ -308,14 +308,16 @@ func (h *hookRun) recover() {
 		h.mu.Unlock()
 		return
 	}
-	kind := eventKinds[h.event]
+	// 事件还没解析时与看门狗一样按 --event 推出事件类型（解析前的 panic 也不能让 PreToolUse 放行，评审 M1 终审）
+	kind, ok := eventKinds[h.event]
+	ev := guard.Event{Kind: kind, Harness: h.adapter.Name()}
 	if h.ev != nil {
-		kind = h.ev.Kind
+		ev, kind, ok = *h.ev, h.ev.Kind, true
 	}
 	recs := h.stamp([]hglog.Health{{Event: string(kind), Check: "app", Code: engine.FallbackInternal, Where: where}})
-	if !h.written && h.ev != nil {
+	if !h.written && ok {
 		v := h.committed.With(fallbackOutcome(kind, engine.FallbackInternal, i18n.KeyErrorInternal, nil))
-		h.writeLocked(*h.ev, h.bareEngine().Finish(*h.ev, h.adapter.CapsFor(*h.ev), v))
+		h.writeLocked(ev, h.bareEngine().Finish(ev, h.adapter.CapsFor(ev), v))
 	}
 	h.mu.Unlock()
 	h.logs.Health(recs)

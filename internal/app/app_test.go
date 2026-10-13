@@ -507,6 +507,23 @@ func TestOversizeInput(t *testing.T) {
 	}
 }
 
+// TestRecoverBeforeParseAsks：事件解析之前就 panic（如 adapter 自身的 bug）时，PreToolUse 仍按 --event 请求确认，
+// 不能什么都不输出而被 harness 放行（spec §10.1，评审 M1 终审）。
+func TestRecoverBeforeParseAsks(t *testing.T) {
+	var out bytes.Buffer
+	cache := t.TempDir()
+	h := &hookRun{o: Options{Stdout: &out, Getenv: func(string) string { return "" }, CacheDir: cache}, event: "PreToolUse",
+		logs: &hglog.Writer{Dir: cache}}
+	h.adapter, _ = harness.Lookup("claudecode")
+	func() {
+		defer h.recover()
+		panic("parse")
+	}()
+	if d, _ := decisionOf(t, out.String()); d != "ask" {
+		t.Errorf("panic before the event was parsed: %q, want ask", out.String())
+	}
+}
+
 func TestRecoverKeepsTheStricterOutcome(t *testing.T) {
 	var out bytes.Buffer
 	cache := t.TempDir()
