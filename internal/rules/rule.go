@@ -296,7 +296,8 @@ type Result struct {
 }
 
 // MatchExec 在命令展开出的各单元上匹配：每个单元用 any 组加该单元 shell 的组；
-// command_position 时匹配各段的命令位置文本，strip_quotes 时匹配去引号后的文本，否则匹配全文。
+// command_position 时匹配各段的命令位置文本（deny 级规则另匹配规范写法：去掉引号、命令词取路径最后一段，
+// 只收紧，评审 M1 终审），strip_quotes 时匹配去引号后的文本，否则匹配全文。
 // 每次正则匹配之前都检查 ctx：预算耗尽时不再开始新的匹配，返回已得出的结果与 ctx 的错误
 // （计时粒度为一次匹配，单次匹配受 MatchTimeout 约束，spec §3.4）。
 func (r *Rule) MatchExec(ctx context.Context, e command.Expansion) (Result, error) {
@@ -319,6 +320,9 @@ func (r *Rule) MatchExec(ctx context.Context, e command.Expansion) (Result, erro
 		switch {
 		case r.exec.commandPosition:
 			hay = u.Positions()
+			if r.Action == guard.DecisionDeny {
+				hay = append(hay, u.NormalizedPositions()...)
+			}
 		case r.exec.stripQuotes:
 			hay = []string{u.Unquoted()}
 		default:

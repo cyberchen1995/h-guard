@@ -27,8 +27,12 @@ examples:
     - {shell: posix, command: "cd /tmp && rm -rf /"}
     - {shell: posix, command: "sudo -u root rm -rf /"}
     - {shell: posix, command: "bash -c 'rm -rf ~'"}
+    - {shell: posix, command: "rm -rf \"$HOME\""}
+    - {shell: posix, command: "/bin/rm -rf /"}
+    - {shell: posix, command: "timeout 5 rm -rf /"}
   miss:
     - {shell: posix, command: "rm -rf ./build"}
+    - {shell: posix, command: "rm -rf \"./build\""}
     - {shell: posix, command: "rm -rf node_modules"}
     - {shell: posix, command: "rm -rf /home/dev/proj/dist"}
     - {shell: posix, command: "echo \"rm -rf /\""}

@@ -89,6 +89,7 @@ var prefixWords = map[string][]string{
 	"nohup":   nil,
 	"time":    {"-f", "-o"},
 	"nice":    {"-n", "--adjustment"},
+	"timeout": {"-s", "-k", "--signal", "--kill-after"},
 	"ionice":  {"-c", "-n", "-p", "--class", "--classdata"},
 	"exec":    {"-a"},
 	"builtin": nil,
@@ -97,53 +98,118 @@ var prefixWords = map[string][]string{
 	"!": nil, "{": nil, "}": nil, "if": nil, "then": nil, "else": nil, "elif": nil, "do": nil, "while": nil, "until": nil,
 }
 
+// prefixPositional 是前缀词在选项之后、命令之前的位置参数个数（timeout 5 rm …）。
+var prefixPositional = map[string]int{"timeout": 1}
+
 var assignment = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*=`)
+
+// commandStart 返回段中的词与命令词的下标：跳过前缀词及其选项、位置参数，赋值与保留字。重定向的目标、
+// heredoc 的定界符与重定向前的文件描述符号（2>）不算词。没有命令词时下标等于词数。
+func commandStart(lx lexed, seg segment) ([]token, int) {
+	var words []token
+	target := false
+	for _, t := range seg.tokens {
+		switch {
+		case t.kind == tokRedir || t.kind == tokHeredoc:
+			if n := len(words); n > 0 && words[n-1].end == t.start && isDigits(words[n-1].value) {
+				words = words[:n-1] // 2>file 的 2
+			}
+			target = true
+		case t.kind == tokWord && target:
+			target = false
+		case t.kind == tokWord:
+			words = append(words, t)
+		}
+	}
+	var argOpts []string
+	positional := 0
+	k := 0
+	for k < len(words) {
+		w := words[k]
+		base := strings.ToLower(path.Base(w.value))
+		if opts, ok := prefixWords[base]; ok && w.value != "" {
+			argOpts, positional = opts, prefixPositional[base]
+			k++
+			continue
+		}
+		if assignment.MatchString(lx.join(w.start, w.end)) {
+			k++
+			continue
+		}
+		if strings.HasPrefix(w.value, "-") && k+1 < len(words) {
+			k++
+			if contains(argOpts, w.value) && k+1 < len(words) {
+				k++
+			}
+			continue
+		}
+		if positional > 0 && k+1 < len(words) {
+			positional--
+			k++
+			continue
+		}
+		break
+	}
+	return words, k
+}
+
+func isDigits(s string) bool {
+	return s != "" && strings.Trim(s, "0123456789") == ""
+}
 
 // CommandPositions 返回每一段中真正处于「要被执行」位置的部分：去掉 sudo、env、FOO=1、保留字这类前缀
 // 及前缀词的选项（Python 版 command_position_text）。`echo "别用 rm -rf /"` 剥完仍以 echo 开头，
 // 锚在段首的正则不会命中。词按 shell 规则切分（空格、制表符都算），前缀词按去引号后的值比较，
 // 赋值前缀按去掉续行后的原文判断（F\ 换行 OO=1 也是赋值）；返回的文本去掉续行。
 //
-// 与 Python 版的差异（只收紧）：前缀词需要参数的选项连同参数一起跳过（sudo -u root rm …），
-// 段首的选项词总是跳过，保留字也剥掉，括号也分段。
+// 与 Python 版的差异（只收紧）：前缀词需要参数的选项连同参数一起跳过（sudo -u root rm …），timeout 的时长也跳过，
+// 段首的选项词总是跳过，保留字也剥掉，括号也分段，重定向的目标不当作命令词（>log rm …）。
 func CommandPositions(cmd string) []string {
 	lx := lex(cmd)
 	var out []string
 	for _, seg := range lx.segments() {
-		var words []token
-		for _, t := range seg.tokens {
-			if t.kind == tokWord {
-				words = append(words, t)
-			}
-		}
-		var argOpts []string
-		k := 0
-		for k < len(words) {
-			w := words[k]
-			base := strings.ToLower(path.Base(w.value))
-			if opts, ok := prefixWords[base]; ok && w.value != "" {
-				argOpts = opts
-				k++
-				continue
-			}
-			if assignment.MatchString(lx.join(w.start, w.end)) {
-				k++
-				continue
-			}
-			if strings.HasPrefix(w.value, "-") && k+1 < len(words) {
-				k++
-				if contains(argOpts, w.value) && k+1 < len(words) {
-					k++
-				}
-				continue
-			}
-			break
-		}
+		words, k := commandStart(lx, seg)
 		if k < len(words) {
 			if s := strings.TrimSpace(lx.join(words[k].start, seg.end)); s != "" {
 				out = append(out, s)
 			}
 		}
+	}
+	return out
+}
+
+// NormalizedPositions 返回各段命令位置的规范写法，给 deny 级规则在原文之外再匹配一次：词按 shell 规则取值
+// （去掉引号与转义，不做展开），命令词取路径的最后一段（/bin/rm → rm），${HOME} 写作 $HOME，词末的 / 去掉
+// （单独的 / 保留），以单个空格连接；重定向的目标不算。含空白的词保留原文写法，不拼出新的词。
+// 于是 rm -rf "$HOME"、/bin/rm -rf '/'、\rm -rf ${HOME}/ 与 rm -rf $HOME、rm -rf / 一样匹配（评审 M1 终审）。
+func NormalizedPositions(cmd string) []string {
+	lx := lex(cmd)
+	var out []string
+	for _, seg := range lx.segments() {
+		words, k := commandStart(lx, seg)
+		if k >= len(words) {
+			continue
+		}
+		parts := make([]string, 0, len(words)-k)
+		for i, w := range words[k:] {
+			v := w.value
+			switch {
+			case strings.ContainsAny(v, " \t\n"):
+				v = lx.join(w.start, w.end)
+			default:
+				if i == 0 && v != "" {
+					v = path.Base(v)
+				}
+				v = strings.ReplaceAll(v, "${HOME}", "$HOME")
+				if len(v) > 1 {
+					if v = strings.TrimRight(v, "/"); v == "" {
+						v = "/"
+					}
+				}
+			}
+			parts = append(parts, v)
+		}
+		out = append(out, strings.Join(parts, " "))
 	}
 	return out
 }

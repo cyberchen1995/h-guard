@@ -42,6 +42,14 @@ func (u Unit) Positions() []string {
 	return CommandPositions(u.Text)
 }
 
+// NormalizedPositions 返回该单元各段命令位置的规范写法（见 NormalizedPositions）；非 POSIX 单元没有。
+func (u Unit) NormalizedPositions() []string {
+	if u.Shell != guard.ShellPOSIX {
+		return nil
+	}
+	return NormalizedPositions(u.Text)
+}
+
 // Unquoted 返回抹掉引号内容后的文本（见 StripQuoted）。
 func (u Unit) Unquoted() string {
 	if u.Shell != guard.ShellPOSIX {

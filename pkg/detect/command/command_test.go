@@ -349,6 +349,30 @@ func TestDepthLimit(t *testing.T) {
 	}
 }
 
+// TestNormalizedPositions：给 deny 级规则的规范化命令位置——词去掉引号与转义，命令词取路径最后一段，
+// ${HOME} 写作 $HOME，词末的 / 去掉（单独的 / 保留），重定向的目标不算；前缀词照常剥离（评审 M1 终审）。
+func TestNormalizedPositions(t *testing.T) {
+	for cmd, want := range map[string][]string{
+		`rm -rf "$HOME"`:              {"rm -rf $HOME"},
+		`/bin/rm -rf '/'`:             {"rm -rf /"},
+		`\rm -rf ${HOME}/`:            {"rm -rf $HOME"},
+		`sudo timeout 5 rm -rf ~/`:    {"rm -rf ~"},
+		`echo "rm -rf /"`:             {`echo "rm -rf /"`},
+		`rm -rf / >/dev/null; ls "a"`: {"rm -rf /", "ls a"},
+		`rm -rf "my dir"`:             {`rm -rf "my dir"`},
+	} {
+		if got := command.NormalizedPositions(cmd); !slices.Equal(got, want) {
+			t.Errorf("NormalizedPositions(%q) = %q, want %q", cmd, got, want)
+		}
+	}
+	// timeout 的时长参数与选项一起跳过，原文的命令位置同样受益
+	for cmd, want := range map[string]string{"timeout 5 rm -rf build": "rm -rf build", "timeout -s KILL 5 git push": "git push"} {
+		if got := command.CommandPositions(cmd); !slices.Equal(got, []string{want}) {
+			t.Errorf("CommandPositions(%q) = %q, want %q", cmd, got, want)
+		}
+	}
+}
+
 // TestManySubstitutionsAreAllExpanded：单元数不设上限，很多个命令替换之后（含嵌套在里面的）的内容照常提取，
 // 不会因数量多而被丢掉（评审 M1 终审）。耗时由截止时间约束。
 func TestManySubstitutionsAreAllExpanded(t *testing.T) {
@@ -466,6 +490,7 @@ func FuzzExpand(f *testing.F) {
 		}
 		for _, u := range e.Units {
 			_ = u.Positions()
+			_ = u.NormalizedPositions()
 			_ = u.Unquoted()
 		}
 	})

@@ -326,6 +326,16 @@ func TestShellContextDecides(t *testing.T) {
 		{"parameter default in double quotes", "echo \"${x:-<(rm -rf ~)}\"", guard.DecisionPass},
 		// 命令替换再多，后面的内容也要检查（评审 M1 终审）
 		{"after many substitutions", "echo" + strings.Repeat(" $(true)", 70) + " $(rm -rf /)", guard.DecisionDeny},
+		// 灾难性形态的常见写法：加引号、带路径、转义的命令词、timeout 前缀（评审 M1 终审）
+		{"quoted home", `rm -rf "$HOME"`, guard.DecisionDeny},
+		{"braced home with slash", `rm -rf ${HOME}/`, guard.DecisionDeny},
+		{"quoted root", `rm -rf '/'`, guard.DecisionDeny},
+		{"absolute rm", `/bin/rm -rf /`, guard.DecisionDeny},
+		{"escaped rm", `\rm -rf /`, guard.DecisionDeny},
+		{"timeout prefix", `timeout 5 rm -rf /`, guard.DecisionDeny},
+		{"quoted relative target", `rm -rf "./build"`, guard.DecisionPass},
+		{"quoted project path", `rm -rf "/home/dev/proj/dist"`, guard.DecisionPass},
+		{"quoted text after echo", `echo "rm -rf $HOME"`, guard.DecisionPass},
 	}
 	for _, tt := range tests {
 		if v := run(t, c, event(nil, tt.cmd)); v.Decision != tt.want {
