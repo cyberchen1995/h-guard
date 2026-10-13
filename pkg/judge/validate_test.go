@@ -32,6 +32,10 @@ func TestValidateAnswer(t *testing.T) {
 		{"inf", probQ, judge.Answer{P: judge.Prob(math.Inf(1))}, false},
 		{"scale ok", scaleQ, judge.Answer{Dist: []float64{0.1, 0.2, 0.3, 0.4}}, true},
 		{"scale within tolerance", scaleQ, judge.Answer{Dist: []float64{0.1, 0.2, 0.3, 0.4005}}, true},
+		// 后端按两位小数给出概率，四项各自舍入后和可以偏离 1 达 0.02（Jev 真实答案 [0, 0.81, 0.01, 0.17]）
+		{"scale rounded to two decimals", scaleQ, judge.Answer{Dist: []float64{0, 0.81, 0.01, 0.17}}, true},
+		{"scale rounded the other way", scaleQ, judge.Answer{Dist: []float64{0.26, 0.26, 0.25, 0.25}}, true},
+		{"scale off by more than rounding", scaleQ, judge.Answer{Dist: []float64{0.1, 0.2, 0.3, 0.37}}, false},
 		{"scale off by more", scaleQ, judge.Answer{Dist: []float64{0.1, 0.2, 0.3, 0.5}}, false},
 		{"scale wrong length", scaleQ, judge.Answer{Dist: []float64{0.5, 0.5}}, false},
 		{"scale negative", scaleQ, judge.Answer{Dist: []float64{-0.1, 0.4, 0.3, 0.4}}, false},

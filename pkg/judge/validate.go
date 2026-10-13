@@ -8,8 +8,9 @@ import (
 	"sync"
 )
 
-// normalizeTolerance 是分布之和允许偏离 1 的幅度，偏离不超过它时归一化（spec §8.1）。
-const normalizeTolerance = 1e-3
+// normalizeTolerance 是分布之和允许偏离 1 的幅度，偏离不超过它时归一化（spec §8.1）。后端按两位小数给出概率
+// （Jev），四个级别各自舍入后和最多偏离 0.02；比较时另留浮点误差的余量。
+const normalizeTolerance = 0.02
 
 // ValidateAnswer 按 spec §8.1 检查一道题的答案，返回归一化后的答案；无效时返回说明原因的错误。
 func ValidateAnswer(q Question, a Answer) (Answer, error) {
@@ -42,7 +43,7 @@ func ValidateAnswer(q Question, a Answer) (Answer, error) {
 			}
 			sum += v
 		}
-		if math.Abs(sum-1) > normalizeTolerance {
+		if math.Abs(sum-1) > normalizeTolerance+1e-9 {
 			return Answer{}, fmt.Errorf("dist sums to %v", sum)
 		}
 		out := make([]float64, len(a.Dist))
