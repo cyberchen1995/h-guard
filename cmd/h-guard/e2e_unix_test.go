@@ -62,6 +62,7 @@ func TestPluginWrapperAnswersWhenHealthLogStalls(t *testing.T) {
 			c.Stdin = stdin
 			var out bytes.Buffer
 			c.Stdout = &out
+			c.WaitDelay = time.Second // 杀掉脚本后，占着输出的 h-guard 子进程也不能让 Wait 一直等
 			start := time.Now()
 			if err := c.Start(); err != nil {
 				t.Fatal(err)
@@ -75,6 +76,7 @@ func TestPluginWrapperAnswersWhenHealthLogStalls(t *testing.T) {
 				}
 			case <-time.After(timeout):
 				_ = c.Process.Kill()
+				<-done // 等 exec 的拷贝协程结束再读 out，否则失败分支本身与它竞争
 				t.Fatalf("the wrapper did not finish within %v; stdout so far %q", timeout, out.String())
 			}
 			elapsed := time.Since(start)

@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cyberchen1995/h-guard/internal/check/action"
 	"github.com/cyberchen1995/h-guard/pkg/detect/secrets"
 	"github.com/cyberchen1995/h-guard/pkg/guard"
 	"github.com/cyberchen1995/h-guard/pkg/harness"
@@ -25,8 +24,8 @@ func (m *multiFlag) Set(v string) error { *m = append(*m, v); return nil }
 // checkTimeout 是 check 命令的截止时间（含一次判断请求）。
 const checkTimeout = 30 * time.Second
 
-// runCheck 手动判断一条命令（spec §12）。默认只跑本地规则；--judge 时才调用判断后端，
-// 并先把将要发送的内容打印到 stderr（M1 还没有同意机制，维护者决定，2026-10-12）。
+// runCheck 手动判断一条命令（spec §12），与 hook 走同一套判断：模型开启且同意有效时调用配置的后端。
+// --no-judge 只跑本地规则（按模型关闭判断）；--show-request 在发送前把 state 与题目打印到 stderr。
 func runCheck(args []string, o Options) int {
 	fs := flag.NewFlagSet("check", flag.ContinueOnError)
 	fs.SetOutput(o.Stderr)
@@ -34,7 +33,8 @@ func runCheck(args []string, o Options) int {
 	var requests multiFlag
 	fs.Var(&requests, "request", "a recent user instruction (repeatable, oldest first)")
 	cwd := fs.String("cwd", "", "working directory to report")
-	useJudge := fs.Bool("judge", false, "ask the configured judge backend (sends the command and requests)")
+	noJudge := fs.Bool("no-judge", false, "run the local rules only, as if the judge were disabled")
+	show := fs.Bool("show-request", false, "print what is sent to the judge backend to stderr")
 	extra := fs.String("config", "", "extra config file")
 	pos, err := parseInterleaved(fs, args)
 	if err != nil || len(pos) != 1 || !guard.Shell(*shell).Valid() {
@@ -54,19 +54,16 @@ func runCheck(args []string, o Options) int {
 	for _, r := range requests {
 		ev.Requests = append(ev.Requests, guard.Request{Text: r, Source: guard.SourceUser})
 	}
-	var j action.Judge
-	if *useJudge {
-		s.cfg.Judge.Enabled = true
-		b, err := s.cfg.NewBackend(s.cfg.Judge.Backend)
-		if err != nil {
-			fmt.Fprintln(o.Stderr, "h-guard:", secrets.MaskForLog(err.Error()))
-			return 1
-		}
-		j.Backend = &printingBackend{Backend: b, w: o.Stderr}
+	if *noJudge {
+		s.cfg.Judge.Enabled = false
+	}
+	j, _ := s.actionJudge(o)
+	if *show && j.Backend != nil {
+		j.Backend = &printingBackend{Backend: j.Backend, w: o.Stderr}
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), checkTimeout)
 	defer cancel()
-	res := s.newEngine(j).Evaluate(ctx, ev, harness.EventCaps{Block: true, Ask: true, Warn: true})
+	res := s.newEngine(o, j).Evaluate(ctx, ev, harness.EventCaps{Block: true, Ask: true, Warn: true})
 	printOutcome(o.Stdout, res.Outcome)
 	return 0
 }
@@ -101,12 +98,10 @@ type printingBackend struct {
 	w io.Writer
 }
 
-type endpointer interface{ Endpoint() string }
-
 func (p *printingBackend) Ask(ctx context.Context, state map[string]any, qs []judge.Question) (judge.Response, error) {
 	target := p.Name()
-	if e, ok := p.Backend.(endpointer); ok {
-		target += " (" + e.Endpoint() + ")"
+	if d, ok := p.Backend.(judge.Describer); ok {
+		target += " (" + d.Describe().Target + ")"
 	}
 	ids := make([]string, len(qs))
 	for i, q := range qs {

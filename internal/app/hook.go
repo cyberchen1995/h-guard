@@ -112,11 +112,12 @@ func (h *hookRun) commit(check string, v guard.Verdict) {
 	h.committed.Add(check, v)
 }
 
-// newEngine 是 hook 使用的 Engine：在 setup 组装的基础上接上提交记录，供看门狗读取。
-func (h *hookRun) newEngine(s setup) *engine.Engine {
-	eng := s.newEngine(hookJudge(s.cfg))
+// newEngine 是 hook 使用的 Engine：判断层按配置与同意接入（spec §8.5），再接上提交记录，供看门狗读取。
+func (h *hookRun) newEngine(s setup) (*engine.Engine, judgeState) {
+	j, st := s.actionJudge(h.o)
+	eng := s.newEngine(h.o, j)
 	eng.OnCommit = h.commit
-	return eng
+	return eng, st
 }
 
 func (h *hookRun) setEvent(ev guard.Event) bool {
@@ -169,13 +170,13 @@ func (h *hookRun) run(ctx context.Context, extra string) {
 			ev.Requests = h.requests(prompts, ev)
 		}
 	}
-	eng := h.newEngine(s)
+	eng, st := h.newEngine(s)
 	res := eng.Evaluate(ctx, ev, h.adapter.CapsFor(ev))
 	if !h.write(ev, res.Outcome) {
 		return
 	}
 	h.health(healthOf(ev, res))
-	h.decision(s, ev, res.Outcome)
+	h.decision(s, st, ev, res.Outcome)
 }
 
 // requests 补全用户指令：指令缓存优先，没有时读 transcript（spec §3.3 第 3 步）。
@@ -374,7 +375,7 @@ func (h *hookRun) stamp(recs []hglog.Health) []hglog.Health {
 
 // decision 写决策日志。动作事件记动作与参与判断的用户指令；提示词与工具输出只记长度，
 // 不记正文（spec §10.3：outbound 只记长度、命中与摘录，M1 没有 outbound 命中）。
-func (h *hookRun) decision(s setup, ev guard.Event, out guard.Outcome) {
+func (h *hookRun) decision(s setup, st judgeState, ev guard.Event, out guard.Outcome) {
 	d := hglog.Decision{
 		Version: Version, Harness: ev.Harness, SessionID: ev.SessionID, CallID: ev.CallID, Cwd: ev.Cwd,
 		Event: ev.Kind, Tool: ev.Tool, Decision: out.Verdict.Decision, RawDecision: out.Raw,
@@ -387,7 +388,9 @@ func (h *hookRun) decision(s setup, ev guard.Event, out guard.Outcome) {
 	}
 	if s.cfg.Judge.Enabled {
 		d.Backend = s.cfg.Judge.Backend
-		d.Profile = s.cfg.Backends[s.cfg.Judge.Backend].Profile
+		if st.cal.Calibrated() && st.backend != nil {
+			d.Profile = st.cal.Profile // 未校准时用的是保守默认值，不记档案名
+		}
 	}
 	if h.live() {
 		h.logs.Decision(d)
