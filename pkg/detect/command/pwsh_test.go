@@ -2,9 +2,11 @@ package command_test
 
 import (
 	"context"
+	"encoding/base64"
 	"slices"
 	"strings"
 	"testing"
+	"unicode/utf16"
 
 	"github.com/cyberchen1995/h-guard/pkg/detect/command"
 	"github.com/cyberchen1995/h-guard/pkg/guard"
@@ -56,8 +58,8 @@ func TestPowerShellPositions(t *testing.T) {
 		{`Remove-Item x 2>&1 | Out-Null`, []string{`Remove-Item x 2>&1`, `Out-Null`}},
 		{`if (Test-Path x) { Remove-Item x; ls }`, []string{`if (Test-Path x) { Remove-Item x; ls }`}},
 		{`Get-ChildItem | ForEach-Object { Remove-Item $_ -Recurse }`, []string{`Get-ChildItem`, `ForEach-Object { Remove-Item $_ -Recurse }`}},
-		{"$s = @'\nRemove-Item x; y\n'@\nls", []string{"@'\nRemove-Item x; y\n'@", `ls`}},
-		{"Write-Output @\"\na; b\n\"@ | Out-File f", []string{"Write-Output @\"\na; b\n\"@", "Out-File f"}},
+		{"$s = @'\nRemove-Item x; y\n'@\nls", []string{"@'\n" + command.HeredocPlaceholder + "\n'@", `ls`}}, // 数据 here-string 的正文换成占位符
+		{"Write-Output @\"\na; b\n\"@ | Out-File f", []string{"Write-Output @\"\n" + command.HeredocPlaceholder + "\n\"@", "Out-File f"}},
 		{`# only a comment`, nil},
 	} {
 		if got := pwsh(t, c.in).Units[0].Positions(); !slices.Equal(got, c.want) {
@@ -169,7 +171,7 @@ func TestPowerShellFullTexts(t *testing.T) {
 func TestPowerShellUnterminated(t *testing.T) {
 	for in, want := range map[string][]string{
 		`Write-Output 'a; Remove-Item x`:    {`Write-Output 'a; Remove-Item x`},
-		"Write-Output @'\na; Remove-Item x": {"Write-Output @'\na; Remove-Item x"},
+		"Write-Output @'\na; Remove-Item x": {strings.TrimSpace("Write-Output @'\n" + command.HeredocPlaceholder)},
 		`ls (a; b`:                          {`ls (a; b`},
 		`<# ; Remove-Item x`:                nil,
 	} {
@@ -205,4 +207,110 @@ func FuzzExpandPowerShell(f *testing.F) {
 			_ = u.FullTexts()
 		}
 	})
+}
+
+// encoded 返回 pwsh -EncodedCommand 的参数：UTF-16LE 再 Base64。
+func encoded(s string) string {
+	var b []byte
+	for _, r := range utf16.Encode([]rune(s)) {
+		b = append(b, byte(r), byte(r>>8))
+	}
+	return base64.StdEncoding.EncodeToString(b)
+}
+
+// marked 返回含 MARK 的内层单元的 shell；没有时为空。
+func marked(e command.Expansion) []guard.Shell {
+	var out []guard.Shell
+	for _, u := range e.Units[1:] {
+		for _, text := range u.FullTexts() {
+			if strings.Contains(text, MARK) {
+				out = append(out, u.Shell)
+				break
+			}
+		}
+	}
+	return out
+}
+
+// TestPowerShellInnerCommands：PowerShell 里会被执行的代码取出来按命令再检查一遍（spec §5.3）：子表达式 $(…)
+// （含双引号字符串与 @"…"@ 里的）、括号、脚本块；交给 Invoke-Expression（iex）、pwsh、powershell 的字符串与
+// here-string 的内容；pwsh -Command、-EncodedCommand（Base64 的 UTF-16LE）与按位置给出的命令；bash -c、
+// wsl 交给 Linux 执行的命令按 POSIX 检查。单引号字符串与 @'…'@ 里的是数据。
+func TestPowerShellInnerCommands(t *testing.T) {
+	ps, posix := guard.ShellPowerShell, guard.ShellPOSIX
+	for _, c := range []struct {
+		in   string
+		want []guard.Shell
+	}{
+		{`Write-Output "a $(` + MARK + `) b"`, []guard.Shell{ps}},
+		{`Write-Output '$(` + MARK + `)'`, nil},
+		{`if (Test-Path x) { ` + MARK + ` }`, []guard.Shell{ps}},
+		{`Get-ChildItem | ForEach-Object { ` + MARK + ` }`, []guard.Shell{ps}},
+		{`$n = (` + MARK + `).Count`, []guard.Shell{ps}},
+		{"Set-Content f @\"\n$(" + MARK + ")\n\"@", []guard.Shell{ps}},
+		{"Set-Content f @'\n" + MARK + "\n'@", nil},
+		{"@'\n" + MARK + "\n'@ | iex", []guard.Shell{ps}},
+		{`"` + MARK + `" | Invoke-Expression`, []guard.Shell{ps}},
+		{`iex '` + MARK + `'`, []guard.Shell{ps}},
+		{`Invoke-Expression -Command "` + MARK + `"`, []guard.Shell{ps}},
+		{"@'\n" + MARK + "\n'@ | pwsh -Command -", []guard.Shell{ps}},
+		{`pwsh -Command "` + MARK + `"`, []guard.Shell{ps}},
+		{`powershell.exe -c ` + MARK, []guard.Shell{ps}},
+		{`pwsh -NoProfile -ExecutionPolicy Bypass -Command ` + MARK, []guard.Shell{ps}},
+		{`C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe /Command "` + MARK + `"`, []guard.Shell{ps}},
+		{`powershell -EncodedCommand ` + encoded(MARK), []guard.Shell{ps}},
+		{`pwsh -enc ` + encoded(MARK), []guard.Shell{ps}},
+		{`powershell "` + MARK + `"`, []guard.Shell{ps}},
+		{`pwsh -File .\` + MARK + `.ps1`, nil},
+		{`bash -c '` + MARK + `'`, []guard.Shell{posix}},
+		{`wsl ` + MARK, []guard.Shell{posix}},
+		{`wsl -d Ubuntu -u root -- ` + MARK, []guard.Shell{posix}},
+	} {
+		if got := marked(pwsh(t, c.in)); !slices.Equal(got, c.want) {
+			t.Errorf("%q: inner shells with MARK = %v, want %v", c.in, got, c.want)
+		}
+	}
+}
+
+// TestPowerShellDataHereStrings：作为数据的 here-string 正文换成占位符，全文规则不会匹配到其中的写法；交给解释器的
+// 正文保留在全文里（与 POSIX 的 heredoc 相同）。
+func TestPowerShellDataHereStrings(t *testing.T) {
+	if text := pwsh(t, "Set-Content notes.md @'\ngit push --force\n'@").Units[0].Text; strings.Contains(text, "git push") || !strings.Contains(text, command.HeredocPlaceholder) {
+		t.Errorf("data here-string kept in the full text: %q", text)
+	}
+	if text := pwsh(t, "@'\ngit push --force\n'@ | iex").Units[0].Text; !strings.Contains(text, "git push") {
+		t.Errorf("executed here-string removed from the full text: %q", text)
+	}
+}
+
+// TestPOSIXRunsPowerShell：POSIX 命令里交给 pwsh、powershell 的脚本按 PowerShell 检查：-c、-Command、
+// -EncodedCommand，以及把 heredoc 正文交给它们。
+func TestPOSIXRunsPowerShell(t *testing.T) {
+	ps := []guard.Shell{guard.ShellPowerShell}
+	for _, in := range []string{
+		`pwsh -c '` + MARK + `'`,
+		`powershell.exe -NoProfile -Command "` + MARK + `"`,
+		`pwsh -EncodedCommand ` + encoded(MARK),
+		"pwsh <<'EOF'\n" + MARK + "\nEOF",
+		"cat <<'EOF' | powershell -Command -\n" + MARK + "\nEOF",
+	} {
+		if got := marked(expand(t, in)); !slices.Equal(got, ps) {
+			t.Errorf("%q: inner shells with MARK = %v, want %v", in, got, ps)
+		}
+	}
+	if got := marked(expand(t, "bash <<'EOF'\n"+MARK+"\nEOF")); !slices.Equal(got, []guard.Shell{guard.ShellPOSIX}) {
+		t.Errorf("bash heredoc: %v", got)
+	}
+}
+
+// TestPowerShellDepthLimit：PowerShell 与 POSIX 互相嵌套同样受 MaxDepth 限制。
+func TestPowerShellDepthLimit(t *testing.T) {
+	cmd := MARK
+	for i := 0; i < command.MaxDepth+1; i++ {
+		cmd = `pwsh -c "$(` + cmd + `)"`
+	}
+	e := pwsh(t, cmd)
+	if !e.Limited {
+		t.Errorf("expansion of %q is not limited", cmd)
+	}
 }

@@ -1,6 +1,8 @@
 // Package command 把一条命令展开成需要逐一检查的文本单元（spec §5.3）：原命令本身（剥离数据 heredoc），
 // 以及从中提取出的内层命令——命令替换 $(…)、反引号与进程替换、不带引号的数据 heredoc 中的命令替换、
-// 交给解释器的 heredoc 正文、bash -c 等嵌套调用的脚本。每个单元再提供三种视图：全文、命令位置、去引号。
+// 交给解释器的 heredoc 正文、bash -c 等嵌套调用的脚本；PowerShell 的对应写法见 pwsh_expand.go。
+// 内层命令可以换 shell（POSIX 里的 pwsh -c、PowerShell 里的 bash -c 与 wsl），每个单元记下自己的 shell。
+// 每个单元再提供三种视图：全文、命令位置、去引号。
 // 切段、去前缀、去引号与 heredoc 识别共用同一个 POSIX 词法分析（lex.go）。
 //
 // 只做展开，不做匹配；规则匹配在规则包中完成。POSIX shell 的词法在 lex.go，PowerShell 的在 pwsh.go。
@@ -82,32 +84,39 @@ func (e *Expansion) expand(ctx context.Context, text string, shell guard.Shell, 
 		e.Units = append(e.Units, Unit{Text: text, Depth: depth, Shell: shell})
 		return nil
 	}
+	var inner []nested
 	if shell == guard.ShellPowerShell {
-		u := Unit{Text: text, Depth: depth, Shell: shell}
-		if lx := pwshLex(text); len(lx.conts) > 0 {
-			u.joined = lx.join(0, len(text)) // 反引号续行
+		text = pwshNormalize(text) // Unicode 破折号与中文引号换成 ASCII 写法
+		stripped, sub := pwshExpand(text)
+		u := Unit{Text: stripped, Depth: depth, Shell: shell}
+		if lx := pwshLex(stripped); len(lx.conts) > 0 {
+			u.joined = lx.join(0, len(stripped)) // 反引号续行
 		}
 		e.Units = append(e.Units, u)
-		return nil
+		inner = sub
+	} else {
+		stripped, expandable, executed := stripHeredocs(text)
+		u := Unit{Text: stripped, Depth: depth, Shell: shell}
+		if lx := lex(stripped); len(lx.conts) > 0 {
+			u.joined = lx.join(0, len(stripped)) // 续行由词法分析按上下文确认
+		}
+		e.Units = append(e.Units, u)
+		for _, b := range expandable {
+			for _, s := range substitutions(b) {
+				inner = append(inner, nested{s, shell})
+			}
+		}
+		inner = append(inner, executed...) // 交给解释器的正文：全文已在本单元里，另按命令切段检查
+		for _, s := range codeSubstitutions(stripped) {
+			inner = append(inner, nested{s, shell})
+		}
+		inner = append(inner, nestedScripts(stripped)...)
 	}
-	stripped, expandable, executed := stripHeredocs(text)
-	u := Unit{Text: stripped, Depth: depth, Shell: shell}
-	if lx := lex(stripped); len(lx.conts) > 0 {
-		u.joined = lx.join(0, len(stripped)) // 续行由词法分析按上下文确认
-	}
-	e.Units = append(e.Units, u)
-	var inner []string
-	for _, b := range expandable {
-		inner = append(inner, substitutions(b)...)
-	}
-	inner = append(inner, executed...) // 交给解释器的正文：全文已在本单元里，另按命令切段检查
-	inner = append(inner, codeSubstitutions(stripped)...)
-	inner = append(inner, nestedScripts(stripped)...)
-	for _, s := range inner {
-		if strings.TrimSpace(s) == "" {
+	for _, n := range inner {
+		if strings.TrimSpace(n.text) == "" {
 			continue
 		}
-		if err := e.expand(ctx, s, shell, depth+1); err != nil {
+		if err := e.expand(ctx, n.text, n.shell, depth+1); err != nil {
 			return err
 		}
 	}

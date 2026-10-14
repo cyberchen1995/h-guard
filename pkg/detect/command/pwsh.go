@@ -28,6 +28,7 @@ type pwToken struct {
 	value      string   // 词：去掉引号与反引号转义后的值；括号、脚本块与子表达式保留原文
 	bare       string   // 词：引号之外的原文（反引号转义保留原样），供 Unquoted 使用
 	subs       []string // 词：其中 (…)、$(…)、@(…)、{…}、@{…} 与双引号字符串里 $(…) 的代码
+	codeArgs   []string // 词：iex(…)、[scriptblock]::Create(…)、.InvokeScript(…) 的括号里的代码：其中的字符串会被执行
 	comma      bool     // 词：以未转义的逗号结尾（数组未完，下一行接着读）
 }
 
@@ -205,6 +206,21 @@ func (l *pwLexer) redirLen(i int) int {
 	return 0
 }
 
+// runsStringArgs 报告紧接在 ( 之前的写法是否把括号里的字符串当代码执行：iex(…)、Invoke-Expression(…)、
+// [scriptblock]::Create(…)、….InvokeScript(…)（评审 I1、I3）。
+func runsStringArgs(before string) bool {
+	b := strings.ToLower(strings.TrimRight(before, " \t"))
+	if m := pwAssign.FindString(b); m != "" {
+		b = strings.TrimLeft(b[len(m):], " \t") // $r=iex(…)（计划第二轮评审 R2-01）
+	}
+	for _, suffix := range []string{"scriptblock]::create", ".invokescript"} {
+		if strings.HasSuffix(b, suffix) {
+			return true
+		}
+	}
+	return b == "iex" || b == "invoke-expression" || strings.HasSuffix(b, "\\iex") || strings.HasSuffix(b, "\\invoke-expression")
+}
+
 func isDigit(c byte) bool  { return '0' <= c && c <= '9' }
 func isLetter(c byte) bool { return 'a' <= c|0x20 && c|0x20 <= 'z' }
 
@@ -289,6 +305,9 @@ func (l *pwLexer) readWord(start int) pwToken {
 			}
 			end := l.skipCode(open+1, closer)
 			t.subs = append(t.subs, s[open+1:end])
+			if c == '(' && runsStringArgs(val.String()) {
+				t.codeArgs = append(t.codeArgs, s[open+1:end])
+			}
 			if end < len(s) {
 				end++
 			}

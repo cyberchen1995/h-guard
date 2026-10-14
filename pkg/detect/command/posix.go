@@ -4,19 +4,25 @@ import (
 	"path"
 	"regexp"
 	"strings"
+
+	"github.com/cyberchen1995/h-guard/pkg/guard"
 )
 
 // HeredocPlaceholder 代替数据 heredoc 的正文（与 Python 版一致）。
 const HeredocPlaceholder = "\n<h-guard:heredoc-data>\n"
 
-// interpreters 是会把 heredoc 正文当代码执行的程序（沿用 Python 版的列表）。
-var interpreters = regexp.MustCompile(`(?:^|[\s;&|(])(?:/\S*/)?(?:bash|sh|zsh|dash|ksh|ash|fish|pwsh|powershell|` +
+// 会把 heredoc 正文当代码执行的程序沿用 Python 版的列表，分成两组：posixInterpreters 的正文按 POSIX 检查，
+// pwshInterpreters（pwsh、powershell）的按 PowerShell 检查。
+var posixInterpreters = regexp.MustCompile(`(?:^|[\s;&|(])(?:/\S*/)?(?:bash|sh|zsh|dash|ksh|ash|fish|` +
 	`python[0-9.]*|python3?|node|deno|ruby|perl|php|psql|mysql|sqlite3?)\b`)
 
-// executedHeredoc 报告 heredoc 的正文是否交给解释器执行：这一行在运算符之前（从上一个 ; & 或换行算起）
+var pwshInterpreters = regexp.MustCompile(`(?:^|[\s;&|(])(?:/\S*/)?(?:pwsh|powershell)(?:\.exe)?\b`)
+
+// executedHeredoc 返回 heredoc 正文交给的解释器按哪些 shell 检查：这一行在运算符之前（从上一个 ; & 或换行算起）
 // 或定界符之后（到行尾，含管道）出现解释器（沿用 Python 版 strip_heredoc_data 的判断）。按去掉续行后的
-// 文本判断（ba\ 换行 sh <<'EOF' 也是交给 bash）。
-func executedHeredoc(lx lexed, h heredoc) bool {
+// 文本判断（ba\ 换行 sh <<'EOF' 也是交给 bash）。出现 pwsh、powershell 时按 PowerShell，出现别的解释器时按
+// POSIX，两者都出现时两种都查（评审 I5：bash <<EOF | tee pwsh.log 的正文仍按 POSIX 检查）。没有解释器时为空。
+func executedHeredoc(lx lexed, h heredoc) []guard.Shell {
 	from := 0
 	for _, t := range lx.tokens {
 		if t.start >= h.op.start {
@@ -30,7 +36,15 @@ func executedHeredoc(lx lexed, h heredoc) bool {
 	if lineEnd < h.delim.end {
 		lineEnd = h.delim.end
 	}
-	return interpreters.MatchString(lx.join(from, h.op.start)) || interpreters.MatchString(lx.join(h.delim.end, lineEnd))
+	before, after := lx.join(from, h.op.start), lx.join(h.delim.end, lineEnd)
+	var out []guard.Shell
+	if pwshInterpreters.MatchString(before) || pwshInterpreters.MatchString(after) {
+		out = append(out, guard.ShellPowerShell)
+	}
+	if posixInterpreters.MatchString(before) || posixInterpreters.MatchString(after) {
+		out = append(out, guard.ShellPOSIX)
+	}
+	return out
 }
 
 // stripHeredocs 处理 heredoc（spec §5.3）：
@@ -42,7 +56,7 @@ func executedHeredoc(lx lexed, h heredoc) bool {
 // expandable 与 executed 中的正文已去掉续行（不带引号定界符的正文在读入时就去掉，$\ 换行 ( 仍是命令替换）。
 //
 // heredoc 的识别以词法分析为准：引号或注释里的 << 不是 heredoc，here-string（<<<）也不是。
-func stripHeredocs(cmd string) (out string, expandable, executed []string) {
+func stripHeredocs(cmd string) (out string, expandable []string, executed []nested) {
 	if !strings.Contains(cmd, "<") { // 不能只找 <<：运算符可以被续行拆开（<\ 换行 <EOF，评审 R4-01）
 		return cmd, nil, nil
 	}
@@ -54,8 +68,10 @@ func stripHeredocs(cmd string) (out string, expandable, executed []string) {
 	last := 0
 	for _, h := range lx.heredocs {
 		body := lx.join(h.bodyStart, h.bodyEnd)
-		if executedHeredoc(lx, h) {
-			executed = append(executed, body)
+		if shells := executedHeredoc(lx, h); len(shells) > 0 {
+			for _, shell := range shells {
+				executed = append(executed, nested{body, shell})
+			}
 			continue
 		}
 		b.WriteString(cmd[last:h.bodyStart])
@@ -302,34 +318,24 @@ func substitutions(body string) []string {
 
 var shells = map[string]bool{"bash": true, "sh": true, "zsh": true, "dash": true, "ksh": true, "ash": true}
 
-// nestedScripts 取出 bash -c '…'、sh -lc "…" 等嵌套调用的脚本（spec §5.3）。
-func nestedScripts(cmd string) []string {
-	var out []string
+// nestedScripts 取出嵌套调用的脚本（spec §5.3）：bash -c '…'、sh -lc "…" 等按 POSIX 检查，
+// pwsh、powershell 的 -Command、-EncodedCommand 与按位置给出的命令按 PowerShell 检查（见 pwshScripts）。
+func nestedScripts(cmd string) []nested {
+	var out []nested
 	for _, pos := range CommandPositions(cmd) {
 		words := Words(pos)
 		if len(words) < 2 {
 			continue
 		}
-		if !shells[strings.ToLower(path.Base(words[0]))] {
-			continue
-		}
-		hasC := false
-		for j := 1; j < len(words); j++ {
-			w := words[j]
-			if w == "-o" || w == "+o" {
-				j++
-				continue
+		switch name := strings.TrimSuffix(strings.ToLower(path.Base(words[0])), ".exe"); {
+		case shells[name]:
+			for _, s := range shellScripts(words[1:]) {
+				out = append(out, nested{s, guard.ShellPOSIX})
 			}
-			if len(w) > 1 && (w[0] == '-' || w[0] == '+') {
-				if w[0] == '-' && !strings.HasPrefix(w, "--") && strings.ContainsRune(w[1:], 'c') {
-					hasC = true
-				}
-				continue
+		case name == "pwsh" || name == "powershell":
+			for _, s := range pwshScripts(words[1:]) {
+				out = append(out, nested{s, guard.ShellPowerShell})
 			}
-			if hasC {
-				out = append(out, w)
-			}
-			break
 		}
 	}
 	return out
