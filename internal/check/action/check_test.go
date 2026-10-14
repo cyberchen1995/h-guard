@@ -806,6 +806,21 @@ question: {kind: probability, instructions: {question: 'Reworded: would it publi
 	}
 }
 
+// TestBuiltinQuestionsDigestIsPinned：内置题集（内置规则的题 + 两个信号题）的指纹固定为 BuiltinQuestionsDigest。
+// 内置档案的指纹都是它（default.yaml），所以题目措辞的改动在这里先失败，而不是悄悄让全部档案失效。
+func TestBuiltinQuestionsDigestIsPinned(t *testing.T) {
+	set, err := rules.Builtin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := config.QuestionsDigest(action.QuestionSet(set)); got != action.BuiltinQuestionsDigest {
+		t.Errorf("the built-in question set digest is %s, pinned %s.\n"+
+			"Changing the wording of a built-in or signal question is a breaking change, made only in a major version: "+
+			"every built-in profile must be recalibrated at the same time, BuiltinQuestionsDigest updated, "+
+			"and the change noted in the release notes.", got, action.BuiltinQuestionsDigest)
+	}
+}
+
 // TestGuardTamperingCannotBeVetoed：护栏自我保护的本地命中不能被模型的低分否决，结论保持请求确认
 // （维护者决定，2026-10-13）。只读的用法也会命中，模型同样不能撤销：已知误报，暂时保守处理。
 func TestGuardTamperingCannotBeVetoed(t *testing.T) {

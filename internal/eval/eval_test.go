@@ -20,6 +20,9 @@ import (
 	"github.com/cyberchen1995/h-guard/internal/rules"
 	"github.com/cyberchen1995/h-guard/pkg/guard"
 	"github.com/cyberchen1995/h-guard/pkg/judge"
+	// 内置默认配置带着三种类型的后端（jev、claude-*、gemma4-local），config.Load 要能构造它们
+	_ "github.com/cyberchen1995/h-guard/pkg/judge/anthropic"
+	_ "github.com/cyberchen1995/h-guard/pkg/judge/openai"
 	_ "github.com/cyberchen1995/h-guard/pkg/judge/typesafe"
 )
 

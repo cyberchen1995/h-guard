@@ -1212,6 +1212,49 @@ func TestStatusAndListShowHowTheBackendAnswers(t *testing.T) {
 	}
 }
 
+// TestBuiltinBackendsInListAndStatus：不写任何配置时，backend list 列出四个内置后端（jev 是默认的 *，
+// 本机回环的 gemma4-local 不警告），模型默认关闭；选 gemma4-local 时 status 显示已校准的档案，选 claude-haiku、
+// claude-sonnet 时在它们的档案写入之前显示 uncalibrated (no_profile)。增减内置后端要在这里有意识地改。
+func TestBuiltinBackendsInListAndStatus(t *testing.T) {
+	e := newEnv(t)
+	list, _, code := e.run(nil, "backend", "list")
+	if code != 0 {
+		t.Fatalf("backend list exit %d: %s", code, list)
+	}
+	const uncal = "    calibration: uncalibrated (no_profile); conservative thresholds hit 0.3, veto 0.05, requested 0.9\n"
+	for _, want := range []string{
+		"  claude-haiku (anthropic) https://api.anthropic.com:443\n    answers: forced_tool (probability, scale); probability: verbalized\n" +
+			"    consent: missing; run h-guard backend enable claude-haiku\n" + uncal,
+		"  claude-sonnet (anthropic) https://api.anthropic.com:443\n    answers: json_schema (probability, scale); probability: verbalized-structured-effort-low\n" +
+			"    consent: missing; run h-guard backend enable claude-sonnet\n" + uncal,
+		"  gemma4-local (openai) http://localhost:11434\n    answers: logprobs (probability, scale); probability: logprobs-reasoning-effort-none\n" +
+			"    consent: missing; run h-guard backend enable gemma4-local\n" +
+			"    calibration: profile gemma4-local (hit 0.3, veto 0.05, requested 0.9)\n",
+		"* jev (typesafe) https://api.typesafe.ai:443\n",
+	} {
+		if !strings.Contains(list, want) {
+			t.Errorf("backend list lacks %q:\n%s", want, list)
+		}
+	}
+	if n := strings.Count(list, " (anthropic) ") + strings.Count(list, " (openai) ") + strings.Count(list, " (typesafe) "); n != 4 || strings.Contains(list, "warning:") {
+		t.Errorf("want exactly the four built-in backends and no warning:\n%s", list)
+	}
+	if status, _, _ := e.run(nil, "status"); !strings.Contains(status, "judge: disabled") {
+		t.Errorf("the judge is not disabled by default:\n%s", status)
+	}
+	for name, want := range map[string]string{
+		"gemma4-local":  "calibration: profile gemma4-local (hit 0.3, veto 0.05, requested 0.9)\n",
+		"claude-haiku":  "calibration: uncalibrated (no_profile); conservative thresholds hit 0.3, veto 0.05, requested 0.9\n",
+		"claude-sonnet": "calibration: uncalibrated (no_profile); conservative thresholds hit 0.3, veto 0.05, requested 0.9\n",
+	} {
+		e.config("version: 1\njudge: {enabled: true, backend: " + name + "}\n")
+		status, errs, code := e.run(nil, "status")
+		if code != 0 || !strings.Contains(status, "judge: enabled, backend "+name+" ") || !strings.Contains(status, "\n"+want) {
+			t.Errorf("status with %s (exit %d, stderr %q):\n%s", name, code, errs, status)
+		}
+	}
+}
+
 // TestPlaintextHTTPIsWarned：目标是明文 http:// 且主机不是本机回环的后端，backend enable 的说明、status 与
 // backend list 都警告数据与 API key 不加密传输；本机回环与 https 不警告。
 func TestPlaintextHTTPIsWarned(t *testing.T) {

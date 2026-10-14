@@ -9,10 +9,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cyberchen1995/h-guard/pkg/guard"
 	"github.com/cyberchen1995/h-guard/pkg/judge"
-	_ "github.com/cyberchen1995/h-guard/pkg/judge/anthropic"
+	"github.com/cyberchen1995/h-guard/pkg/judge/anthropic"
 	_ "github.com/cyberchen1995/h-guard/pkg/judge/exec"
-	_ "github.com/cyberchen1995/h-guard/pkg/judge/openai"
+	"github.com/cyberchen1995/h-guard/pkg/judge/openai"
 	_ "github.com/cyberchen1995/h-guard/pkg/judge/typesafe"
 )
 
@@ -58,6 +59,107 @@ func TestDefaultsAreValid(t *testing.T) {
 	if c.Policy.RequestWindow != 3 || c.Policy.MaxCommandChars != 8000 || c.Policy.MaxRequestChars != 2000 ||
 		c.Policy.OnUnavailable != "pass" || c.Policy.WhenAskUnsupported != "deny" {
 		t.Errorf("policy = %+v", c.Policy)
+	}
+}
+
+// TestDefaultsIncludeTheRecommendedBackends：内置后端是 spec 里的稳定名字（jev、claude-haiku、claude-sonnet、
+// gemma4-local），名字合法、构造得出、说得出模型与概率获取方式；默认仍然不开启模型，后端仍是 jev。
+// 增减内置后端要在这里有意识地改。
+func TestDefaultsIncludeTheRecommendedBackends(t *testing.T) {
+	c := Defaults()
+	if c.Judge.Enabled || c.Judge.Backend != "jev" {
+		t.Errorf("judge = %+v, want disabled with backend jev", c.Judge)
+	}
+	want := []struct{ name, typ, profile, target, model, probability string }{
+		{"claude-haiku", "anthropic", "", "https://api.anthropic.com:443", "claude-haiku-5-5", "verbalized"},
+		{"claude-sonnet", "anthropic", "", "https://api.anthropic.com:443", "claude-sonnet-5-5", "verbalized-structured-effort-low"},
+		{"gemma4-local", "openai", "gemma4-local", "http://localhost:11434", "gemma4:12b-mlx", "logprobs-reasoning-effort-none"},
+		{"jev", "typesafe", "jev", "https://api.typesafe.ai:443", "jev-latest", "native"},
+	}
+	var got []string
+	for name := range c.Backends {
+		got = append(got, name)
+	}
+	slices.Sort(got)
+	var names []string
+	for _, w := range want {
+		names = append(names, w.name)
+	}
+	if !slices.Equal(got, names) {
+		t.Fatalf("built-in backends = %v, want %v", got, names)
+	}
+	for _, w := range want {
+		if !guard.ValidName(w.name) {
+			t.Errorf("%s is not a valid name", w.name)
+		}
+		bc := c.Backends[w.name]
+		if bc.Type != w.typ || bc.Profile != w.profile {
+			t.Errorf("%s: type %q profile %q, want %q %q", w.name, bc.Type, bc.Profile, w.typ, w.profile)
+		}
+		b, err := c.NewBackend(w.name)
+		if err != nil {
+			t.Errorf("%s: %v", w.name, err)
+			continue
+		}
+		d, ok := b.(judge.Describer)
+		if !ok {
+			t.Errorf("%s does not describe itself", w.name)
+			continue
+		}
+		if info := d.Describe(); info.Target != w.target || info.Model != w.model || info.Probability != w.probability {
+			t.Errorf("%s describes itself as %+v, want %s %s %s", w.name, info, w.target, w.model, w.probability)
+		}
+	}
+	// claude-sonnet 的思考占用 max_tokens，所以结构化输出（强制工具调用在该模型上返回 400）与较低的 effort、
+	// 较大的 max_tokens 一起出厂；claude-haiku 保持默认（answer tool）
+	var sonnet, haiku anthropic.Options
+	if err := c.Backends["claude-sonnet"].Decode(&sonnet); err != nil {
+		t.Fatal(err)
+	}
+	if sonnet.Model != "claude-sonnet-5-5" || sonnet.Answer != "structured" || sonnet.Effort != "low" || sonnet.MaxTokens != 4096 {
+		t.Errorf("claude-sonnet options = %+v", sonnet)
+	}
+	if err := c.Backends["claude-haiku"].Decode(&haiku); err != nil {
+		t.Fatal(err)
+	}
+	if haiku.Model != "claude-haiku-5-5" || haiku.Answer != "" || haiku.Effort != "" || haiku.MaxTokens != 0 {
+		t.Errorf("claude-haiku options = %+v", haiku)
+	}
+	// gemma4-local：本地 Ollama，读 logprobs，关掉思考让第一个 token 就是答案；本地模型慢，超时放宽到 30 秒
+	var gemma openai.Options
+	if err := c.Backends["gemma4-local"].Decode(&gemma); err != nil {
+		t.Fatal(err)
+	}
+	if gemma.Model != "gemma4:12b-mlx" || gemma.BaseURL != "http://localhost:11434/v1" || gemma.Probability != "logprobs" ||
+		gemma.ReasoningEffort != "none" || gemma.TimeoutMS != 30000 || gemma.APIKeyEnv != "" {
+		t.Errorf("gemma4-local options = %+v", gemma)
+	}
+}
+
+// TestGemma4LocalProfile：本地模型的内置档案是 M2 验收 sweep 的建议（拟合 113 条语料）：与保守默认值相比，
+// 只有 recursive_delete 的影响范围下限不同。指纹的 probability 带 reasoning_effort 后缀（它进入指纹）；
+// 请求与校准时逐字节相同，所以建议值仍然适用。
+func TestGemma4LocalProfile(t *testing.T) {
+	c := Defaults()
+	p, ok := c.Profiles["gemma4-local"]
+	if !ok {
+		t.Fatal("no gemma4-local profile")
+	}
+	th := p.Thresholds
+	if *th.Hit != ConservativeThresholds.Hit || *th.Veto != ConservativeThresholds.Veto || *th.Requested != ConservativeThresholds.Requested {
+		t.Errorf("thresholds %+v differ from the conservative defaults %+v", th, ConservativeThresholds)
+	}
+	if *th.Hit != 0.3 || *th.Veto != 0.05 || *th.Requested != 0.9 || len(th.RadiusFloor) != 1 || th.RadiusFloor["recursive_delete"] != 1 {
+		t.Errorf("thresholds = %+v", th)
+	}
+	fp := p.Fingerprint
+	if fp == nil || fp.Model != "gemma4:12b-mlx" || fp.Probability != "logprobs-reasoning-effort-none" ||
+		fp.Questions != "sha256:cdd8dab0be5e906b5d5f0fda6c5c60412214db02637af427adcc8e7a9415a5ab" {
+		t.Errorf("fingerprint = %+v", fp)
+	}
+	b := c.Backends["gemma4-local"]
+	if b.Type != "openai" || b.Profile != "gemma4-local" {
+		t.Errorf("backend = %+v", b)
 	}
 }
 
