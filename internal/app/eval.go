@@ -114,7 +114,7 @@ func runEval(args []string, o Options) int {
 		}
 		return 0
 	}
-	tables, th, score, err := eval.Sweep(ctx, env, outs, st.thresholds)
+	tables, th, score, err := eval.Sweep(ctx, env, outs, st.thresholds, 1)
 	if err != nil {
 		fmt.Fprintln(o.Stderr, "h-guard:", shown(err.Error()))
 		return 1

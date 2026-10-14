@@ -52,6 +52,7 @@ type Row struct {
 	Value   float64
 	Score   Score
 	Current bool // 与 base 相同
+	Plateau bool // 在本表最优的 plateau 内
 }
 
 // Table 是一个阈值的扫描结果（其余阈值取 base）。
@@ -159,9 +160,69 @@ func descend(s *scorer, base config.Thresholds, floors []string, idx []int) (con
 	return cur, curScore, nil
 }
 
+// plateauWidth 是 plateau 的宽度：每次运行里正确数与最优相差不超过这么多条的取值视为同样好。
+// 113 条语料上差 1 条分不出好坏，为 1 条更换阈值是在拟合噪声（方法调研 §1.3、§2.4）。
+const plateauWidth = 1
+
+// within 报告 a 是否在 best 的 plateau 内；runs 是每条语料在结果里出现的次数（--repeat），宽度随之缩放。
+func (a Score) within(best Score, runs int) bool {
+	return a.Correct >= best.Correct-plateauWidth*max(1, runs)
+}
+
+// candidates 返回阈值 p 的候选取值：扫描网格加上 base 的值与当前值（网格外的合法 base 也要能被保留，评审 EC-07），
+// 去重后升序。
+func candidates(p param, cur, base config.Thresholds, floors []string) []float64 {
+	vals := slices.Clone(p.values)
+	for _, v := range []float64{p.get(base, floors), p.get(cur, floors)} {
+		if !math.IsNaN(v) && !slices.ContainsFunc(vals, func(x float64) bool { return near(x, v) }) {
+			vals = append(vals, v)
+		}
+	}
+	slices.Sort(vals)
+	return vals
+}
+
+// shrink 把 th 的每个阈值换成 plateau 内离 base 最近的候选。依次进行，每一步都用已改过的其余阈值重算并要求
+// 仍在 best 的 plateau 内，所以整体结论的正确数最多比 best 少 plateauWidth×runs。
+func shrink(s *scorer, th, base config.Thresholds, best Score, floors []string, idx []int, runs int) (config.Thresholds, Score, error) {
+	cur := clone(th)
+	curScore, err := s.score(cur, idx)
+	if err != nil {
+		return config.Thresholds{}, Score{}, err
+	}
+	for _, p := range params {
+		if p.name == "radius_floor" && len(floors) == 0 {
+			continue
+		}
+		now, anchor := p.get(cur, floors), p.get(base, floors)
+		pick, pickScore := now, curScore
+		for _, v := range candidates(p, cur, base, floors) {
+			if math.Abs(v-anchor) >= math.Abs(pick-anchor)-1e-9 {
+				continue // 不比已选的更靠近 base
+			}
+			t := clone(cur)
+			p.set(&t, floors, v)
+			sc, err := s.score(t, idx)
+			if err != nil {
+				return config.Thresholds{}, Score{}, err
+			}
+			if sc.within(best, runs) {
+				pick, pickScore = v, sc
+			}
+		}
+		if !near(pick, now) {
+			p.set(&cur, floors, pick)
+			curScore = pickScore
+		}
+	}
+	return cur, curScore, nil
+}
+
 // Sweep 用记下的答案扫描阈值（不调用后端）：先在 base 处逐个扫描每个阈值（其余取 base），得到扫描表；
-// 再从 base 出发做坐标下降（见 descend），得到建议阈值及其统计。
-func Sweep(ctx context.Context, env Env, outs []Outcome, base config.Thresholds) ([]Table, config.Thresholds, Score, error) {
+// 再从 base 出发做坐标下降（见 descend），得到建议阈值及其统计。收敛后在 plateau（每次运行正确数与最优相差
+// 不超过 1）内把每个阈值拉回离当前值最近的候选，候选含当前值本身；不为 1 条正确数的差异更换阈值。
+// runs 是 outs 里每条语料出现的次数（单次运行为 1）。
+func Sweep(ctx context.Context, env Env, outs []Outcome, base config.Thresholds, runs int) ([]Table, config.Thresholds, Score, error) {
 	base = withFloors(env, base)
 	floors := floorRules(env.Rules, base)
 	s := newScorer(ctx, env, outs)
@@ -180,9 +241,20 @@ func Sweep(ctx context.Context, env Env, outs []Outcome, base config.Thresholds)
 			}
 			t.Rows = append(t.Rows, Row{Value: v, Score: sc, Current: near(v, p.get(base, floors))})
 		}
+		best := 0
+		for _, r := range t.Rows {
+			best = max(best, r.Score.Correct)
+		}
+		for i := range t.Rows {
+			t.Rows[i].Plateau = t.Rows[i].Score.Correct >= best-plateauWidth*max(1, runs)
+		}
 		tables = append(tables, t)
 	}
 	cur, curScore, err := descend(s, base, floors, nil)
+	if err != nil {
+		return nil, config.Thresholds{}, Score{}, err
+	}
+	cur, curScore, err = shrink(s, cur, base, curScore, floors, nil, runs)
 	if err != nil {
 		return nil, config.Thresholds{}, Score{}, err
 	}

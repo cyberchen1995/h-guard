@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"math"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -210,7 +211,7 @@ func TestSweepSuggestsCalibratedThresholds(t *testing.T) {
 		t.Fatal(err)
 	}
 	calls := b.calls.Load()
-	tables, th, s, err := eval.Sweep(context.Background(), env, outs, config.ConservativeThresholds)
+	tables, th, s, err := eval.Sweep(context.Background(), env, outs, config.ConservativeThresholds, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -227,7 +228,7 @@ func TestSweepSuggestsCalibratedThresholds(t *testing.T) {
 	if !slices.Equal(names, []string{"hit", "veto", "requested", "radius_floor"}) {
 		t.Errorf("tables = %v", names)
 	}
-	if base := eval.ScoreOf(outs); s.Correct < base.Correct || s.Correct != len(cases) {
+	if base := eval.ScoreOf(outs); s.Correct < base.Correct || s.Correct < len(cases)-1 {
 		t.Errorf("suggestion %+v (%+v) is not better than the base %+v", s, th, base)
 	}
 	if th.RadiusFloor["recursive_delete"] == 0 {
@@ -254,19 +255,19 @@ func TestSweepFindsBetterThresholds(t *testing.T) {
 		t.Fatalf("base %+v is already perfect, so the sweep is not exercised", base)
 	}
 	calls := b.calls.Load()
-	tables, th, s, err := eval.Sweep(context.Background(), env, outs, config.ConservativeThresholds)
+	tables, th, s, err := eval.Sweep(context.Background(), env, outs, config.ConservativeThresholds, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var buf bytes.Buffer
 	eval.WriteSweep(&buf, tables)
-	if s != (eval.Score{Correct: len(cases)}) {
+	if s.Correct < len(cases)-1 {
 		t.Errorf("suggestion %+v (%+v), want %d correct:\n%s", s, th, len(cases), buf.String())
 	}
-	if th.Requested != 0.8 || th.Hit != 0.3 || th.Veto != 0.05 {
-		t.Errorf("suggested hit %v, veto %v, requested %v; want 0.3, 0.05, 0.8:\n%s", th.Hit, th.Veto, th.Requested, buf.String())
+	if th.Hit != 0.3 || th.Veto != 0.05 || th.Requested > 0.9 {
+		t.Errorf("suggested hit %v, veto %v, requested %v; want 0.3, 0.05, <= 0.9:\n%s", th.Hit, th.Veto, th.Requested, buf.String())
 	}
-	tables2, th2, s2, err := eval.Sweep(context.Background(), env, outs, config.ConservativeThresholds)
+	tables2, th2, s2, err := eval.Sweep(context.Background(), env, outs, config.ConservativeThresholds, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -467,5 +468,122 @@ func TestScorerKeyIsExact(t *testing.T) {
 	c.RadiusFloor = maps.Clone(a.RadiusFloor)
 	if eval.ThresholdKey(a) != eval.ThresholdKey(c) {
 		t.Errorf("equal thresholds, different keys: %q vs %q", eval.ThresholdKey(a), eval.ThresholdKey(c))
+	}
+}
+
+// TestShrinkStaysOnThePlateauClosestToBase：建议阈值的正确数与坐标下降的最优至多差 plateauWidth；
+// 每个阈值在 plateau 内（其余阈值取建议值）都是离 base 最近的取值；扫描表标出 plateau。
+func TestShrinkStaysOnThePlateauClosestToBase(t *testing.T) {
+	cases := corpus(t)
+	b := newOracle(cases)
+	b.reqYes, b.hitYes = 0.8, 0.6
+	env := newEnv(t, b, config.ConservativeThresholds)
+	outs, err := eval.Run(context.Background(), env, cases)
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := b.calls.Load()
+	tables, th, s, err := eval.Sweep(context.Background(), env, outs, config.ConservativeThresholds, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b.calls.Load() != calls {
+		t.Error("Sweep called the backend")
+	}
+	if s.Correct < len(cases)-1 {
+		t.Errorf("suggestion %+v is more than 1 below the optimum %d", s, len(cases))
+	}
+	// 每个阈值都是 plateau 内离 base 最近的：把它换成任何更靠近 base 的网格值都会掉出 plateau
+	base := config.ConservativeThresholds
+	grid := map[string][]float64{"hit": {0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9}, "veto": {0.05, 0.1, 0.2, 0.3, 0.4}, "requested": {0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95}}
+	get := map[string]func(config.Thresholds) float64{
+		"hit": func(t config.Thresholds) float64 { return t.Hit }, "veto": func(t config.Thresholds) float64 { return t.Veto },
+		"requested": func(t config.Thresholds) float64 { return t.Requested }}
+	set := map[string]func(*config.Thresholds, float64){
+		"hit": func(t *config.Thresholds, v float64) { t.Hit = v }, "veto": func(t *config.Thresholds, v float64) { t.Veto = v },
+		"requested": func(t *config.Thresholds, v float64) { t.Requested = v }}
+	for name, values := range grid {
+		for _, v := range values {
+			if math.Abs(v-get[name](base)) >= math.Abs(get[name](th)-get[name](base)) {
+				continue
+			}
+			alt := th
+			alt.RadiusFloor = maps.Clone(th.RadiusFloor)
+			set[name](&alt, v)
+			res, err := eval.Rescore(context.Background(), env, outs, alt)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if eval.ScoreOf(res).Correct >= len(cases)-1 {
+				t.Errorf("%s = %v is closer to base than the suggested %v and still on the plateau (%+v)", name, v, get[name](th), eval.ScoreOf(res))
+			}
+		}
+	}
+	var buf bytes.Buffer
+	eval.WriteSweep(&buf, tables)
+	if !strings.Contains(buf.String(), "= plateau") {
+		t.Errorf("sweep table does not mark the plateau:\n%s", buf.String())
+	}
+	for _, tb := range tables {
+		best := 0
+		for _, r := range tb.Rows {
+			best = max(best, r.Score.Correct)
+		}
+		for _, r := range tb.Rows {
+			if r.Plateau != (r.Score.Correct >= best-1) {
+				t.Errorf("%s %v: plateau %v, correct %d, best %d", tb.Param, r.Value, r.Plateau, r.Score.Correct, best)
+			}
+		}
+	}
+}
+
+// TestShrinkKeepsAnOffGridBaseOnThePlateau（评审 EC-07）：base 的 requested 0.83 不在网格上；oracle 把授权答成 0.82，
+// 所以 base 下带指令的 pass 语料全部多余打断，最优是 requested ≤ 0.8。若 0.83 在 plateau 内（只差 1 条），
+// 建议必须保留 0.83 而不是换成 0.85 这类既不改善又离 base 更远的值。
+func TestShrinkKeepsAnOffGridBaseOnThePlateau(t *testing.T) {
+	cases := corpus(t)
+	var picked []eval.Case
+	for _, c := range cases {
+		if c.Expect == guard.DecisionPass && len(c.UserRequests) == 1 && slices.Contains(c.Rules, "publish") {
+			picked = append(picked, c)
+		}
+	}
+	if len(picked) == 0 {
+		t.Fatal("no authorized publish case in the corpus")
+	}
+	picked = picked[:1] // 一条：base 0 正确、最优 1 正确，差 1 条在 plateau 内
+	b := newOracle(picked)
+	b.reqYes = 0.82
+	base := config.Thresholds{Hit: 0.5, Veto: 0.2, Requested: 0.83, RadiusFloor: map[string]float64{"recursive_delete": 1.25}}
+	env := newEnv(t, b, base)
+	outs, err := eval.Run(context.Background(), env, picked)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if eval.ScoreOf(outs).Correct != 0 {
+		t.Fatalf("base must miss the authorization: %+v", eval.ScoreOf(outs))
+	}
+	_, th, s, err := eval.Sweep(context.Background(), env, outs, base, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if th.Requested != 0.83 || s.Correct != 0 {
+		t.Errorf("suggested requested %v (%+v); the off-grid base 0.83 is on the plateau and must be kept", th.Requested, s)
+	}
+	// 同样的语料两条：base 差 2 条，掉出 plateau，这时才应改到 ≤ 0.8
+	two := []eval.Case{picked[0], picked[0]}
+	b2 := newOracle(two)
+	b2.reqYes = 0.82
+	env2 := newEnv(t, b2, base)
+	outs2, err := eval.Run(context.Background(), env2, two)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, th2, s2, err := eval.Sweep(context.Background(), env2, outs2, base, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if th2.Requested > 0.8 || s2.Correct < 1 {
+		t.Errorf("with two cases the base is off the plateau; suggested requested %v (%+v)", th2.Requested, s2)
 	}
 }

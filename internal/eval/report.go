@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/cyberchen1995/h-guard/pkg/detect/secrets"
@@ -135,12 +136,20 @@ func Report(w io.Writer, outs []Outcome, ruleIDs []string, margins []Margin) {
 // WriteSweep 写出扫描表（每行为一个取值下的正确数、多余打断、漏判，←current 标出 base）。
 func WriteSweep(w io.Writer, tables []Table) {
 	fmt.Fprintln(w, "\n=== Threshold sweep (recorded answers, no new calls) ===")
+	fmt.Fprintln(w, "  (= plateau: within 1 correct per run of the best value in this table; differences that small are noise on this corpus)")
 	for _, t := range tables {
 		fmt.Fprintf(w, "\n%s:\n  %8s%9s%16s%8s\n", t.Param, "value", "correct", "needless asks", "missed")
 		for _, r := range t.Rows {
-			mark := ""
+			var marks []string
 			if r.Current {
-				mark = "  <- current"
+				marks = append(marks, "<- current")
+			}
+			if r.Plateau {
+				marks = append(marks, "= plateau")
+			}
+			mark := ""
+			if len(marks) > 0 {
+				mark = "  " + strings.Join(marks, ", ")
 			}
 			fmt.Fprintf(w, "  %8s%9d%16d%8d%s\n", num(r.Value), r.Score.Correct, r.Score.Noise, r.Score.Missed, mark)
 		}
