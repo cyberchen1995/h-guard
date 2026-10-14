@@ -411,6 +411,30 @@ func TestWatchdogAggregatesCommits(t *testing.T) {
 	}
 }
 
+// TestHealthRecordsTheJudgeFallbackCodes：健康记录按原因码逐条记，不维护一份已知原因码清单；
+// 取答的降级原因（题型不支持、取答中途超时）与其他原因码一样进入健康记录，且只有原因码。
+func TestHealthRecordsTheJudgeFallbackCodes(t *testing.T) {
+	ev := guard.Event{Kind: guard.EventAction}
+	res := engine.Result{
+		Runs: []engine.CheckRun{{Name: "action", Verdict: guard.Verdict{
+			Decision:  guard.DecisionAsk,
+			Fallbacks: []string{action.FallbackKindUnsupported, action.FallbackJudgeTimeout, action.FallbackAnswerInvalid},
+		}}},
+		Outcome: guard.Outcome{Verdict: guard.Verdict{Fallbacks: []string{action.FallbackKindUnsupported, action.FallbackJudgeTimeout, action.FallbackAnswerInvalid}}},
+	}
+	var got []string
+	for _, h := range healthOf(ev, res) {
+		if h.Check != "action" {
+			t.Errorf("record %+v is not attributed to the action check", h)
+		}
+		got = append(got, h.Code)
+	}
+	want := []string{"judge_kind_unsupported", "judge_timeout", "judge_answer_invalid"}
+	if !slices.Equal(got, want) {
+		t.Errorf("health codes = %v, want %v", got, want)
+	}
+}
+
 // brokenName 的 Name 总是 panic（扩展 Check 的故障注入；内置 action 的 Name 是常量）。
 type brokenName struct{ guard.Check }
 

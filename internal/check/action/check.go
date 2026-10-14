@@ -174,6 +174,14 @@ func (c *Check) evalExec(ctx context.Context, ev guard.Event, ex *guard.ExecActi
 			MaxCommandChars: c.Config.Policy.MaxCommandChars, MaxRequestChars: c.Config.Policy.MaxRequestChars,
 		})
 		qs := questions(c.Rules, policyRules)
+		// AskAll 不把后端不支持的题型发给它，这些题保持未答：先记下是哪些，策略据此给出准确的原因码
+		in.Unsupported = unsupportedQuestions(c.Judge.Backend.Caps(), qs)
+		if len(qs) > 0 && len(in.Unsupported) == len(qs) {
+			// 一道题都发不出去：AskAll 不会调用后端，这等于模型不可用，不是「已答」。按 JudgeFailed 处理，
+			// policy.on_unavailable 与不可用时的其余处理照常适用
+			in.Judge, in.JudgeFallback = JudgeFailed, FallbackKindUnsupported
+			break
+		}
 		resp, err := judge.AskAll(ctx, c.Judge.Backend, state, qs)
 		if err != nil {
 			in.Judge, in.JudgeFallback = JudgeFailed, FallbackJudgeUnavailable
@@ -182,9 +190,22 @@ func (c *Check) evalExec(ctx context.Context, ev guard.Event, ex *guard.ExecActi
 			}
 		} else {
 			in.Judge, in.Answers, in.Truncated = JudgeAnswered, judge.Validate(qs, resp), truncated
+			// 没有返回错误但截止时间已到：后端保留了已答的题（如逐题请求），缺的题是超时造成的
+			in.JudgeTimedOut = ctx.Err() != nil
 		}
 	}
 	return c.render(Decide(in), in)
+}
+
+// unsupportedQuestions 返回 qs 中后端不支持其题型的题的 ID。
+func unsupportedQuestions(caps judge.BackendCaps, qs []judge.Question) []string {
+	var ids []string
+	for _, q := range qs {
+		if !caps.Supports(q.Kind) {
+			ids = append(ids, q.ID)
+		}
+	}
+	return ids
 }
 
 // Questions 返回在当前配置下 exec 动作调用模型时问的全部题，与 evalExec 一致：启用且适用于 exec、

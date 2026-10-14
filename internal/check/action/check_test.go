@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -210,6 +211,225 @@ func TestJudgeUnavailable(t *testing.T) {
 		if r.Code == i18n.KeyHintRequest {
 			t.Error("an unavailable judge must not suggest restating the request")
 		}
+	}
+}
+
+// recordingBackend 是可配置能力与行为的后端：记下每次收到的题目，answer 决定怎么回答。
+type recordingBackend struct {
+	caps   judge.BackendCaps
+	answer func(ctx context.Context, qs []judge.Question) (judge.Response, error)
+	mu     sync.Mutex // 不能批量的后端会被并发调用
+	asked  []string
+}
+
+func (b *recordingBackend) Name() string            { return "recording" }
+func (b *recordingBackend) Caps() judge.BackendCaps { return b.caps }
+func (b *recordingBackend) Ask(ctx context.Context, _ map[string]any, qs []judge.Question) (judge.Response, error) {
+	b.mu.Lock()
+	for _, q := range qs {
+		b.asked = append(b.asked, q.ID)
+	}
+	b.mu.Unlock()
+	return b.answer(ctx, qs)
+}
+
+// answersFor 把 all 里属于 qs 的答案作为回答（不多给）。
+func answersFor(all map[string]judge.Answer, qs []judge.Question) judge.Response {
+	out := map[string]judge.Answer{}
+	for _, q := range qs {
+		if a, ok := all[q.ID]; ok {
+			out[q.ID] = a
+		}
+	}
+	return judge.Response{Answers: out}
+}
+
+// dangerous 是「模型认为 git push 命中 publish，没有被要求，影响范围 2」的答案。
+func dangerous() map[string]judge.Answer {
+	return with(low(), "publish", 0.9, action.SignalRadius, []float64{0, 0, 1, 0})
+}
+
+// TestKindUnsupportedIsReported：后端不能回答某种题型时，这些题不发给它、保持未答，结论带 judge_kind_unsupported，
+// 不记成 judge_answer_invalid；结论与缺答的处理一致，不产生任何豁免。
+func TestKindUnsupportedIsReported(t *testing.T) {
+	tests := []struct {
+		name     string
+		kinds    []judge.Kind
+		requests []guard.Request
+		cmd      string
+		answers  map[string]judge.Answer
+		want     guard.Decision
+		missing  []string // 不应发给后端的题
+	}{
+		{"probability only: the scale question is not asked, the radius is the maximum",
+			[]judge.Kind{judge.KindProbability}, nil, "git push origin main", dangerous(), guard.DecisionAsk, []string{action.SignalRadius}},
+		{"scale only: no probability question is asked, the hit stays",
+			[]judge.Kind{judge.KindScale}, nil, "git push origin main", dangerous(), guard.DecisionAsk,
+			[]string{"publish", action.SignalRequested}},
+		{"nothing supported: the backend is never asked",
+			[]judge.Kind{}, nil, "git push origin main", dangerous(), guard.DecisionAsk,
+			[]string{"publish", action.SignalRequested, action.SignalRadius}},
+		{"a confident veto still applies without the scale question",
+			[]judge.Kind{judge.KindProbability}, nil, "git push origin main", with(low(), "publish", 0.05), guard.DecisionPass,
+			[]string{action.SignalRadius}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b := &recordingBackend{
+				caps: judge.BackendCaps{Batch: true, Kinds: tt.kinds},
+				answer: func(_ context.Context, qs []judge.Question) (judge.Response, error) {
+					return answersFor(tt.answers, qs), nil
+				},
+			}
+			v := run(t, newCheck(t, true, action.Judge{Backend: b}), event(tt.requests, tt.cmd))
+			if v.Decision != tt.want {
+				t.Errorf("decision = %s, want %s (%+v)", v.Decision, tt.want, v)
+			}
+			if !slices.Equal(v.Fallbacks, []string{action.FallbackKindUnsupported}) {
+				t.Errorf("fallbacks = %v, want only %s", v.Fallbacks, action.FallbackKindUnsupported)
+			}
+			for _, id := range tt.missing {
+				if slices.Contains(b.asked, id) {
+					t.Errorf("the backend was asked %q, which it does not support (asked %v)", id, b.asked)
+				}
+			}
+		})
+	}
+}
+
+// TestNoSendableQuestionIsUnavailable：这次要问的题一道都发不出去（后端不支持其中任何一种题型）时，模型等于不可用：
+// 结论按 JudgeFailed 处理，原因码只有 judge_kind_unsupported，policy.on_unavailable 照常适用；后端不会被调用。
+func TestNoSendableQuestionIsUnavailable(t *testing.T) {
+	for _, tt := range []struct {
+		name, cmd, onUnavailable string
+		want                     guard.Decision
+	}{
+		{"no hit, on_unavailable ask", "ls", "ask", guard.DecisionAsk},
+		{"no hit, on_unavailable pass", "ls", "pass", guard.DecisionPass},
+		{"a regex hit asks", "git push origin main", "pass", guard.DecisionAsk},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			called := false
+			b := &recordingBackend{
+				caps: judge.BackendCaps{Batch: true, Kinds: []judge.Kind{}},
+				answer: func(_ context.Context, qs []judge.Question) (judge.Response, error) {
+					called = true
+					return answersFor(dangerous(), qs), nil
+				},
+			}
+			c := newCheck(t, true, action.Judge{Backend: b})
+			c.Config.Policy.OnUnavailable = tt.onUnavailable
+			v := run(t, c, event(nil, tt.cmd))
+			if v.Decision != tt.want || !slices.Equal(v.Fallbacks, []string{action.FallbackKindUnsupported}) {
+				t.Errorf("decision = %s, fallbacks = %v, want %s [%s] (%+v)", v.Decision, v.Fallbacks, tt.want,
+					action.FallbackKindUnsupported, v)
+			}
+			if v.Signals["judge"] != "failed" {
+				t.Errorf("judge signal = %v, want failed", v.Signals["judge"])
+			}
+			if called {
+				t.Error("the backend was called although it supports none of the questions")
+			}
+		})
+	}
+}
+
+// TestMissingAnswersWithoutADeadlineStayInvalid：没有截止时间时缺答仍是 judge_answer_invalid；答案齐全时两个新原因码都不出现。
+func TestMissingAnswersWithoutADeadlineStayInvalid(t *testing.T) {
+	partial := dangerous()
+	delete(partial, action.SignalRadius)
+	for name, tt := range map[string]struct {
+		answers map[string]judge.Answer
+		want    []string
+	}{
+		"a missing answer":    {partial, []string{action.FallbackAnswerInvalid}},
+		"complete answers":    {dangerous(), nil},
+		"an invalid scale":    {with(dangerous(), action.SignalRadius, []float64{0.5, 0.5, 0.5, 0.5}), []string{action.FallbackAnswerInvalid}},
+		"an out-of-range p":   {with(dangerous(), "publish", 1.5), []string{action.FallbackAnswerInvalid}},
+		"missing requested p": {without(dangerous(), action.SignalRequested), []string{action.FallbackAnswerInvalid}},
+		"a nil probability": {func() map[string]judge.Answer {
+			a := dangerous()
+			a["publish"] = judge.Answer{}
+			return a
+		}(), []string{action.FallbackAnswerInvalid}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			b := &recordingBackend{
+				caps: judge.BackendCaps{Batch: true},
+				answer: func(_ context.Context, qs []judge.Question) (judge.Response, error) {
+					return answersFor(tt.answers, qs), nil
+				},
+			}
+			v := run(t, newCheck(t, true, action.Judge{Backend: b}), event(nil, "git push origin main"))
+			if v.Decision != guard.DecisionAsk || !slices.Equal(v.Fallbacks, tt.want) {
+				t.Errorf("decision = %s, fallbacks = %v, want ask %v", v.Decision, v.Fallbacks, tt.want)
+			}
+		})
+	}
+}
+
+// without 返回去掉 ids 的答案副本。
+func without(m map[string]judge.Answer, ids ...string) map[string]judge.Answer {
+	out := map[string]judge.Answer{}
+	for id, a := range m {
+		if !slices.Contains(ids, id) {
+			out[id] = a
+		}
+	}
+	return out
+}
+
+// TestDeadlineDuringAskIsReportedAsTimeout：截止时间落在取答中途，后端保留已答的、没有返回错误（如 openai logprobs
+// 逐题请求）：缺的题记 judge_timeout，不记 judge_answer_invalid。已答的保留，缺答不产生豁免，所以结论仍是请求确认。
+func TestDeadlineDuringAskIsReportedAsTimeout(t *testing.T) {
+	partial := without(dangerous(), action.SignalRequested, action.SignalRadius)
+	tests := []struct {
+		name   string
+		caps   judge.BackendCaps
+		answer func(ctx context.Context, qs []judge.Question) (judge.Response, error)
+		want   guard.Decision
+		fb     []string
+	}{
+		{"a batch backend returns the partial answers after the deadline", judge.BackendCaps{Batch: true},
+			func(ctx context.Context, qs []judge.Question) (judge.Response, error) {
+				<-ctx.Done()
+				return answersFor(partial, qs), nil
+			}, guard.DecisionAsk, []string{action.FallbackJudgeTimeout}},
+		{"a per-question backend: the later questions fail at the deadline, the earlier answers are kept", judge.BackendCaps{},
+			func(ctx context.Context, qs []judge.Question) (judge.Response, error) {
+				if qs[0].ID == action.SignalRequested || qs[0].ID == action.SignalRadius {
+					<-ctx.Done()
+					return judge.Response{}, ctx.Err()
+				}
+				return answersFor(partial, qs), nil
+			}, guard.DecisionAsk, []string{action.FallbackJudgeTimeout}},
+		{"the deadline passes after every answer arrived: no reason", judge.BackendCaps{Batch: true},
+			func(ctx context.Context, qs []judge.Question) (judge.Response, error) {
+				<-ctx.Done()
+				return answersFor(dangerous(), qs), nil
+			}, guard.DecisionAsk, nil},
+		{"only the radius is missing at the deadline", judge.BackendCaps{Batch: true},
+			func(ctx context.Context, qs []judge.Question) (judge.Response, error) {
+				<-ctx.Done()
+				return answersFor(without(with(low(), "publish", 0.9), action.SignalRadius), qs), nil
+			}, guard.DecisionAsk, []string{action.FallbackJudgeTimeout}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel() // 每个子测试都要等到截止时间
+			b := &recordingBackend{caps: tt.caps, answer: tt.answer}
+			// 截止时间要留够本地阶段（展开与正则）的余量：它先用完的话结论是 local_budget_exceeded，
+			// 测不到取答中途的截止。-race 全量测试负载下 1 秒仍有充足余量。
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			v, err := guard.Run(ctx, newCheck(t, true, action.Judge{Backend: b}), event(nil, "git push origin main"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if v.Decision != tt.want || !slices.Equal(v.Fallbacks, tt.fb) {
+				t.Errorf("decision = %s, fallbacks = %v, want %s %v (%+v)", v.Decision, v.Fallbacks, tt.want, tt.fb, v)
+			}
+		})
 	}
 }
 
