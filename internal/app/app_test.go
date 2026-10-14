@@ -125,6 +125,31 @@ func TestHookPreToolUse(t *testing.T) {
 	}
 }
 
+// TestHookAsksBeforeReadingSecrets：默认配置（第 2 档、模型关闭）下，Claude Code 的 Read 与指定了路径的 Grep
+// 读 .env 时请求确认，原因写明文件；示例文件与普通文件放行；第 1 档不检查文件读取（spec §4）。
+func TestHookAsksBeforeReadingSecrets(t *testing.T) {
+	e := newEnv(t)
+	for _, c := range []struct {
+		in   []byte
+		want string
+	}{
+		{pre("Read", map[string]any{"file_path": "/w/.env"}, ""), "ask"},
+		{pre("Grep", map[string]any{"pattern": "KEY", "path": ".env.local"}, ""), "ask"},
+		{pre("Read", map[string]any{"file_path": "/w/.env.example"}, ""), "pass"},
+		{pre("Read", map[string]any{"file_path": "/w/main.go"}, ""), "pass"},
+	} {
+		out, _, code := e.run(c.in, "hook", "claudecode", "--event", "PreToolUse")
+		d, reason := decisionOf(t, out)
+		if d != c.want || code != 0 || (d == "ask" && !strings.Contains(reason, ".env")) {
+			t.Errorf("%s: decision %s (exit %d), reason %q, want %s", c.in, d, code, reason, c.want)
+		}
+	}
+	e.config("version: 1\naction: {tier: 1}\n")
+	if out, _, _ := e.run(pre("Read", map[string]any{"file_path": "/w/.env"}, ""), "hook", "claudecode", "--event", "PreToolUse"); out != "" {
+		t.Errorf("tier 1 read .env: %s", out)
+	}
+}
+
 func TestHookIgnoresWhatItCannotRead(t *testing.T) {
 	e := newEnv(t)
 	for _, in := range [][]byte{[]byte("not json"), pre("mcp__x__y", map[string]any{"a": 1}, ""), []byte(`{"hook_event_name":"Stop"}`)} {

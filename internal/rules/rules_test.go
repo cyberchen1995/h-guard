@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -57,6 +58,7 @@ func TestBuiltinRules(t *testing.T) {
 		"branch_ops":       {guard.DecisionAsk, false, true},
 		"publish":          {guard.DecisionAsk, false, true},
 		"verify_bypass":    {guard.DecisionAsk, false, true},
+		"sensitive_read":   {guard.DecisionAsk, false, false},
 	}
 	if len(s.All()) != len(want) {
 		t.Fatalf("got %d rules, want %d", len(s.All()), len(want))
@@ -67,7 +69,7 @@ func TestBuiltinRules(t *testing.T) {
 			t.Errorf("%s = %+v", id, r)
 			continue
 		}
-		if _, ok := r.JudgeQuestion(); ok != (id != "catastrophic" && id != "fork_bomb") {
+		if _, ok := r.JudgeQuestion(); ok != (id != "catastrophic" && id != "fork_bomb" && id != "sensitive_read") {
 			t.Errorf("%s: has question = %v", id, ok)
 		}
 	}
@@ -189,7 +191,11 @@ func TestLoadRejects(t *testing.T) {
 		"unknown field":     userPublish + "colour: red\n",
 		"bad regex":         strings.Replace(userPublish, `'\bship-it\b'`, `'(unclosed'`, 1),
 		"bad action":        strings.Replace(userPublish, "action: ask", "action: warn", 1),
-		"file rule":         strings.Replace(userPublish, "on: [exec]", "on: [file_read]", 1),
+		"file rule asks":    strings.Replace(userFileRule, "on: [file_read]", "on: [file_read]\nquestion: {kind: probability, instructions: {question: q}}", 1),
+		"signal id":         strings.Replace(userPublish, "id: publish", "id: explicitly_requested", 1),
+		"signal id radius":  strings.Replace(userPublish, "id: publish", "id: blast_radius", 1),
+		"bad exclude":       strings.Replace(userFileRule, "exclude: ['**/secrets/README.md']", "exclude: ['README.md']", 1),
+		"exclude, no paths": strings.Replace(userFileRule, "paths: ['**/secrets/**']", "paths: []", 1),
 		"no reason":         strings.Replace(userPublish, "reason: {en: custom publish}", "reason: {zh-CN: x}", 1),
 		"judge no question": strings.Replace(userPublish, "on: [exec]", "on: [exec]\nrequires_judge: true", 1),
 		"no patterns":       strings.Replace(userPublish, `any: ['\bship-it\b']`, "any: []", 1),
@@ -471,7 +477,6 @@ func TestBuiltinFileRuleValidation(t *testing.T) {
 		"file match, no file":  strings.Replace(strings.Replace(builtinFileRule, "on: [file_write]", "on: [exec]", 1), "  file:", "  exec: {any: [x]}\n  file:", 1),
 		"example action":       strings.Replace(builtinFileRule, "miss: [{action: file_write", "miss: [{action: file_delete", 1),
 		"example with command": strings.Replace(builtinFileRule, "path: /tmp/x}", "path: /tmp/x, command: ls}", 1),
-		"unlocked file rule":   strings.Replace(builtinFileRule, "locked: true\n", "", 1),
 	} {
 		if _, err := rules.ParseBuiltin([]byte(body)); err == nil {
 			t.Errorf("%s: accepted", name)
@@ -484,5 +489,94 @@ func TestBuiltinFileRuleValidation(t *testing.T) {
 	}
 	if err := bad.CheckExamples(context.Background()); err == nil || !strings.Contains(err.Error(), "/xdg/config/h-guard/y") {
 		t.Errorf("CheckExamples = %v", err)
+	}
+}
+
+const userFileRule = `schema: 1
+id: my.secrets
+action: ask
+on: [file_read]
+reason: {en: reads my secrets}
+match:
+  file:
+    paths: ['**/secrets/**']
+    exclude: ['**/secrets/README.md']
+examples:
+  hit: [{action: file_read, path: secrets/prod.json}]
+  miss: [{action: file_read, path: secrets/README.md}]
+`
+
+// TestUserFileRules：第 2 档开放用户的文件规则（spec §4、§5.2）：不必 locked，按路径匹配，exclude 里的写法不算；
+// 样例照常运行。文件规则不调模型，所以不能带判断题（见 TestLoadRejects）。
+func TestUserFileRules(t *testing.T) {
+	dir := t.TempDir()
+	writeRule(t, dir, "secrets.yaml", userFileRule)
+	s, err := rules.Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := s.Get("my.secrets")
+	if r == nil || r.Locked || !r.AppliesTo(guard.ActionFileRead) || r.AppliesTo(guard.ActionExec) {
+		t.Fatalf("my.secrets = %+v", r)
+	}
+	if err := r.CheckExamples(context.Background()); err != nil {
+		t.Error(err)
+	}
+	for p, want := range map[string]bool{
+		"secrets/prod.json": true, "secrets/README.md": false, "src/secrets.go": false, "/srv/app/secrets/x/y.key": true,
+	} {
+		if got, _ := r.MatchFile(paths.Resolve(p, rules.ExampleEnv), rules.ExampleEnv); got != want {
+			t.Errorf("%s: hit = %v, want %v", p, got, want)
+		}
+	}
+}
+
+// TestExcludeIsPerCandidate：exclude 逐个候选路径判断。README.md 是指向 prod.json 的符号链接时，
+// 解析后的路径没有被排除，照样命中；不透明的路径（无法得知是哪个文件）不受 exclude 影响。
+func TestExcludeIsPerCandidate(t *testing.T) {
+	dir := t.TempDir()
+	writeRule(t, dir, "secrets.yaml", userFileRule)
+	s, err := rules.Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := s.Get("my.secrets")
+	env := paths.Env{Home: "/home/user", Cwd: "/home/user/project", Lexical: true}
+	for _, c := range []struct {
+		target paths.Resolved
+		want   bool
+	}{
+		{paths.Resolved{Clean: "/p/secrets/README.md"}, false},
+		{paths.Resolved{Clean: "/p/secrets/README.md", Real: "/p/secrets/prod.json"}, true},
+		{paths.Resolved{Clean: "/p/docs/README.md", Real: "/p/secrets/README.md"}, false},
+		{paths.Resolved{Clean: "/p/secrets/README.md", Opaque: true}, true},
+	} {
+		if got, _ := r.MatchFile(c.target, env); got != c.want {
+			t.Errorf("%+v: hit = %v, want %v", c.target, got, c.want)
+		}
+	}
+}
+
+// TestSensitiveReadPaths：内置 sensitive_read 只作用于读取，覆盖 .env、私钥、常见的凭据文件名与密钥目录；
+// .env 的示例文件、公钥与 known_hosts 不算（维护者决定，2026-10-14）。
+func TestSensitiveReadPaths(t *testing.T) {
+	r := builtinSet(t).Get("sensitive_read")
+	if r == nil || r.Locked || !r.Enabled() || r.Action != guard.DecisionAsk || !slices.Equal(r.On, []guard.ActionKind{guard.ActionFileRead}) {
+		t.Fatalf("sensitive_read = %+v", r)
+	}
+	env := rules.ExampleEnv
+	for p, want := range map[string]bool{
+		".env": true, "config/.env.production": true, ".env.local": true, "/srv/tls/server.pem": true, "certs/server.key": true,
+		"~/.ssh/id_ed25519": true, "~/.ssh/config": true, "deploy/id_rsa": true, "~/.aws/credentials": true, "~/.aws/config": true,
+		"~/.gnupg/private-keys-v1.d/x.key": true, "~/.netrc": true, "~/.docker/config.json": true, "gcloud/credentials.json": true,
+		"~/.git-credentials": true, "app/credentials.yaml": true, ".credentials.json": true,
+		// 源码与文档里叫 credentials 的文件不算（维护者决定，2026-10-14，评审 I8）
+		"pkg/auth/credentials.go": false, "src/CredentialsForm.tsx": false, "docs/credentials.md": false,
+		".env.example": false, "app/.env.sample": false, ".env.template": false, "~/.ssh/id_ed25519.pub": false,
+		"~/.ssh/known_hosts": false, ".envrc": false, "README.md": false, "src/env.go": false, "docker/config.json": false,
+	} {
+		if got, _ := r.MatchFile(paths.Resolve(p, env), env); got != want {
+			t.Errorf("%s: hit = %v, want %v", p, got, want)
+		}
 	}
 }

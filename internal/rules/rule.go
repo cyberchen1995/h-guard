@@ -33,6 +33,10 @@ const SchemaVersion = 1
 // MatchTimeout 是每次正则匹配的超时（spec §3.4）。
 const MatchTimeout = 100 * time.Millisecond
 
+// ReservedIDs 是信号题的 ID（internal/check/action 的 SignalRequested、SignalRadius）：规则 id 与它们同名时，
+// 两道题的答案会混在一起，所以不能用。
+var ReservedIDs = []string{"explicitly_requested", "blast_radius"}
+
 // Rule 是一条规则。YAML 字段见 spec §5.2。
 type Rule struct {
 	Schema        int                `yaml:"schema"`
@@ -64,9 +68,11 @@ type Match struct {
 
 // FileMatch 是文件动作的路径模式，写法见 pkg/detect/paths。模式开头的占位符：{config}、{cache} 是 h-guard
 // 实际使用的配置目录与缓存目录（含 XDG_CONFIG_HOME 等自定义位置）；{extra_config} 是这次 --config 加载的
-// 配置文件的绝对路径（没有时该模式不匹配）。
+// 配置文件的绝对路径（没有时该模式不匹配）。Exclude 是不算命中的写法（如 .env.example），逐个候选路径判断：
+// 只按字面匹配，不展开文件系统上的别名，所以指向受保护文件的符号链接不会因为自己的名字被排除。
 type FileMatch struct {
-	Paths []string `yaml:"paths"`
+	Paths   []string `yaml:"paths"`
+	Exclude []string `yaml:"exclude"`
 }
 
 // 路径模式的占位符。
@@ -246,6 +252,9 @@ func (r *Rule) validate() error {
 	if !guard.ValidName(r.ID) {
 		return fieldErr("id", "invalid")
 	}
+	if slices.Contains(ReservedIDs, r.ID) {
+		return fieldErr("id", "reserved for a signal question")
+	}
 	if r.Action != guard.DecisionAsk && r.Action != guard.DecisionDeny {
 		return fieldErr("action", "want ask or deny")
 	}
@@ -262,11 +271,9 @@ func (r *Rule) validate() error {
 		switch {
 		case !k.Valid():
 			return fieldErr("on", "unknown action kind")
-		case k == guard.ActionExec:
-		case isFile(k) && r.Locked:
-			// M2 只有内置的护栏自我保护作用于文件动作；用户的文件规则随第 2 档在 M3 加入
+		case k == guard.ActionExec, isFile(k):
 		default:
-			return fieldErr("on", "%s rules are not supported yet (only exec)", k)
+			return fieldErr("on", "%s rules are not supported yet (only exec and file actions)", k)
 		}
 	}
 	if !(r.RadiusFloor >= 0 && r.RadiusFloor <= 3) {
@@ -283,6 +290,10 @@ func (r *Rule) validate() error {
 	if r.RequiresJudge && r.Question == nil {
 		return fieldErr("requires_judge", "the rule has no question")
 	}
+	if r.Question != nil && !r.AppliesTo(guard.ActionExec) {
+		// 文件动作只按路径匹配，不调模型（spec §5.2）：题目永远不会被问到
+		return fieldErr("question", "only exec rules ask the judge; file rules match paths only")
+	}
 	if r.AppliesTo(guard.ActionExec) {
 		if r.Match.Exec == nil {
 			return fieldErr("match.exec", "missing for an exec rule")
@@ -297,13 +308,18 @@ func (r *Rule) validate() error {
 		if r.Match.File == nil || len(r.Match.File.Paths) == 0 {
 			return fieldErr("match.file.paths", "missing for a file rule")
 		}
-		for i, p := range r.Match.File.Paths {
-			path := fmt.Sprintf("match.file.paths[%d]", i)
-			if err := paths.ValidPattern(p); err != nil {
-				return fieldErr(path, "%v", err)
-			}
-			if name, ok := paths.Placeholder(p); ok && name != VarConfig && name != VarCache && name != VarExtraConfig {
-				return fieldErr(path, "unknown placeholder (want {config}, {cache} or {extra_config})")
+		for _, list := range []struct {
+			name     string
+			patterns []string
+		}{{"paths", r.Match.File.Paths}, {"exclude", r.Match.File.Exclude}} {
+			for i, p := range list.patterns {
+				path := fmt.Sprintf("match.file.%s[%d]", list.name, i)
+				if err := paths.ValidPattern(p); err != nil {
+					return fieldErr(path, "%v", err)
+				}
+				if name, ok := paths.Placeholder(p); ok && name != VarConfig && name != VarCache && name != VarExtraConfig {
+					return fieldErr(path, "unknown placeholder (want {config}, {cache} or {extra_config})")
+				}
 			}
 		}
 	} else if r.Match.File != nil {
@@ -435,6 +451,8 @@ func (r *Rule) MatchExec(ctx context.Context, e command.Expansion) (Result, erro
 
 // MatchFile 报告解析后的目标 target 是否命中规则的路径模式；env 提供 ~ 与占位符的值。complete 为 false
 // 表示受保护目录里的符号链接没有收集完整（见 paths.Matcher.Complete），调用方应带降级标记。
+// exclude 逐个候选路径判断：某个候选命中 paths 而没有被 exclude 排除即算命中，所以 .env.example 是指向 .env 的
+// 符号链接时，解析后的 .env 照样命中；不透明的目标不受 exclude 影响。
 // 规则不作用于文件动作时返回 false, true。
 func (r *Rule) MatchFile(target paths.Resolved, env paths.Env) (hit, complete bool) {
 	if r.Match.File == nil {
@@ -444,7 +462,22 @@ func (r *Rule) MatchFile(target paths.Resolved, env paths.Env) (hit, complete bo
 	if err != nil {
 		return true, true // 模式在加载时已校验，走到这里说明有 bug：按命中处理（只收紧）
 	}
-	return m.Match(target), m.Complete()
+	if len(r.Match.File.Exclude) == 0 || target.Opaque {
+		return m.Match(target), m.Complete()
+	}
+	lexical := env
+	lexical.Lexical = true
+	ex, err := paths.Compile(r.Match.File.Exclude, lexical)
+	if err != nil {
+		return m.Match(target), m.Complete() // 同上：排除失效只会更严
+	}
+	for _, c := range target.Candidates() {
+		one := paths.Resolved{Clean: c}
+		if m.Match(one) && !ex.Match(one) {
+			return true, m.Complete()
+		}
+	}
+	return false, m.Complete()
 }
 
 // CheckExamples 运行规则的样例（spec §5.2）：hit 必须命中、miss 必须不命中；超时不算命中。

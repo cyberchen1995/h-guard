@@ -741,6 +741,60 @@ func TestDisabledSelfProtectionIgnoresFiles(t *testing.T) {
 	}
 }
 
+// TestSensitiveRead：第 2 档（默认）读取 .env、私钥等之前请求确认，原因写明是哪个文件；只按路径匹配，不调模型，
+// 用户要求过也一样（spec §4、§5.2）。示例文件不打断；第 1 档不检查文件读取，但硬规则（护栏自我保护）
+// 不受档位限制（M2 遗留：此前没有测试钉住）。
+func TestSensitiveRead(t *testing.T) {
+	b := &fakeBackend{answers: with(low(), action.SignalRequested, 1.0)}
+	c := fileCheck(t, true, b)
+	for _, p := range []string{".env", "~/.ssh/id_ed25519", "/home/user/.aws/credentials"} {
+		ev := fileEvent(guard.ActionFileRead, p, "")
+		ev.Requests = []guard.Request{user("read " + p)}
+		v := run(t, c, ev)
+		if v.Decision != guard.DecisionAsk || !slices.Equal(codes(v), []string{i18n.KeyActionFileRule, i18n.KeyHintManual}) ||
+			v.Reasons[0].Params["paths"] != p || len(v.Findings) != 1 || v.Findings[0].Rule != "sensitive_read" {
+			t.Errorf("read %s = %+v", p, v)
+		}
+	}
+	text := c.Catalog.Text("zh-CN", i18n.KeyActionFileRule, map[string]string{"paths": ".env", "rules": "x"})
+	if !strings.Contains(text, ".env") || strings.Contains(text, "{") {
+		t.Errorf("zh-CN text = %q", text)
+	}
+	for _, ev := range []guard.Event{
+		fileEvent(guard.ActionFileRead, ".env.example", ""),
+		fileEvent(guard.ActionFileWrite, ".env", ""), // sensitive_read 只管读取
+		fileEvent(guard.ActionFileRead, "src/main.go", ""),
+	} {
+		if v := run(t, c, ev); v.Decision != guard.DecisionPass {
+			t.Errorf("%s %s = %+v", ev.Actions[0].Kind, ev.Actions[0].File.Path, v)
+		}
+	}
+	if b.calls.Load() != 0 {
+		t.Errorf("file actions called the judge %d times", b.calls.Load())
+	}
+	c.Config.Action.Tier = 1
+	if v := run(t, c, fileEvent(guard.ActionFileRead, ".env", "")); v.Decision != guard.DecisionPass {
+		t.Errorf("tier 1 read .env = %+v", v)
+	}
+	if v := run(t, c, fileEvent(guard.ActionFileWrite, "~/.claude/settings.json", "")); v.Decision != guard.DecisionAsk {
+		t.Errorf("tier 1 write ~/.claude/settings.json = %+v, want ask (hard rules ignore the tier)", v)
+	}
+	c.Config.Action.Tier = 2
+	if _, err := c.Rules.Apply(rules.Overrides{"sensitive_read": false}); err != nil {
+		t.Fatal(err)
+	}
+	if v := run(t, c, fileEvent(guard.ActionFileRead, ".env", "")); v.Decision != guard.DecisionPass {
+		t.Errorf("disabled sensitive_read = %+v", v)
+	}
+}
+
+// TestSignalIDsAreReserved：规则 id 不能与信号题同名，否则两道题的答案会混在一起（M2 遗留）。
+func TestSignalIDsAreReserved(t *testing.T) {
+	if !slices.Equal(rules.ReservedIDs, []string{action.SignalRequested, action.SignalRadius}) {
+		t.Errorf("rules.ReservedIDs = %v, want the two signal question ids", rules.ReservedIDs)
+	}
+}
+
 // TestUnresolvedPathFallsBackToTheCleanPath：相对路径没有 cwd 时按规范化后的原始路径匹配，带 path_unresolved。
 func TestUnresolvedPathFallsBackToTheCleanPath(t *testing.T) {
 	c := fileCheck(t, false, nil)

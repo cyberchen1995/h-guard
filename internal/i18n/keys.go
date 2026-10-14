@@ -8,6 +8,7 @@ const (
 	KeyActionNotRequested      = "action.not_requested"      // {p}
 	KeyActionGuardSelf         = "action.guard_self"         // {rules}
 	KeyActionGuardSelfFile     = "action.guard_self_file"    // {paths} {rules}
+	KeyActionFileRule          = "action.file_rule"          // {paths} {rules}
 	KeyActionJudgeUnavailable  = "action.judge_unavailable"  // {code} {rules}
 	KeyActionEvidenceTruncated = "action.evidence_truncated" //
 	KeyActionRegexTimeout      = "action.regex_timeout"      //
@@ -32,7 +33,7 @@ const (
 // AllKeys 是全部消息键；en 目录必须覆盖它们（测试检查）。
 var AllKeys = []string{
 	KeyActionBlocked, KeyActionDangerous, KeyActionRadius, KeyActionNotRequested, KeyActionGuardSelf, KeyActionGuardSelfFile,
-	KeyActionJudgeUnavailable, KeyActionEvidenceTruncated, KeyActionRegexTimeout, KeyActionBudgetExceeded,
+	KeyActionFileRule, KeyActionJudgeUnavailable, KeyActionEvidenceTruncated, KeyActionRegexTimeout, KeyActionBudgetExceeded,
 	KeyActionProbe, KeyErrorInternal, KeyErrorConfigInvalid, KeyErrorInputTooLarge, KeyDegradeAskUnsupported,
 	KeySourceLocal, KeySourceJudge, KeySourceBoth, KeyHintManual, KeyHintConsent, KeyHintJudgeUnavailable,
 	KeyHintSplit, KeyHintNarrow, KeyHintRequest, KeyListSeparator,
