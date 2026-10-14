@@ -217,7 +217,7 @@ func loadConfig(o Options, extra string, checkKinds bool) (setup, error) {
 // 以及这次 --config 加载的文件展开。
 func (s setup) newEngine(o Options, j action.Judge) *engine.Engine {
 	c := &action.Check{Rules: s.rules, Config: s.cfg, Catalog: s.catalog, Locale: s.locale, Judge: j,
-		Paths: paths.Env{Home: o.Home, FoldCase: paths.FoldCaseDefault,
+		Paths: paths.Env{Home: o.Home, FoldCase: paths.FoldCaseDefault, Windows: paths.WindowsDefault,
 			Vars: map[string]string{rules.VarConfig: o.ConfigDir, rules.VarCache: o.CacheDir, rules.VarExtraConfig: s.extra}}}
 	return &engine.Engine{
 		Checks: []guard.Check{c}, Catalog: s.catalog, Locale: s.locale,

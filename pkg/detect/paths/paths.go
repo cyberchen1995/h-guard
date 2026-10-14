@@ -12,11 +12,15 @@
 //
 // 按字面匹配（Lexical，规则样例）时两者都不处理。
 //
+// Windows（Env.Windows，spec §5.5 第 4 步）：\\?\、\\.\ 前缀先去掉（卷 GUID、GLOBALROOT 等无法映射到盘符的前缀
+// 标为不透明）；每段末尾的点与空格、冒号之后的数据流名去掉后的写法另作候选；短文件名（8.3）换成长文件名后另作
+// 候选；本机的管理共享（\\localhost\C$\…）换回盘符路径另作候选；盘符相对路径（C:foo）不透明；以单个分隔符
+// 开头的路径（\Users\x）在 cwd 所在卷的根下；目录联接与
+// 符号链接一样解析。\ 与 / 都是分隔符，比较时一律换成 /。
+//
 // 模式：`**/` 匹配零或多级目录，末尾的 `/**` 匹配目录本身及其下全部内容，其余 `**` 匹配任意字符，
 // `*`、`?` 不跨目录；以 `~/` 开头的按主目录展开，以 `{name}` 开头的按 Env.Vars 展开。模式开头的
 // 固定部分同样解析符号链接，所以受保护文件本身是符号链接时，改它的目标也命中。
-//
-// Windows 的盘符、UNC 与 `\\?\` 前缀在 M3 处理；目前两边都换成 `/` 后比较。
 package paths
 
 import (
@@ -46,6 +50,9 @@ type Env struct {
 	RootAliases []string
 	// Opaque 是无法映射到规范位置的前缀（绝对路径，用 / 分隔）；nil 时用 OpaqueDefault，空切片表示没有
 	Opaque []string
+	// Windows 按 Windows 的规则解析与比较（见包注释）；调用方一般设为 WindowsDefault。在其他平台上设为真时
+	// 只有不访问文件系统的部分（前缀、末尾的点与空格、数据流、分隔符）有意义，供测试使用
+	Windows bool
 }
 
 // FoldCaseDefault 报告当前平台的默认文件系统是否不区分大小写（macOS、Windows 是，Linux 否）。
@@ -94,6 +101,17 @@ func (r Resolved) Candidates() []string {
 // 符号链接时，.. 从链接目标回退（与操作系统打开文件时一致），提前 Clean 会把它错算成 `x`（评审 M2-02）。
 func Resolve(path string, env Env) Resolved {
 	var r Resolved
+	var opaque bool
+	if env.Windows {
+		path, opaque = stripWindowsPrefix(path)
+		if abs, rooted, ok := rootRelative(path, env.Cwd); rooted {
+			if ok {
+				path = abs
+			} else {
+				opaque = true // 不知道是哪个卷
+			}
+		}
+	}
 	raw, err := expandHome(path, env.Home)
 	if err == nil && !filepath.IsAbs(raw) {
 		if env.Cwd == "" || !filepath.IsAbs(env.Cwd) {
@@ -112,6 +130,19 @@ func Resolve(path string, env Env) Resolved {
 	}
 	r.Real, r.Err = realpath(raw)
 	r.Aliases, r.Opaque = rootForms(r, env)
+	if env.Windows {
+		r.Opaque = r.Opaque || opaque
+		for _, c := range r.Candidates() {
+			// 解析出的路径（如联接的目标）同样可能带卷 GUID 等前缀（评审 I7）
+			stripped, op := stripWindowsPrefix(c)
+			r.Opaque = r.Opaque || op
+			for _, alt := range append([]string{stripped, longName(c)}, windowsForms(stripped, localHosts())...) {
+				if alt != "" && !slices.Contains(r.Candidates(), alt) {
+					r.Aliases = append(r.Aliases, alt)
+				}
+			}
+		}
+	}
 	return r
 }
 
@@ -218,16 +249,16 @@ func realpath(abs string) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		if fi.Mode()&fs.ModeSymlink == 0 {
+		target, isLink, err := readLink(next, fi)
+		if err != nil {
+			return "", err
+		}
+		if !isLink {
 			cur = next
 			continue
 		}
 		if hops++; hops > maxHops {
 			return "", ErrLoop
-		}
-		target, err := os.Readlink(next)
-		if err != nil {
-			return "", err
 		}
 		if filepath.IsAbs(target) {
 			tv := filepath.VolumeName(target)
@@ -277,6 +308,7 @@ func ValidPattern(pattern string) error {
 // Matcher 是按某个 Env 展开并编译好的一组模式。
 type Matcher struct {
 	res        []*regexp.Regexp
+	windows    bool // 候选路径里的 \ 也是分隔符（Env.Windows）
 	incomplete bool // 有受保护的目录读不全（超过 maxEntries 项或读取出错），其中符号链接的别名可能缺失
 }
 
@@ -286,7 +318,7 @@ func (m *Matcher) Complete() bool { return !m.incomplete }
 // Compile 按 env 展开并编译模式（模式须已通过 ValidPattern）。缺少 ~ 或占位符值的模式跳过。
 // 不是 Lexical 时，另按文件系统上的别名（见 aliases）各编译一份。
 func Compile(patterns []string, env Env) (*Matcher, error) {
-	m := &Matcher{}
+	m := &Matcher{windows: env.Windows}
 	for _, p := range patterns {
 		if err := ValidPattern(p); err != nil {
 			return nil, fmt.Errorf("pattern %q: %w", p, err)
@@ -404,7 +436,7 @@ func (m *Matcher) Match(r Resolved) bool {
 		return true
 	}
 	for _, c := range r.Candidates() {
-		c = filepath.ToSlash(c)
+		c = slash(c, m.windows)
 		for _, re := range m.res {
 			if re.MatchString(c) {
 				return true
@@ -421,13 +453,13 @@ func expandPattern(p string, env Env) (string, bool) {
 		if v == "" {
 			return "", false
 		}
-		return strings.TrimSuffix(filepath.ToSlash(filepath.Clean(v)), "/") + p[len(name)+2:], true
+		return strings.TrimSuffix(slash(filepath.Clean(v), env.Windows), "/") + p[len(name)+2:], true
 	}
 	if strings.HasPrefix(p, "~/") {
 		if env.Home == "" {
 			return "", false
 		}
-		return strings.TrimSuffix(filepath.ToSlash(filepath.Clean(env.Home)), "/") + p[1:], true
+		return strings.TrimSuffix(slash(filepath.Clean(env.Home), env.Windows), "/") + p[1:], true
 	}
 	return p, true
 }
