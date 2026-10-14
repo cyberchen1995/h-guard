@@ -13,6 +13,7 @@ import (
 	"github.com/cyberchen1995/h-guard/internal/eval"
 	"github.com/cyberchen1995/h-guard/internal/rules"
 	"github.com/cyberchen1995/h-guard/pkg/detect/secrets"
+	"github.com/cyberchen1995/h-guard/pkg/guard"
 	"github.com/cyberchen1995/h-guard/pkg/judge"
 )
 
@@ -27,13 +28,17 @@ func runEval(args []string, o Options) int {
 	backend := fs.String("backend", "", "backend to evaluate (default: judge.backend)")
 	sweep := fs.Bool("sweep", false, "scan thresholds with the recorded answers and suggest a profile")
 	casesPath := fs.String("cases", "", "JSONL corpus to use instead of the built-in one")
+	shell := fs.String("shell", string(guard.ShellPOSIX), "built-in corpus to use: posix or powershell")
 	yes := fs.Bool("yes", false, "send the corpus without asking")
 	repeat := fs.Int("repeat", 1, "run the corpus this many times; every run's decisions are pooled and reported")
 	boot := fs.Int("bootstrap", 100, "with --sweep: resample the corpus this many times to test the suggestion (0 disables)")
 	seed := fs.Uint64("seed", 1, "random seed for --bootstrap")
 	extra := fs.String("config", "", "extra config file")
 	pos, err := parseInterleaved(fs, args)
-	if err != nil || len(pos) != 0 {
+	shellSet := false
+	fs.Visit(func(f *flag.Flag) { shellSet = shellSet || f.Name == "shell" })
+	// --shell 只选内置语料：--cases 的语料逐条写 shell
+	if err != nil || len(pos) != 0 || !guard.Shell(*shell).Valid() || (shellSet && *casesPath != "") {
 		fmt.Fprint(o.Stderr, usage)
 		return 2
 	}
@@ -66,7 +71,7 @@ func runEval(args []string, o Options) int {
 		fmt.Fprintln(o.Stderr, "h-guard:", secrets.MaskForLog(err.Error()))
 		return 1
 	}
-	cases, err := eval.Corpus()
+	cases, err := eval.CorpusFor(guard.Shell(*shell))
 	if *casesPath != "" {
 		cases, err = eval.LoadCases(*casesPath)
 	}
@@ -76,8 +81,11 @@ func runEval(args []string, o Options) int {
 		return 1
 	}
 	source := "the built-in corpus"
-	if *casesPath != "" {
+	switch {
+	case *casesPath != "":
 		source = shown(*casesPath)
+	case guard.Shell(*shell) == guard.ShellPowerShell:
+		source = "the built-in PowerShell corpus"
 	}
 	// 这是一次数据发送授权：写明目标、来源与发送的内容（评审：--cases 的语料可能含用户数据）
 	times := ""
@@ -206,6 +214,10 @@ func runEval(args []string, o Options) int {
 	}
 	if st.cal.Profile == "" {
 		fmt.Fprintf(o.Stdout, "# and reference it from the backend: backends.%s.profile: %s\n", name, profile)
+	}
+	if *casesPath == "" && guard.Shell(*shell) == guard.ShellPowerShell {
+		// 指纹不区分语料：照抄进配置就会替换按 POSIX 语料校准的档案
+		fmt.Fprintln(o.Stdout, "# Fitted on the built-in PowerShell corpus; the built-in profiles are calibrated on the POSIX corpus.")
 	}
 	return 0
 }

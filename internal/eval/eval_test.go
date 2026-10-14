@@ -20,6 +20,7 @@ import (
 	"github.com/cyberchen1995/h-guard/internal/config"
 	"github.com/cyberchen1995/h-guard/internal/eval"
 	"github.com/cyberchen1995/h-guard/internal/rules"
+	"github.com/cyberchen1995/h-guard/pkg/detect/command"
 	"github.com/cyberchen1995/h-guard/pkg/guard"
 	"github.com/cyberchen1995/h-guard/pkg/judge"
 	// 内置默认配置带着三种类型的后端（jev、claude-*、gemma4-local），config.Load 要能构造它们
@@ -698,6 +699,89 @@ func TestWithinBoundsMisses(t *testing.T) {
 	} {
 		if got := eval.Within(tc.a, tc.best, tc.runs); got != tc.want {
 			t.Errorf("%s: Within = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
+// TestPowerShellCorpus：内置的 PowerShell 标注语料（spec §5.3：旧版没有对应数据，不进 golden，以语料评估验收）
+// 每条都是 PowerShell，覆盖六类危险操作、灾难性形态与护栏自我保护，有只是提到危险写法的误报样本，
+// 也有带用户指令（含先要求、后撤回）的用例。不写 --shell 时仍是原来的 POSIX 语料。
+func TestPowerShellCorpus(t *testing.T) {
+	cases, err := eval.CorpusFor(guard.ShellPowerShell)
+	if err != nil {
+		t.Fatal(err)
+	}
+	covered := map[string]bool{}
+	mentions, withRequests, withdrawn := 0, 0, 0
+	for _, c := range cases {
+		if c.Shell != guard.ShellPowerShell {
+			t.Errorf("%q: shell %s", c.Command, c.Shell)
+		}
+		for _, r := range c.Rules {
+			covered[r] = true
+		}
+		if c.Expect == guard.DecisionPass && len(c.Rules) == 0 {
+			mentions++
+		}
+		if len(c.UserRequests) > 0 {
+			withRequests++
+		}
+		if len(c.UserRequests) > 1 {
+			withdrawn++
+		}
+	}
+	for _, r := range []string{"catastrophic", "recursive_delete", "destructive_git", "branch_ops", "publish", "verify_bypass", "guard_tampering"} {
+		if !covered[r] {
+			t.Errorf("no case for %s", r)
+		}
+	}
+	if len(cases) < 40 || mentions < 10 || withRequests < 4 || withdrawn < 1 {
+		t.Errorf("%d cases, %d pass cases without rules, %d with requests, %d with several requests", len(cases), mentions, withRequests, withdrawn)
+	}
+	posix, err := eval.CorpusFor(guard.ShellPOSIX)
+	if err != nil || !reflect.DeepEqual(posix, corpus(t)) {
+		t.Errorf("CorpusFor(posix) differs from Corpus(): %v", err)
+	}
+}
+
+// TestPowerShellCorpusLocalRules：语料标注的规则本地都能命中（模型只能否决或补充判断，漏掉的写法它也问不到），
+// deny 级的本地命中当且仅当语料期望 deny。只看本地规则，不调用后端。
+func TestPowerShellCorpusLocalRules(t *testing.T) {
+	cases, err := eval.CorpusFor(guard.ShellPowerShell)
+	if err != nil {
+		t.Fatal(err)
+	}
+	set, err := rules.Builtin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range cases {
+		e, err := command.Expand(context.Background(), c.Command, c.Shell)
+		if err != nil {
+			t.Fatal(err)
+		}
+		hit := map[string]bool{}
+		deny := false
+		for _, r := range set.All() {
+			if !r.AppliesTo(guard.ActionExec) {
+				continue
+			}
+			res, err := r.MatchExec(context.Background(), e)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if res.Hit {
+				hit[r.ID] = true
+				deny = deny || r.Action == guard.DecisionDeny
+			}
+		}
+		for _, r := range c.Rules {
+			if !hit[r] {
+				t.Errorf("%q: %s is labelled but not matched locally (hits %v)", c.Command, r, hit)
+			}
+		}
+		if deny != (c.Expect == guard.DecisionDeny) {
+			t.Errorf("%q: local deny %v, expect %s", c.Command, deny, c.Expect)
 		}
 	}
 }

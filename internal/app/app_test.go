@@ -21,6 +21,7 @@ import (
 	"github.com/cyberchen1995/h-guard/internal/config"
 	"github.com/cyberchen1995/h-guard/internal/consent"
 	"github.com/cyberchen1995/h-guard/internal/engine"
+	"github.com/cyberchen1995/h-guard/internal/eval"
 	"github.com/cyberchen1995/h-guard/internal/i18n"
 	hglog "github.com/cyberchen1995/h-guard/internal/log"
 	"github.com/cyberchen1995/h-guard/pkg/detect/secrets"
@@ -1057,6 +1058,37 @@ func TestEvalRepeatFailsWhenALaterRunFails(t *testing.T) {
 	}
 	if strings.Contains(out, "=== Threshold sweep") || strings.Contains(out, "profiles:") || !strings.Contains(out, "[run 2/2] [needless ask] git push origin main") {
 		t.Errorf("stdout:\n%s", out)
+	}
+}
+
+// TestEvalShellSelectsTheCorpus：--shell powershell 用内置的 PowerShell 语料（spec §5.3、§12）；不写时与
+// --shell posix 相同，用原来的 113 条。--shell 只选内置语料，与 --cases 同用、或取值不认识时报用法错误。
+// PowerShell 语料上的建议档案注明拟合的是哪份语料：内置档案按 POSIX 语料校准。
+func TestEvalShellSelectsTheCorpus(t *testing.T) {
+	e := newEnv(t)
+	srv := newJevServer(t, 0.9)
+	e.judgeConfig(srv, "")
+	ps, err := eval.CorpusFor(guard.ShellPowerShell)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, stderr, code := e.run(nil, "eval", "--shell", "powershell", "--yes", "--sweep")
+	if code != 0 || !strings.Contains(stderr, fmt.Sprintf("sends %d cases from the built-in PowerShell corpus", len(ps))) ||
+		!strings.Contains(out, "# Fitted on the built-in PowerShell corpus") {
+		t.Errorf("--shell powershell: exit %d\nstderr %q\nstdout:\n%s", code, stderr, out)
+	}
+	for _, args := range [][]string{{"--shell", "posix"}, nil} {
+		_, stderr, code := e.run(nil, append([]string{"eval", "--yes"}, args...)...)
+		if code != 0 || !strings.Contains(stderr, "sends 113 cases from the built-in corpus") {
+			t.Errorf("eval %v: exit %d, stderr %q", args, code, stderr)
+		}
+	}
+	cases := filepath.Join(t.TempDir(), "cases.jsonl")
+	os.WriteFile(cases, []byte(`{"command": "ls", "user_requests": [], "expect": "pass", "rules": [], "note": "n"}`+"\n"), 0o600)
+	for _, args := range [][]string{{"--shell", "powershell", "--cases", cases}, {"--shell", "cmd"}} {
+		if _, _, code := e.run(nil, append([]string{"eval", "--yes"}, args...)...); code != 2 {
+			t.Errorf("eval %v: exit %d, want 2", args, code)
+		}
 	}
 }
 
