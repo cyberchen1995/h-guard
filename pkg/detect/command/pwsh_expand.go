@@ -24,6 +24,9 @@ var pwshUnicode = strings.NewReplacer(
 type nested struct {
 	text  string
 	shell guard.Shell
+	// block 为真表示同一脚本里的代码（PowerShell 的脚本块、括号与子表达式），不是交给解释器的嵌套调用：
+	// 不消耗展开深度，只受 maxBlocks 约束（与 POSIX 的 if、{ } 不占深度一致）
+	block bool
 }
 
 // pwshExpand 处理一个 PowerShell 单元（spec §5.3）：返回剥离数据 here-string 后的全文，以及要再检查的内层命令：
@@ -77,15 +80,15 @@ func pwshExpand(text string) (string, []nested) {
 			}
 		case name == "pwsh" || name == "powershell":
 			for _, s := range pwshScripts(values(args)) {
-				inner = append(inner, nested{s, guard.ShellPowerShell})
+				inner = append(inner, nested{text: s, shell: guard.ShellPowerShell})
 			}
 		case shells[name]:
 			for _, s := range shellScripts(values(args)) {
-				inner = append(inner, nested{s, guard.ShellPOSIX})
+				inner = append(inner, nested{text: s, shell: guard.ShellPOSIX})
 			}
 		case name == "wsl":
 			if s := wslCommand(values(args)); s != "" {
-				inner = append(inner, nested{s, guard.ShellPOSIX})
+				inner = append(inner, nested{text: s, shell: guard.ShellPOSIX})
 			}
 		case name == "start-process" || name == "saps" || name == "start":
 			inner = append(inner, startProcess(lx, args)...)
@@ -99,21 +102,24 @@ func pwshExpand(text string) (string, []nested) {
 		}
 		raw := lx.src[t.start:t.end]
 		if shell, ok := executed[t.start]; ok {
-			inner = append(inner, nested{t.value, shell})
+			inner = append(inner, nested{text: t.value, shell: shell})
 		}
 		for _, s := range t.subs {
-			inner = append(inner, nested{s, guard.ShellPowerShell})
+			inner = append(inner, nested{text: s, shell: guard.ShellPowerShell, block: true})
 		}
 		for _, body := range t.codeArgs {
 			for _, s := range stringLiterals(body) {
-				inner = append(inner, nested{s, guard.ShellPowerShell})
+				inner = append(inner, nested{text: s, shell: guard.ShellPowerShell})
 			}
 		}
 		if n := hereStart(raw, 0); n > 0 && !kept[t.start] {
 			if _, ok := executed[t.start]; !ok {
 				// 数据 here-string：正文换成占位符（结束行保留）
+				// 结束行按词法的规则找（正文为空时结束行紧跟开头那一行）；未闭合时保留最后一行
 				bodyEnd := len(raw)
-				if k := strings.LastIndex(raw, "\n"); k >= n {
+				if k := strings.Index(raw[n-1:], "\n"+raw[1:2]+"@"); k >= 0 {
+					bodyEnd = n - 1 + k
+				} else if k := strings.LastIndex(raw, "\n"); k >= n {
 					bodyEnd = k
 				}
 				b.WriteString(text[last : t.start+n])
@@ -191,7 +197,8 @@ func startProcess(lx pwLexed, args []pwToken) []nested {
 	positional := 0
 	for i := 0; i < len(args); i++ {
 		v := args[i].value
-		if strings.HasPrefix(v, "-") && len(v) > 1 {
+		// 只有不带引号的 -x 是 Start-Process 的参数名；带引号的（"-c …"）是位置参数（参数列表）
+		if raw := lx.src[args[i].start:args[i].end]; strings.HasPrefix(raw, "-") && len(v) > 1 {
 			name := strings.ToLower(strings.TrimPrefix(v, "-"))
 			if startProcessSwitches[name] || i+1 >= len(args) {
 				continue
@@ -229,15 +236,15 @@ func startProcess(lx pwLexed, args []pwToken) []nested {
 	switch name := commandName(file); {
 	case name == "pwsh" || name == "powershell":
 		for _, s := range pwshScripts(argv) {
-			out = append(out, nested{s, guard.ShellPowerShell})
+			out = append(out, nested{text: s, shell: guard.ShellPowerShell})
 		}
 	case shells[name]:
 		for _, s := range shellScripts(argv) {
-			out = append(out, nested{s, guard.ShellPOSIX})
+			out = append(out, nested{text: s, shell: guard.ShellPOSIX})
 		}
 	case name == "wsl":
 		if s := wslCommand(argv); s != "" {
-			out = append(out, nested{s, guard.ShellPOSIX})
+			out = append(out, nested{text: s, shell: guard.ShellPOSIX})
 		}
 	}
 	return out

@@ -317,3 +317,25 @@ func TestPowerShellDepthLimit(t *testing.T) {
 		t.Errorf("expansion of %q is not limited", cmd)
 	}
 }
+
+// TestPowerShellBlocksKeepDepth：脚本块、括号与子表达式是同一脚本里的代码，嵌套很深时也不触发深度限制；
+// 交给解释器的嵌套照常计数（见 TestPowerShellDepthLimit）。
+func TestPowerShellBlocksKeepDepth(t *testing.T) {
+	cmd := MARK
+	for i := 0; i < command.MaxDepth+3; i++ {
+		cmd = "if ($a) { " + cmd + " }"
+	}
+	e := pwsh(t, cmd)
+	if e.Limited {
+		t.Errorf("expansion of %q is limited", cmd)
+	}
+	found := false
+	for _, u := range e.Units {
+		for _, p := range u.Positions() {
+			found = found || strings.HasPrefix(p, MARK)
+		}
+	}
+	if !found {
+		t.Errorf("%q: %s not in a command position", cmd, MARK)
+	}
+}

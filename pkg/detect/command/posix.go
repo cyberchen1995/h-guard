@@ -70,7 +70,7 @@ func stripHeredocs(cmd string) (out string, expandable []string, executed []nest
 		body := lx.join(h.bodyStart, h.bodyEnd)
 		if shells := executedHeredoc(lx, h); len(shells) > 0 {
 			for _, shell := range shells {
-				executed = append(executed, nested{body, shell})
+				executed = append(executed, nested{text: body, shell: shell})
 			}
 			continue
 		}
@@ -330,11 +330,11 @@ func nestedScripts(cmd string) []nested {
 		switch name := strings.TrimSuffix(strings.ToLower(path.Base(words[0])), ".exe"); {
 		case shells[name]:
 			for _, s := range shellScripts(words[1:]) {
-				out = append(out, nested{s, guard.ShellPOSIX})
+				out = append(out, nested{text: s, shell: guard.ShellPOSIX})
 			}
 		case name == "pwsh" || name == "powershell":
 			for _, s := range pwshScripts(words[1:]) {
-				out = append(out, nested{s, guard.ShellPowerShell})
+				out = append(out, nested{text: s, shell: guard.ShellPowerShell})
 			}
 		}
 	}

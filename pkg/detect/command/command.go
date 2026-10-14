@@ -71,15 +71,18 @@ type Expansion struct {
 // 耗时由截止时间约束（评审 M1 终审）。
 func Expand(ctx context.Context, cmd string, shell guard.Shell) (Expansion, error) {
 	var e Expansion
-	err := e.expand(ctx, cmd, shell, 0)
+	err := e.expand(ctx, cmd, shell, 0, 0)
 	return e, err
 }
 
-func (e *Expansion) expand(ctx context.Context, text string, shell guard.Shell, depth int) error {
+// maxBlocks 限制 PowerShell 脚本块、括号与子表达式的嵌套层数（它们不消耗 MaxDepth）。
+const maxBlocks = 64
+
+func (e *Expansion) expand(ctx context.Context, text string, shell guard.Shell, depth, blocks int) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if depth > MaxDepth {
+	if depth > MaxDepth || blocks > maxBlocks {
 		e.Limited = true
 		e.Units = append(e.Units, Unit{Text: text, Depth: depth, Shell: shell})
 		return nil
@@ -103,12 +106,12 @@ func (e *Expansion) expand(ctx context.Context, text string, shell guard.Shell, 
 		e.Units = append(e.Units, u)
 		for _, b := range expandable {
 			for _, s := range substitutions(b) {
-				inner = append(inner, nested{s, shell})
+				inner = append(inner, nested{text: s, shell: shell})
 			}
 		}
 		inner = append(inner, executed...) // 交给解释器的正文：全文已在本单元里，另按命令切段检查
 		for _, s := range codeSubstitutions(stripped) {
-			inner = append(inner, nested{s, shell})
+			inner = append(inner, nested{text: s, shell: shell})
 		}
 		inner = append(inner, nestedScripts(stripped)...)
 	}
@@ -116,7 +119,11 @@ func (e *Expansion) expand(ctx context.Context, text string, shell guard.Shell, 
 		if strings.TrimSpace(n.text) == "" {
 			continue
 		}
-		if err := e.expand(ctx, n.text, n.shell, depth+1); err != nil {
+		d, b := depth+1, 0
+		if n.block {
+			d, b = depth, blocks+1
+		}
+		if err := e.expand(ctx, n.text, n.shell, d, b); err != nil {
 			return err
 		}
 	}

@@ -700,3 +700,36 @@ func TestPowerShellRules(t *testing.T) {
 		}
 	}
 }
+
+// TestPowerShellFinalReview：整分支审查的三项（模型关闭时灾难性形态静默放行）。
+func TestPowerShellFinalReview(t *testing.T) {
+	s := builtinSet(t)
+	deep := `Remove-Item -Recurse -Force $HOME`
+	for _, open := range []string{"function f {", "foreach ($x in 1..2) {", "if ($a) {", "try {", "if ($b) {", "& {"} {
+		deep = open + "\n" + deep + "\n}"
+	}
+	for _, cmd := range []string{
+		// 空 here-string 的结束行不能被当作正文剥掉（剥掉后 here-string 不再闭合，后面的命令落进字符串）
+		"$x = @'\n'@\nRemove-Item -Recurse -Force C:\\",
+		"$x = @\"\n\"@\nRemove-Item -Recurse -Force C:\\",
+		// Start-Process 带引号、以 - 开头的位置参数是参数列表，不是 Start-Process 自己的选项
+		`Start-Process pwsh "-c Remove-Item -Recurse -Force C:\"`,
+		`saps pwsh "-c rm -r -fo ~"`,
+		`Start-Process bash "-c 'rm -rf /'"`,
+		// 普通的控制流块不是嵌套调用，不消耗展开深度
+		deep,
+	} {
+		if got := pwshHits(t, s, cmd); !slices.Contains(got, "catastrophic") {
+			t.Errorf("%q: hits %v, want catastrophic", cmd, got)
+		}
+	}
+	for cmd, want := range map[string][]string{
+		"Set-Content f @'\n'@":                             nil,
+		"Set-Content f @'\nRemove-Item -Recurse C:\\\n'@":  nil,
+		`Start-Process pwsh -ArgumentList '-c','Get-Date'`: nil,
+	} {
+		if got := pwshHits(t, s, cmd); !slices.Equal(got, want) {
+			t.Errorf("%q: hits %v, want %v", cmd, got, want)
+		}
+	}
+}
