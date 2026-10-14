@@ -5,10 +5,12 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/cyberchen1995/h-guard/pkg/judge"
+	_ "github.com/cyberchen1995/h-guard/pkg/judge/exec"
 	_ "github.com/cyberchen1995/h-guard/pkg/judge/typesafe"
 )
 
@@ -209,6 +211,42 @@ func TestNewBackend(t *testing.T) {
 	}
 	if _, err := Defaults().NewBackend("nope"); err == nil {
 		t.Error("NewBackend accepted an unknown name")
+	}
+}
+
+// TestExecKindsFromYAML：exec 后端的 kinds 经配置文件解码后校验。空列表（与省略不同）、未知取值、重复都是
+// 配置错误，说明不回显取值；省略时两种题型都能回答。
+func TestExecKindsFromYAML(t *testing.T) {
+	const canary = "HGCanaryKind987654"
+	const prefix = "version: 1\nbackends: {local: {type: exec, command: /opt/judge/run"
+	for name, kinds := range map[string]string{
+		"empty list": "[]",
+		"unknown":    "[probability, " + canary + "]",
+		"duplicate":  "[scale, scale]",
+	} {
+		p := write(t, t.TempDir(), "c.yaml", prefix+", kinds: "+kinds+"}}\n")
+		_, err := Load(p)
+		// 要求 exec 自己的说明：kinds 不是已知字段时 Load 同样报错，但不是因为这一项的取值
+		if err == nil || !strings.Contains(err.Error(), "backends.local: exec: kinds") || strings.Contains(err.Error(), canary) {
+			t.Errorf("%s: err = %v", name, err)
+		}
+	}
+	for opt, want := range map[string][]judge.Kind{
+		"":                              {judge.KindProbability, judge.KindScale},
+		", kinds: [probability]":        {judge.KindProbability},
+		", kinds: [scale, probability]": {judge.KindScale, judge.KindProbability},
+	} {
+		c, err := Load(write(t, t.TempDir(), "c.yaml", prefix+opt+"}}\n"))
+		if err != nil {
+			t.Fatalf("%q: %v", opt, err)
+		}
+		b, err := c.NewBackend("local")
+		if err != nil {
+			t.Fatalf("%q: %v", opt, err)
+		}
+		if got := b.Caps().Kinds; !slices.Equal(got, want) {
+			t.Errorf("%q: kinds = %v, want %v", opt, got, want)
+		}
 	}
 }
 

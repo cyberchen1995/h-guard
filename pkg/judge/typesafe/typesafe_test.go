@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -244,8 +245,12 @@ func TestRegistered(t *testing.T) {
 		v.(*typesafe.Options).Model = "jev-2"
 		return nil
 	})
-	if err != nil || b.Name() != "jev" || !b.Caps().Calibrated || !b.Caps().Batch {
-		t.Errorf("factory = %v, %v", b, err)
+	if err != nil || b.Name() != "jev" {
+		t.Fatalf("factory = %v, %v", b, err)
+	}
+	if c := b.Caps(); !c.Calibrated || !c.Batch || c.Mechanism != judge.MechanismNative ||
+		!slices.Equal(c.Kinds, []judge.Kind{judge.KindProbability, judge.KindScale}) {
+		t.Errorf("caps = %+v", c)
 	}
 }
 

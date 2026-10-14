@@ -7,6 +7,7 @@ import (
 	"math"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -21,6 +22,8 @@ var (
 	probQ  = judge.Question{ID: "publish", Kind: judge.KindProbability, Instructions: judge.Instructions{Question: "Would it publish?"}}
 	scaleQ = judge.Question{ID: "blast_radius", Kind: judge.KindScale, Instructions: judge.Instructions{Question: "How much?"},
 		Levels: []string{"a", "b", "c", "d"}}
+	// bothKinds 是两种取答方式都能回答的题型
+	bothKinds = []judge.Kind{judge.KindProbability, judge.KindScale}
 )
 
 // fake 是 OpenAI 兼容服务：记下请求，按请求的 logprobs 字段回答。
@@ -89,7 +92,7 @@ func newBackend(t *testing.T, srv *httptest.Server, o openai.Options) *openai.Ba
 func TestLogprobsAsksOneTokenPerQuestion(t *testing.T) {
 	f := &fake{}
 	b := newBackend(t, f.serve(t), openai.Options{Probability: openai.Logprobs, ReasoningEffort: "none"})
-	if c := b.Caps(); !c.Calibrated || !c.Batch {
+	if c := b.Caps(); !c.Calibrated || !c.Batch || c.Mechanism != judge.MechanismLogprobs || !slices.Equal(c.Kinds, bothKinds) {
 		t.Errorf("caps = %+v", c)
 	}
 	resp, err := b.Ask(context.Background(), map[string]any{"call": map[string]any{"command": "git push"}}, []judge.Question{probQ, scaleQ})
@@ -179,7 +182,7 @@ func TestLogprobsMissingIsAnError(t *testing.T) {
 func TestVerbalizedAsksOnceWithSchema(t *testing.T) {
 	f := &fake{}
 	b := newBackend(t, f.serve(t), openai.Options{APIKeyEnv: "OPENAI_API_KEY"})
-	if c := b.Caps(); c.Calibrated || !c.Batch {
+	if c := b.Caps(); c.Calibrated || !c.Batch || c.Mechanism != judge.MechanismJSONSchema || !slices.Equal(c.Kinds, bothKinds) {
 		t.Errorf("caps = %+v", c)
 	}
 	resp, err := b.Ask(context.Background(), map[string]any{}, []judge.Question{probQ, scaleQ})

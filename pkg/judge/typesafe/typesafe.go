@@ -1,5 +1,6 @@
 // Package typesafe 是 TypeSafe /v1/systemone 判断后端（spec §8.2），后端类型名 typesafe。
-// 导入本包即注册该类型。原生概率，Calibrated=true；一次请求问完全部题目。
+// 导入本包即注册该类型。原生概率（Mechanism native），Calibrated=true；一次请求问完全部题目，
+// 两种题型都能回答。
 //
 // 与 Python 版（typesafe_sdk）的线上格式一致：题型 noul 对应 Probability，score 对应 Scale。
 // 不读 TYPESAFE_BASE_URL：端点只来自配置，同意绑定的主机才不会被环境变量悄悄改掉（spec §8.5）。
@@ -99,7 +100,10 @@ func (b *Backend) Describe() judge.Info {
 
 func (b *Backend) Name() string { return b.name }
 
-func (b *Backend) Caps() judge.BackendCaps { return judge.BackendCaps{Calibrated: true, Batch: true} }
+func (b *Backend) Caps() judge.BackendCaps {
+	return judge.BackendCaps{Calibrated: true, Batch: true, Mechanism: judge.MechanismNative,
+		Kinds: []judge.Kind{judge.KindProbability, judge.KindScale}}
+}
 
 type wireInstructions struct {
 	Question    string `json:"question"`

@@ -8,6 +8,8 @@
 //   - 截止时间到达时，以及程序退出之后，都终止整个进程组（Unix），不遗留子进程；Windows 只终止该进程
 //     （Job Object 在 M3）。判断程序不能把长期运行的服务留在自己的进程组里。
 //   - 非零退出、超时、无法解析、超出上限都是后端出错，不会产生放行。
+//   - 配置项 kinds 声明程序能回答的题型（默认 probability 与 scale）；程序只会收到这些题型的题，
+//     一道都不剩时不启动程序（Caps().Kinds，取答方式 Mechanism program）。
 //
 // 答案保留「没有给出」：{"p": null}、{} 与分布中的任一 null 都不当作 0（spec §8.1）。
 package exec
@@ -22,6 +24,7 @@ import (
 	"os"
 	osexec "os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -53,7 +56,13 @@ type Options struct {
 	Model       string `yaml:"model" json:"model"`
 	Probability string `yaml:"probability" json:"probability"`
 	TimeoutMS   int    `yaml:"timeout_ms" json:"timeout_ms"`
+	// Kinds 是程序能回答的题型，只能取 probability、scale；不写（nil）时两种都能回答。
+	// 空列表与重复都是配置错误。
+	Kinds []judge.Kind `yaml:"kinds" json:"kinds"`
 }
+
+// defaultKinds 是不写 kinds 时程序能回答的题型，也是 kinds 能取的全部值。
+var defaultKinds = []judge.Kind{judge.KindProbability, judge.KindScale}
 
 func init() {
 	if err := judge.RegisterType(Type, func(name string, decode func(v any) error) (judge.Backend, error) {
@@ -71,6 +80,7 @@ func init() {
 type Backend struct {
 	name, command, model, probability string
 	args, env                         []string
+	kinds                             []judge.Kind
 	timeout                           time.Duration
 	dir                               string
 }
@@ -94,6 +104,11 @@ func New(name string, o Options) (*Backend, error) {
 			return nil, errors.New("exec: env lists variable names only")
 		}
 	}
+	kinds, err := parseKinds(o.Kinds)
+	if err != nil {
+		return nil, err
+	}
+	b.kinds = kinds
 	switch {
 	case o.TimeoutMS < 0:
 		return nil, errors.New("exec: timeout_ms must not be negative")
@@ -103,13 +118,34 @@ func New(name string, o Options) (*Backend, error) {
 	return b, nil
 }
 
+// parseKinds 校验配置的题型；说明不回显取值。nil 取默认值，返回的切片不与配置共用底层数组。
+func parseKinds(ks []judge.Kind) ([]judge.Kind, error) {
+	if ks == nil {
+		return slices.Clone(defaultKinds), nil
+	}
+	if len(ks) == 0 {
+		return nil, errors.New("exec: kinds must list at least one question kind")
+	}
+	for i, k := range ks {
+		switch {
+		case !slices.Contains(defaultKinds, k):
+			return nil, errors.New("exec: kinds may only list probability and scale")
+		case slices.Contains(ks[:i], k):
+			return nil, errors.New("exec: kinds lists a question kind more than once")
+		}
+	}
+	return slices.Clone(ks), nil
+}
+
 // SetDir 设置程序的工作目录（入口设为 h-guard 配置目录，spec §8.4）。
 func (b *Backend) SetDir(dir string) { b.dir = dir }
 
 func (b *Backend) Name() string { return b.name }
 
+// Caps 声明的 Kinds 是副本：调用方改动它不影响后端。
 func (b *Backend) Caps() judge.BackendCaps {
-	return judge.BackendCaps{Calibrated: b.probability != "verbalized", Batch: true}
+	return judge.BackendCaps{Calibrated: b.probability != "verbalized", Batch: true, Mechanism: judge.MechanismProgram,
+		Kinds: slices.Clone(b.kinds)}
 }
 
 // Describe 实现 judge.Describer：同意绑定程序的绝对路径与参数（spec §8.5）。
@@ -138,8 +174,16 @@ type response struct {
 	Usage   judge.Usage           `json:"usage"`
 }
 
-// Ask 启动一次程序问完 qs。
+// Ask 启动一次程序问完 qs 中 kinds 内的题；其余题型不发给程序、保持未答（直接调用 Ask 时同样如此，
+// 不只靠 judge.AskAll）。一道都不剩时不启动程序。
 func (b *Backend) Ask(ctx context.Context, state map[string]any, qs []judge.Question) (judge.Response, error) {
+	qs = slices.DeleteFunc(slices.Clone(qs), func(q judge.Question) bool { return !slices.Contains(b.kinds, q.Kind) })
+	if len(qs) == 0 {
+		if err := ctx.Err(); err != nil {
+			return judge.Response{}, &judge.Error{Kind: judge.Timeout, Err: err}
+		}
+		return judge.Response{Answers: map[string]judge.Answer{}}, nil
+	}
 	in, err := json.Marshal(request{Protocol: Protocol, State: state, Questions: qs})
 	if err != nil {
 		return judge.Response{}, &judge.Error{Kind: judge.BadResponse, Err: err}

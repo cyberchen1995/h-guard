@@ -3,7 +3,10 @@
 // 后端只负责「问」：把问题交给模型并取回概率。答案校验、阈值与策略由 h-guard 框架处理（spec §8.1）。
 package judge
 
-import "context"
+import (
+	"context"
+	"slices"
+)
 
 // Kind 是题型。
 type Kind string
@@ -52,11 +55,34 @@ type Response struct {
 	Usage   Usage             `json:"usage"`
 }
 
+// Mechanism 是后端取得答案的方式，只供显示与诊断（status、backend list）。能力校验只看
+// BackendCaps.Kinds，不看 Mechanism。不同方式给出的概率分布不同，阈值要分别校准；
+// 校准指纹以 Info.Probability 区分方式，Mechanism 不进入指纹。
+type Mechanism string
+
+const (
+	MechanismNative     Mechanism = "native"      // 服务端原生给出概率（typesafe）
+	MechanismLogprobs   Mechanism = "logprobs"    // 读模型作答位置候选字符的 logprob
+	MechanismJSONSchema Mechanism = "json_schema" // 结构化输出：OpenAI response_format、Anthropic output_config.format
+	MechanismForcedTool Mechanism = "forced_tool" // 强制模型调用参数为答案的工具
+	MechanismAutoTool   Mechanism = "auto_tool"   // 提供答案工具但不强制调用：模型没有调用即没有答案
+	MechanismProgram    Mechanism = "program"     // 外部程序（exec），取答方式由程序决定
+)
+
 // BackendCaps 声明后端能力。
 type BackendCaps struct {
 	Calibrated bool `json:"calibrated"` // 概率经过校准（如原生概率模型）
 	Batch      bool `json:"batch"`      // 一次请求能回答多道题
+	// Mechanism 是取答方式。内置后端都声明它，judgetest 要求非空。
+	Mechanism Mechanism `json:"mechanism,omitempty"`
+	// Kinds 是能回答的题型。nil 表示全部（兼容没有声明它的后端）；空切片（非 nil）表示一种都不支持。
+	// AskAll 不把不支持的题型发给后端，这些题保持未答，不能产生放行。JSON 不省略空切片：
+	// 省略后解码为 nil，「一种都不支持」就成了「全部支持」。
+	Kinds []Kind `json:"kinds"`
 }
+
+// Supports 报告后端能否回答 k 型的题；Kinds 为 nil 时总为真。
+func (c BackendCaps) Supports(k Kind) bool { return c.Kinds == nil || slices.Contains(c.Kinds, k) }
 
 // Backend 是判断后端。
 type Backend interface {

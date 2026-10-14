@@ -6,8 +6,11 @@
 //     要求接口返回 logprobs，否则按后端出错处理（不会当作放行）。一次 Ask 依次问完全部题目（Batch=true）：
 //     各题的请求共用同一段前缀（system + state），顺序发送才可能命中服务端的前缀缓存；本地服务通常一次只算一个
 //     请求，并发不会更快（Ollama 0.34 MLX 运行器、gemma4 12B 实测：8 题并发约 25 秒，顺序约 14 秒）。
-//     Calibrated=true。
-//   - verbalized（默认）：用 json_schema 结构化输出一次问完，模型直接给出概率。Calibrated=false、Batch=true。
+//     Calibrated=true，Mechanism logprobs。
+//   - verbalized（默认）：用 json_schema 结构化输出一次问完，模型直接给出概率。Calibrated=false、Batch=true，
+//     Mechanism json_schema。
+//
+// 两种方式都能回答两种题型。
 //
 // 端点只来自配置（base_url），不读环境变量：同意绑定的主机不会被悄悄改掉（spec §8.5）。
 package openai
@@ -110,7 +113,12 @@ func New(name string, o Options) (*Backend, error) {
 func (b *Backend) Name() string { return b.name }
 
 func (b *Backend) Caps() judge.BackendCaps {
-	return judge.BackendCaps{Calibrated: b.mode == Logprobs, Batch: true}
+	c := judge.BackendCaps{Calibrated: b.mode == Logprobs, Batch: true, Mechanism: judge.MechanismJSONSchema,
+		Kinds: []judge.Kind{judge.KindProbability, judge.KindScale}}
+	if b.mode == Logprobs {
+		c.Mechanism = judge.MechanismLogprobs
+	}
+	return c
 }
 
 // Describe 实现 judge.Describer。

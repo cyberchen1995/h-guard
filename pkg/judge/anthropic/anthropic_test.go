@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -76,7 +77,8 @@ func newBackend(t *testing.T, srv *httptest.Server) *anthropic.Backend {
 func TestForcedToolUse(t *testing.T) {
 	f := &fake{}
 	b := newBackend(t, f.serve(t))
-	if c := b.Caps(); c.Calibrated || !c.Batch {
+	if c := b.Caps(); c.Calibrated || !c.Batch || c.Mechanism != judge.MechanismForcedTool ||
+		!slices.Equal(c.Kinds, []judge.Kind{judge.KindProbability, judge.KindScale}) {
 		t.Errorf("caps = %+v", c)
 	}
 	resp, err := b.Ask(context.Background(), map[string]any{"call": map[string]any{"command": "git push"}}, []judge.Question{probQ, scaleQ})

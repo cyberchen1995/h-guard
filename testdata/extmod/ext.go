@@ -78,8 +78,13 @@ func (c KeywordCheck) Evaluate(ctx context.Context, ev guard.Event, commit func(
 // ConstBackend 对每道题都回答固定概率。
 type ConstBackend struct{ P float64 }
 
-func (ConstBackend) Name() string            { return "const" }
-func (ConstBackend) Caps() judge.BackendCaps { return judge.BackendCaps{Batch: true} }
+func (ConstBackend) Name() string { return "const" }
+
+// Caps 用自己的取答方式名：内置的 judge.Mechanism 常量都不合适时，第三方后端可以自定。
+// 不声明 Kinds（nil）表示两种题型都能回答。
+func (ConstBackend) Caps() judge.BackendCaps {
+	return judge.BackendCaps{Batch: true, Mechanism: "constant"}
+}
 
 func (b ConstBackend) Ask(ctx context.Context, _ map[string]any, qs []judge.Question) (judge.Response, error) {
 	if err := ctx.Err(); err != nil {

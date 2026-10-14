@@ -1,7 +1,7 @@
 // Package anthropic 是 Anthropic Messages API 的判断后端（spec §8.2），后端类型名 anthropic。导入本包即注册该类型。
 //
 // 用强制 tool use 让模型按 JSON schema 一次答完全部题目，模型直接给出概率（verbalized）：
-// Calibrated=false、Batch=true。端点只来自配置（base_url），同意绑定的主机不会被环境变量改掉（spec §8.5）。
+// Calibrated=false、Batch=true，Mechanism forced_tool，两种题型都能回答。端点只来自配置（base_url），同意绑定的主机不会被环境变量改掉（spec §8.5）。
 package anthropic
 
 import (
@@ -105,7 +105,10 @@ func New(name string, o Options) (*Backend, error) {
 
 func (b *Backend) Name() string { return b.name }
 
-func (b *Backend) Caps() judge.BackendCaps { return judge.BackendCaps{Batch: true} }
+func (b *Backend) Caps() judge.BackendCaps {
+	return judge.BackendCaps{Batch: true, Mechanism: judge.MechanismForcedTool,
+		Kinds: []judge.Kind{judge.KindProbability, judge.KindScale}}
+}
 
 // Describe 实现 judge.Describer。
 func (b *Backend) Describe() judge.Info {
