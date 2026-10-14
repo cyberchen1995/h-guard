@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"maps"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -25,8 +26,8 @@ var (
 		Levels: []string{"a", "b", "c", "d"}}
 )
 
-// fake 是 Messages API：记下请求并作答。默认按请求的取答方式回答：带 output_config 时回一个 text 块
-// （结构化输出），否则回 answer 工具调用。content 非 nil 时原样作为回复内容，stop 是回复的 stop_reason；
+// fake 是 Messages API：记下请求并作答。默认按请求的取答方式回答：带 output_config.format（结构化输出）时回一个
+// text 块，否则回 answer 工具调用。content 非 nil 时原样作为回复内容，stop 是回复的 stop_reason；
 // edit 非 nil 时在发出前改写整个回复（例如去掉 stop_reason）。
 type fake struct {
 	mu       sync.Mutex
@@ -58,8 +59,9 @@ func (f *fake) serve(t *testing.T) *httptest.Server {
 		if input == "" {
 			input = defaultAnswers
 		}
+		oc, _ := req["output_config"].(map[string]any)
+		_, structured := oc["format"] // output_config 也可能只带 effort
 		if content == nil {
-			_, structured := req["output_config"]
 			switch {
 			case noTool:
 				content = []any{map[string]any{"type": "text", "text": "I cannot answer."}}
@@ -71,7 +73,7 @@ func (f *fake) serve(t *testing.T) *httptest.Server {
 		}
 		if stop == "" {
 			stop = "end_turn"
-			if _, structured := req["output_config"]; !structured && !noTool {
+			if !structured && !noTool {
 				stop = "tool_use"
 			}
 		}
@@ -494,5 +496,160 @@ func TestFailureHint(t *testing.T) {
 		if got := b.FailureHint(tc.detail); got != tc.want {
 			t.Errorf("answer %q detail %q: FailureHint = %q, want %q", tc.answer, tc.detail, got, tc.want)
 		}
+	}
+}
+
+// efforts 是 effort 的全部取值。
+var efforts = []string{"low", "medium", "high", "xhigh", "max"}
+
+// newBackendWith 用 o 创建后端（BaseURL 与 key 由本函数设置）。
+func newBackendWith(t *testing.T, srv *httptest.Server, o anthropic.Options) *anthropic.Backend {
+	t.Helper()
+	o.Model, o.BaseURL = "claude-sonnet", srv.URL
+	b, err := anthropic.New("claude", o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.SetGetenv(func(string) string { return "synthetic-key" })
+	return b
+}
+
+// TestEffort：effort 写入 output_config.effort；structured 方式与 format 合在同一个 output_config 里，
+// 其余方式只有 effort；不设置时请求里没有 effort。设置后进入 Describe().Probability（校准指纹），
+// 因为 effort 改变模型的行为（思考的多少）。
+func TestEffort(t *testing.T) {
+	qs := []judge.Question{probQ, scaleQ}
+	schema := normalize(t, prompt.Schema(qs))
+	format := map[string]any{"type": "json_schema", "schema": schema}
+	for _, tc := range []struct {
+		answer, base string // base 是不设置 effort 时的 Probability
+	}{
+		{"", "verbalized"},
+		{anthropic.AnswerTool, "verbalized"},
+		{anthropic.AnswerStructured, "verbalized-structured"},
+		{anthropic.AnswerAutoTool, "verbalized-auto-tool"},
+	} {
+		for _, effort := range append([]string{""}, efforts...) {
+			t.Run(tc.answer+"/effort="+effort, func(t *testing.T) {
+				f := &fake{}
+				b := newBackendWith(t, f.serve(t), anthropic.Options{Answer: tc.answer, Effort: effort})
+				wantProb := tc.base
+				if effort != "" {
+					wantProb += "-effort-" + effort
+				}
+				if got := b.Describe().Probability; got != wantProb {
+					t.Errorf("Describe().Probability = %q, want %q", got, wantProb)
+				}
+				resp, err := b.Ask(context.Background(), map[string]any{}, qs)
+				if err != nil || len(resp.Answers) != 2 {
+					t.Fatalf("answers %+v err %v", resp.Answers, err)
+				}
+				r := f.requests[0]
+				var want any // 期望的 output_config；nil 表示请求里没有
+				switch {
+				case tc.answer == anthropic.AnswerStructured && effort == "":
+					want = map[string]any{"format": format}
+				case tc.answer == anthropic.AnswerStructured:
+					want = map[string]any{"format": format, "effort": effort}
+				case effort != "":
+					want = map[string]any{"effort": effort}
+				}
+				if got, ok := r["output_config"]; (want == nil) == ok || (ok && !reflect.DeepEqual(got, want)) {
+					t.Errorf("output_config = %v (present %v), want %v", got, ok, want)
+				}
+				// effort 不影响取答方式的其余部分
+				_, hasTools := r["tools"]
+				if wantTools := tc.answer != anthropic.AnswerStructured; hasTools != wantTools {
+					t.Errorf("tools present = %v, want %v", hasTools, wantTools)
+				}
+				if _, ok := r["effort"]; ok {
+					t.Errorf("effort belongs inside output_config, not at the top level: %v", r)
+				}
+			})
+		}
+	}
+}
+
+// TestUnknownEffortIsAConfigError：effort 只能是 low、medium、high、xhigh、max；错误说明不回显取值。
+func TestUnknownEffortIsAConfigError(t *testing.T) {
+	const canary = "HGCanaryEffort86420"
+	for _, v := range []string{canary, "Low", "LOW", " low", "low ", "none", "minimal", "ultra", "0", "disabled"} {
+		_, err := anthropic.New("claude", anthropic.Options{Model: "m", Effort: v})
+		// 固定文本，所以不会含有配置的取值
+		if err == nil || err.Error() != "anthropic: effort must be low, medium, high, xhigh or max" {
+			t.Errorf("effort %q: err = %v", v, err)
+		}
+	}
+	for _, v := range efforts {
+		if _, err := anthropic.New("claude", anthropic.Options{Model: "m", Effort: v}); err != nil {
+			t.Errorf("effort %q: %v", v, err)
+		}
+	}
+}
+
+// TestEffortRequestWithoutItIsUnchanged：不设置 effort 时请求与 Task 3 的相同——structured 的 output_config
+// 只有 format，其余两种方式没有 output_config（逐字节的核对见任务报告）。
+func TestEffortRequestWithoutItIsUnchanged(t *testing.T) {
+	for _, mode := range modes {
+		f := &fake{}
+		b := newBackendWith(t, f.serve(t), anthropic.Options{Answer: mode})
+		if _, err := b.Ask(context.Background(), map[string]any{}, []judge.Question{probQ}); err != nil {
+			t.Fatal(err)
+		}
+		oc, has := f.requests[0]["output_config"].(map[string]any)
+		if wantHas := mode == anthropic.AnswerStructured; has != wantHas || (has && !reflect.DeepEqual(slices.Sorted(maps.Keys(oc)), []string{"format"})) {
+			t.Errorf("%s: output_config = %v", mode, f.requests[0]["output_config"])
+		}
+	}
+}
+
+// TestTemperatureAndEffortArePartOfTheFingerprint：temperature 的默认是不发送，所以配置了就进入 Info.Probability
+// （包括 0），后缀 -temperature-<值>；同时设置 effort 时 effort 在前。两者都不设置时 Probability 不变，现有档案仍然有效。
+func TestTemperatureAndEffortArePartOfTheFingerprint(t *testing.T) {
+	negZero := math.Copysign(0, -1)
+	for _, tc := range []struct {
+		answer, effort string
+		temp           *float64
+		want           string
+	}{
+		{"", "", nil, "verbalized"},
+		{anthropic.AnswerStructured, "", nil, "verbalized-structured"},
+		{anthropic.AnswerAutoTool, "", nil, "verbalized-auto-tool"},
+		{"", "", ptr(0), "verbalized-temperature-0"},
+		{"", "", ptr(negZero), "verbalized-temperature-0"},
+		{"", "", ptr(0.5), "verbalized-temperature-0.5"},
+		{anthropic.AnswerTool, "", ptr(1), "verbalized-temperature-1"},
+		{anthropic.AnswerStructured, "", ptr(0), "verbalized-structured-temperature-0"},
+		{anthropic.AnswerAutoTool, "", ptr(0.25), "verbalized-auto-tool-temperature-0.25"},
+		{"", "low", ptr(0), "verbalized-effort-low-temperature-0"},
+		{anthropic.AnswerStructured, "low", ptr(0), "verbalized-structured-effort-low-temperature-0"},
+		{anthropic.AnswerStructured, "max", ptr(0.75), "verbalized-structured-effort-max-temperature-0.75"},
+		{anthropic.AnswerAutoTool, "xhigh", ptr(1), "verbalized-auto-tool-effort-xhigh-temperature-1"},
+		{anthropic.AnswerStructured, "low", nil, "verbalized-structured-effort-low"},
+	} {
+		b, err := anthropic.New("claude", anthropic.Options{Model: "m", Answer: tc.answer, Effort: tc.effort, Temperature: tc.temp})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := b.Describe().Probability; got != tc.want {
+			t.Errorf("answer %q effort %q temperature %v: Describe().Probability = %q, want %q", tc.answer, tc.effort, tc.temp != nil, got, tc.want)
+		}
+	}
+}
+
+// TestTemperatureNegativeZeroIsSentAsZero：-0 与 0 是同一个值——请求里发送的是 0，不是 -0。
+func TestTemperatureNegativeZeroIsSentAsZero(t *testing.T) {
+	var body string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		data, _ := io.ReadAll(r.Body)
+		body = string(data)
+		io.WriteString(w, `{}`)
+	}))
+	defer srv.Close()
+	b, _ := anthropic.New("claude", anthropic.Options{Model: "m", BaseURL: srv.URL, Temperature: ptr(math.Copysign(0, -1))})
+	b.SetGetenv(func(string) string { return "synthetic-key" })
+	b.Ask(context.Background(), map[string]any{}, []judge.Question{probQ})
+	if !strings.Contains(body, `"temperature":0,`) || strings.Contains(body, `"temperature":-0`) {
+		t.Errorf("body = %.200s", body)
 	}
 }

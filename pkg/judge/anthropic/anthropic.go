@@ -13,6 +13,13 @@
 // 不探测模型支持哪种方式，也不在 HTTP 400 后自动换一种：换了方式，概率分布随之改变，按原方式校准的阈值不再适用，
 // 同一份配置也会在不同时刻用不同的方式作答。方式只来自配置；tool 方式收到 HTTP 400 时，FailureHint 提示改用 structured。
 //
+// 可选参数 effort（low、medium、high、xhigh、max；默认不发送，非法值是配置错误）写入请求的 output_config.effort；
+// structured 方式与 format 合在同一个 output_config 里。Sonnet 5.5、Opus 5.5 的思考关不掉，思考既占 max_tokens 又拉长
+// 延迟，判断这类分类任务用 low 足够。effort 改变模型的行为，所以设置后 Info.Probability 末尾加 -effort-<值>
+// （如 verbalized-structured-effort-low），要分别校准；不设置时与之前相同。temperature 默认不发送（较新的模型拒绝它），
+// 配置了（包括 0）同样进入 Info.Probability，后缀 -temperature-<值>，排在 effort 之后
+// （如 verbalized-structured-effort-low-temperature-0）。
+//
 // 读答案前先看 stop_reason，只接受正常结束的 end_turn、tool_use、stop_sequence。refusal（安全分类器拒答，内容可能
 // 不符合 schema）、max_tokens（被截断）、其余取值（如被上下文窗口截断、暂停、以后新增的取值）与缺失都按 BadResponse
 // 报告，即使内容里有看似完整的答案：被截断的答案仍可能是合法的 JSON，数字截短后就成了有把握的否决。
@@ -29,6 +36,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/cyberchen1995/h-guard/pkg/judge"
@@ -61,6 +69,15 @@ const (
 	AnswerAutoTool   = "auto_tool"  // strict 工具 + tool_choice auto
 )
 
+// 思考力度（配置项 effort）。
+const (
+	EffortLow    = "low"
+	EffortMedium = "medium"
+	EffortHigh   = "high"
+	EffortXHigh  = "xhigh"
+	EffortMax    = "max"
+)
+
 // Options 是 anthropic 后端的配置项。
 type Options struct {
 	Model     string `yaml:"model" json:"model"`
@@ -70,10 +87,14 @@ type Options struct {
 	TimeoutMS int    `yaml:"timeout_ms" json:"timeout_ms"`
 	Retries   *int   `yaml:"retries" json:"retries"`
 	// Temperature 默认不发送：较新的模型拒绝它（HTTP 400，"temperature is deprecated for this model"）。
-	// 仍接受它的模型可以设为 0，使答案更稳定。
+	// 仍接受它的模型可以设为 0，使答案更稳定。配置了（包括 0）就进入 Info.Probability（校准指纹）。
 	Temperature *float64 `yaml:"temperature" json:"temperature"`
 	// Answer 是取答方式：tool（默认）、structured 或 auto_tool，见包注释。
 	Answer string `yaml:"answer" json:"answer"`
+	// Effort 是 output_config.effort：low、medium、high、xhigh 或 max，默认不发送。Sonnet 5.5、Opus 5.5 的
+	// 思考关不掉，思考既占 max_tokens 又拉长延迟；判断这类分类任务用 low 足够。它改变模型的行为，
+	// 所以进入 Info.Probability（校准指纹）。
+	Effort string `yaml:"effort" json:"effort"`
 }
 
 func init() {
@@ -91,7 +112,7 @@ func init() {
 // Backend 是 anthropic 后端。创建时不做任何网络操作。
 type Backend struct {
 	name, model, keyEnv string
-	answer              string
+	answer, effort      string
 	maxTokens           int
 	temperature         *float64
 	base                *url.URL
@@ -105,14 +126,23 @@ func New(name string, o Options) (*Backend, error) {
 	if o.Model == "" {
 		return nil, errors.New("anthropic: model is required")
 	}
-	b := &Backend{name: name, model: o.Model, keyEnv: o.APIKeyEnv, answer: o.Answer, maxTokens: o.MaxTokens,
-		temperature: o.Temperature, getenv: os.Getenv}
+	b := &Backend{name: name, model: o.Model, keyEnv: o.APIKeyEnv, answer: o.Answer, effort: o.Effort, maxTokens: o.MaxTokens,
+		getenv: os.Getenv}
+	if t := o.Temperature; t != nil {
+		v := *t + 0 // 复制一份，不与调用方共享；加 0 把 -0 变成 0，请求里与指纹里都是 0
+		b.temperature = &v
+	}
 	switch b.answer {
 	case "":
 		b.answer = AnswerTool
 	case AnswerTool, AnswerStructured, AnswerAutoTool:
 	default: // 不回显取值
 		return nil, errors.New("anthropic: answer must be tool, structured or auto_tool")
+	}
+	switch b.effort {
+	case "", EffortLow, EffortMedium, EffortHigh, EffortXHigh, EffortMax:
+	default: // 不回显取值
+		return nil, errors.New("anthropic: effort must be low, medium, high, xhigh or max")
 	}
 	if b.keyEnv == "" {
 		b.keyEnv = DefaultAPIKeyEnv
@@ -169,6 +199,12 @@ func (b *Backend) Describe() judge.Info {
 	case AnswerAutoTool:
 		p = "verbalized-auto-tool"
 	}
+	if b.effort != "" { // effort 改变模型的行为（思考的多少），所以进入校准指纹；不设置时与之前相同
+		p += "-effort-" + b.effort
+	}
+	if b.temperature != nil { // temperature 默认不发送，配置了（包括 0）就与默认不同；在 effort 之后
+		p += "-temperature-" + strconv.FormatFloat(*b.temperature, 'g', -1, 64)
+	}
 	return judge.Info{Target: httpx.Target(b.base), Model: b.model, Probability: p}
 }
 
@@ -221,6 +257,12 @@ func (b *Backend) build(prefix string, qs []judge.Question) request {
 		user += "\n" + autoToolInstruction
 	default:
 		req.Tools, req.ToolChoice = []map[string]any{tool}, map[string]any{"type": "tool", "name": toolName}
+	}
+	if b.effort != "" { // structured 方式与 format 合在同一个 output_config 里
+		if req.OutputConfig == nil {
+			req.OutputConfig = map[string]any{}
+		}
+		req.OutputConfig["effort"] = b.effort
 	}
 	req.Messages = []map[string]any{{"role": "user", "content": user}}
 	return req

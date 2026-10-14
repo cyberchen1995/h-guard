@@ -12,6 +12,7 @@ import (
 	"github.com/cyberchen1995/h-guard/pkg/judge"
 	_ "github.com/cyberchen1995/h-guard/pkg/judge/anthropic"
 	_ "github.com/cyberchen1995/h-guard/pkg/judge/exec"
+	_ "github.com/cyberchen1995/h-guard/pkg/judge/openai"
 	_ "github.com/cyberchen1995/h-guard/pkg/judge/typesafe"
 )
 
@@ -139,6 +140,8 @@ func TestErrorsDoNotEchoValues(t *testing.T) {
 		"version: 1\nbackends: {jev: {type: " + canary + "}}\n",
 		"version: 1\njudge: {backend: " + canary + "}\n",
 		"version: 1\nbackends: {claude: {type: anthropic, model: m, answer: " + canary + "}}\n",
+		"version: 1\nbackends: {claude: {type: anthropic, model: m, effort: " + canary + "}}\n",
+		"version: 1\nbackends: {local: {type: openai, model: m, temperature: " + canary + "}}\n",
 	} {
 		p := write(t, t.TempDir(), "config.yaml", body)
 		_, err := Load(p)
@@ -374,5 +377,53 @@ func TestAnthropicAnswerFromYAML(t *testing.T) {
 	_, err := Load(write(t, t.TempDir(), "c.yaml", prefix+", answer: "+canary+"}}\n"))
 	if err == nil || !strings.Contains(err.Error(), "backends.claude: anthropic: answer") || strings.Contains(err.Error(), canary) {
 		t.Errorf("err = %v", err)
+	}
+}
+
+// TestOptionalParametersFromYAML：anthropic 的 effort 与 openai 的 temperature 从配置读入；
+// 取值非法是配置错误，说明带后端名，不回显取值。
+func TestOptionalParametersFromYAML(t *testing.T) {
+	load := func(t *testing.T, backend string) (judge.Backend, error) {
+		t.Helper()
+		c, err := Load(write(t, t.TempDir(), "c.yaml", "version: 1\nbackends: {b: "+backend+"}\n"))
+		if err != nil {
+			return nil, err
+		}
+		return c.NewBackend("b")
+	}
+	probability := func(b judge.Backend) string { return b.(judge.Describer).Describe().Probability }
+
+	for backend, want := range map[string]string{
+		"{type: anthropic, model: m}":                                  "verbalized",
+		"{type: anthropic, model: m, effort: low}":                     "verbalized-effort-low",
+		"{type: anthropic, model: m, answer: structured, effort: max}": "verbalized-structured-effort-max",
+	} {
+		b, err := load(t, backend)
+		if err != nil {
+			t.Fatalf("%s: %v", backend, err)
+		}
+		if got := probability(b); got != want {
+			t.Errorf("%s: Probability = %q, want %q", backend, got, want)
+		}
+	}
+	for _, backend := range []string{
+		"{type: openai, model: m, temperature: 0}",
+		"{type: openai, model: m, temperature: 0.5, probability: logprobs}",
+		"{type: openai, model: m, temperature: 1}",
+	} {
+		if _, err := load(t, backend); err != nil {
+			t.Errorf("%s: %v", backend, err)
+		}
+	}
+	for backend, want := range map[string]string{
+		"{type: anthropic, model: m, effort: Low}":    "backends.b: anthropic: effort",
+		"{type: openai, model: m, temperature: -1}":   "backends.b: openai: temperature",
+		"{type: openai, model: m, temperature: 2}":    "backends.b: openai: temperature",
+		"{type: openai, model: m, temperature: .nan}": "backends.b: openai: temperature",
+	} {
+		_, err := load(t, backend)
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%s: err = %v, want it to mention %q", backend, err, want)
+		}
 	}
 }
