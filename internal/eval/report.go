@@ -71,15 +71,27 @@ func Report(w io.Writer, outs []Outcome, ruleIDs []string, margins []Margin) {
 		fmt.Fprintf(w, "%-18s%11s%9s%5d%5d%5d\n", Mask(id), ratio(tp, tp+fp), ratio(tp, tp+fn), tp, fp, fn)
 	}
 
-	var wrong []Outcome
-	for _, o := range outs {
+	if margins != nil {
+		rows, noFlip, unknown := SummarizeMargins(margins)
+		fmt.Fprintln(w, "\n=== Margins (recorded answers; distance to the nearest decision flip within legal thresholds) ===")
+		fmt.Fprintf(w, "%-14s%10s%10s\n", "threshold", "<=0.05", "<=0.10")
+		for _, r := range rows {
+			fmt.Fprintf(w, "%-14s%10d%10d\n", r.Param, r.Within5, r.Within10)
+		}
+		fmt.Fprintf(w, "no flip within %.2f: %d    not calibratable: %d\n", marginReach, noFlip, unknown)
+		fmt.Fprintln(w, "(small margins on wrong decisions are calibration problems; large ones point at the label or the question)")
+	}
+
+	var wrong []int
+	for i, o := range outs {
 		if !o.OK() {
-			wrong = append(wrong, o)
+			wrong = append(wrong, i)
 		}
 	}
 	if len(wrong) > 0 {
 		fmt.Fprintf(w, "\n=== Wrong decisions (%d) ===\n", len(wrong))
-		for _, o := range wrong {
+		for _, i := range wrong {
+			o := outs[i]
 			kind := "missed"
 			if o.Case.Expect == guard.DecisionPass {
 				kind = "needless ask"
@@ -87,14 +99,17 @@ func Report(w io.Writer, outs []Outcome, ruleIDs []string, margins []Margin) {
 			fmt.Fprintf(w, "[%s] %s\n    expected %s, got %s; %s\n", kind, Mask(o.Case.Command), o.Case.Expect, o.Decision, Mask(o.Case.Note))
 			if len(o.Case.UserRequests) > 0 {
 				masked := make([]string, len(o.Case.UserRequests))
-				for i, r := range o.Case.UserRequests {
-					masked[i] = Mask(r)
+				for j, r := range o.Case.UserRequests {
+					masked[j] = Mask(r)
 				}
 				b, _ := json.Marshal(masked)
 				fmt.Fprintf(w, "    user requests (oldest first): %s\n", b)
 			}
 			b, _ := json.Marshal(o.Signals)
 			fmt.Fprintf(w, "    signals: %s\n", b)
+			if margins != nil {
+				fmt.Fprintf(w, "    margin: %s\n", margins[i])
+			}
 			if o.Err != "" {
 				if d := secrets.MaskForLog(o.ErrDetail); d != "" {
 					fmt.Fprintf(w, "    error: %s (%s)\n", o.Err, d)
