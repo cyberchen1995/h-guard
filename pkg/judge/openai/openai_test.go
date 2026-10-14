@@ -229,17 +229,39 @@ func TestConformance(t *testing.T) {
 	}
 }
 
+// TestHTTPSecurity：HTTP 后端共用的安全测试，两种取答方式各跑一遍（logprobs 逐题请求，出错即停）。
+func TestHTTPSecurity(t *testing.T) {
+	for _, mode := range []string{openai.Logprobs, openai.Verbalized} {
+		t.Run(mode, func(t *testing.T) {
+			judgetest.RunHTTP(t, func(t *testing.T, baseURL, keyEnv string) judge.Backend {
+				b, err := openai.New("local", openai.Options{Model: "m", BaseURL: baseURL + "/v1", Probability: mode, APIKeyEnv: keyEnv})
+				if err != nil {
+					t.Fatal(err)
+				}
+				return b
+			}, []judge.Question{probQ, scaleQ})
+		})
+	}
+}
+
 func TestNewRejectsBadOptions(t *testing.T) {
 	for name, o := range map[string]openai.Options{
 		"no model":         {},
 		"bad probability":  {Model: "m", Probability: "native"},
 		"bad base_url":     {Model: "m", BaseURL: "https://user:syntheticPassword123@h/v1"},
+		"base_url query":   {Model: "m", BaseURL: "https://h/v1?api-key=syntheticPassword123"},
 		"negative timeout": {Model: "m", TimeoutMS: -1},
+		"key as key env":   {Model: "m", APIKeyEnv: "sk-proj-syntheticPassword123"},
+		"bad key env":      {Model: "m", APIKeyEnv: "1KEY"},
 	} {
 		_, err := openai.New("b", o)
-		if err == nil || strings.Contains(err.Error(), "syntheticPassword123") {
+		if err == nil || strings.Contains(err.Error(), "syntheticPassword123") || (o.APIKeyEnv != "" && strings.Contains(err.Error(), o.APIKeyEnv)) {
 			t.Errorf("%s: err = %v", name, err)
 		}
+	}
+	// api_key_env 可以不写：本地服务不需要认证头
+	if _, err := openai.New("b", openai.Options{Model: "m"}); err != nil {
+		t.Errorf("empty api_key_env: %v", err)
 	}
 }
 

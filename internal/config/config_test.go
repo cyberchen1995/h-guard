@@ -131,6 +131,8 @@ func TestErrorsDoNotEchoValues(t *testing.T) {
 	const canary = "HGCanaryValue987654"
 	for _, body := range []string{
 		"version: 1\nbackends: {jev: {type: typesafe, profile: jev, base_url: 'https://user:" + canary + "@example.invalid'}}\n",
+		"version: 1\nbackends: {jev: {type: typesafe, profile: jev, base_url: 'https://example.invalid/v1?key=" + canary + "'}}\n",
+		"version: 1\nbackends: {jev: {type: typesafe, profile: jev, api_key_env: 'sk-" + canary + "'}}\n",
 		"version: 1\npolicy: {on_unavailable: " + canary + "}\n",
 		"version: 1\naction: {tier: " + canary + "}\n",
 		"version: 1\nbackends: {jev: {type: " + canary + "}}\n",

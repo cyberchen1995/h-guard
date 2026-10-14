@@ -77,6 +77,9 @@ func New(name string, o Options) (*Backend, error) {
 	if b.keyEnv == "" {
 		b.keyEnv = DefaultAPIKeyEnv
 	}
+	if err := httpx.ValidKeyEnv(Type, b.keyEnv); err != nil { // 不回显：误填进来的可能正是 key
+		return nil, err
+	}
 	switch {
 	case b.maxTokens < 0:
 		return nil, errors.New("anthropic: max_tokens must not be negative")

@@ -2,6 +2,7 @@ package httpx
 
 import (
 	"context"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -14,18 +15,136 @@ import (
 )
 
 func TestParseBaseDoesNotEchoTheValue(t *testing.T) {
-	for _, raw := range []string{"ftp://h", "https://user:syntheticPassword123@h", "not a url", "https://"} {
+	for _, raw := range []string{
+		"ftp://h", "https://user:syntheticPassword123@h", "not a url", "https://",
+		// query 与 fragment：拼端点时会被带走或丢掉，写在这里的多半是误填的 key
+		"https://h/v1?key=syntheticPassword123", "https://h/v1?", "https://h/v1#syntheticPassword123", "https://h/v1#",
+		// 空主机名
+		"https://:443", "https://:443/v1",
+	} {
 		_, err := ParseBase("openai", raw)
 		if err == nil {
 			t.Errorf("%q accepted", raw)
 			continue
 		}
-		if strings.Contains(err.Error(), "syntheticPassword123") || strings.Contains(err.Error(), "ftp") {
+		if strings.Contains(err.Error(), "syntheticPassword123") || strings.Contains(err.Error(), "ftp") ||
+			strings.Contains(err.Error(), "://") {
 			t.Errorf("error echoes the value: %v", err)
 		}
 	}
-	if _, err := ParseBase("openai", "http://localhost:11434/v1"); err != nil {
-		t.Error(err)
+	for _, raw := range []string{"http://localhost:11434/v1", "https://api.openai.com/v1", "https://[::1]:8443", "http://127.0.0.1:8080/"} {
+		if _, err := ParseBase("openai", raw); err != nil {
+			t.Errorf("%s: %v", raw, err)
+		}
+	}
+}
+
+func TestValidKeyEnv(t *testing.T) {
+	for _, name := range []string{"OPENAI_API_KEY", "_X", "a1", "HG_TEST_KEY", strings.Repeat("K", 128)} {
+		if err := ValidKeyEnv("openai", name); err != nil {
+			t.Errorf("%q: %v", name, err)
+		}
+	}
+	const canary = "syntheticKey123"
+	for _, name := range []string{
+		"", "1KEY", "MY KEY", "KEY=VALUE", "$KEY", "ÄKEY", "KEY\n", strings.Repeat("K", 129),
+		"sk-ant-api03-" + canary, // 误把 key 本身填进了 api_key_env
+		"sk_" + canary + "-x",
+	} {
+		err := ValidKeyEnv("anthropic", name)
+		if err == nil {
+			t.Errorf("%q accepted", name)
+			continue
+		}
+		if strings.Contains(err.Error(), canary) || (name != "" && strings.Contains(err.Error(), name)) {
+			t.Errorf("error echoes the value: %v", err)
+		}
+		if !strings.HasPrefix(err.Error(), "anthropic: api_key_env") {
+			t.Errorf("error does not name the backend and field: %v", err)
+		}
+	}
+}
+
+func TestParseRetryAfter(t *testing.T) {
+	for v, want := range map[string]time.Duration{
+		"30":                            30 * time.Second,
+		"0":                             0,
+		" 2 ":                           2 * time.Second,
+		"":                              noRetryAfter,
+		"-1":                            noRetryAfter,
+		"+5":                            noRetryAfter,
+		"1.5":                           noRetryAfter,
+		"Fri, 31 Dec 1999 23:59:59 GMT": noRetryAfter,  // HTTP 日期按无法解析处理
+		"99999999999999999999":          math.MaxInt64, // 溢出：按「很久」处理，一定超过剩余时间
+		"9223372036854775807":           math.MaxInt64,
+	} {
+		if got := parseRetryAfter(v); got != want {
+			t.Errorf("parseRetryAfter(%q) = %v, want %v", v, got, want)
+		}
+	}
+}
+
+// TestRetryRespectsTheDeadline：重试只在剩余时间足够完成一次请求时进行。429/503 的 Retry-After（秒）超过
+// 剩余时间时立即返回该错误；剩余时间不够「等待 + minAttempt」时不再重试；没有截止时间的 ctx 照旧。
+func TestRetryRespectsTheDeadline(t *testing.T) {
+	const s = time.Second
+	tests := []struct {
+		name       string
+		status     int    // 第一次的状态码
+		then       int    // 之后的状态码；0 表示同 status
+		retryAfter string // 每个响应都带的 Retry-After；空表示不带
+		deadline   time.Duration
+		retries    int
+		calls      int32
+		kind       judge.ErrorKind // 空表示成功
+		min, max   time.Duration   // 耗时范围
+	}{
+		{"429 Retry-After beyond the deadline", 429, 0, "30", 2 * s, 3, 1, judge.RateLimit, 0, s},
+		{"503 Retry-After beyond the deadline", 503, 0, "30", 2 * s, 3, 1, judge.Unavailable, 0, s},
+		{"huge Retry-After", 429, 0, "99999999999999999999", 2 * s, 3, 1, judge.RateLimit, 0, s},
+		{"Retry-After leaves no time for the next request", 429, 0, "2", 2200 * time.Millisecond, 3, 1, judge.RateLimit, 0, s},
+		{"Retry-After within the deadline is honoured", 429, 200, "1", 2 * s, 1, 2, "", s, 1800 * time.Millisecond},
+		{"Retry-After shorter than the backoff", 503, 200, "0", 2 * s, 1, 2, "", retryBackoff, s},
+		{"Retry-After on other statuses is ignored", 500, 200, "30", 2 * s, 1, 2, "", retryBackoff, s},
+		{"HTTP-date Retry-After is ignored", 429, 200, "Fri, 31 Dec 1999 23:59:59 GMT", 2 * s, 1, 2, "", retryBackoff, s},
+		// 截止时间只比 retryBackoff+minAttempt 少一点：不重试、立即返回。上限 500ms 给 -race 全量测试留出余量，
+		// 同时远低于截止时间，等到截止时间才返回的实现仍会被判失败。
+		{"no time left for backoff and a request", 503, 0, "", 790 * time.Millisecond, 3, 1, judge.Unavailable, 0, 500 * time.Millisecond},
+		{"enough time for every retry", 503, 0, "", 2 * s, 2, 3, judge.Unavailable, 2 * retryBackoff, 1500 * time.Millisecond},
+		{"no deadline keeps the plain backoff", 429, 200, "30", 0, 1, 2, "", retryBackoff, s},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			var calls atomic.Int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				code := tt.status
+				if calls.Add(1) > 1 && tt.then != 0 {
+					code = tt.then
+				}
+				if tt.retryAfter != "" {
+					w.Header().Set("Retry-After", tt.retryAfter)
+				}
+				w.WriteHeader(code)
+				w.Write([]byte(`{}`))
+			}))
+			defer srv.Close()
+			ctx := context.Background()
+			if tt.deadline > 0 {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, tt.deadline)
+				defer cancel()
+			}
+			start := time.Now()
+			_, err := New(5*time.Second, tt.retries).PostJSON(ctx, srv.URL, nil, []byte(`{}`))
+			elapsed := time.Since(start)
+			if judge.KindOf(err) != tt.kind || calls.Load() != tt.calls {
+				t.Errorf("err = %v (kind %q), calls = %d; want kind %q, calls %d", err, judge.KindOf(err), calls.Load(), tt.kind, tt.calls)
+			}
+			if elapsed < tt.min || elapsed > tt.max {
+				t.Errorf("took %v, want %v..%v", elapsed, tt.min, tt.max)
+			}
+		})
 	}
 }
 

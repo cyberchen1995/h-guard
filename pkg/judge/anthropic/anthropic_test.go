@@ -135,13 +135,26 @@ func TestConformance(t *testing.T) {
 	judgetest.Run(t, func(t *testing.T) judge.Backend { return newBackend(t, (&fake{}).serve(t)) }, []judge.Question{probQ, scaleQ})
 }
 
+// TestHTTPSecurity：HTTP 后端共用的安全测试（重定向、错误响应、响应上限、Retry-After 与截止时间）。
+func TestHTTPSecurity(t *testing.T) {
+	judgetest.RunHTTP(t, func(t *testing.T, baseURL, keyEnv string) judge.Backend {
+		b, err := anthropic.New("claude", anthropic.Options{Model: "claude-haiku", BaseURL: baseURL, APIKeyEnv: keyEnv})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return b
+	}, []judge.Question{probQ, scaleQ})
+}
+
 func TestNewAndDescribe(t *testing.T) {
 	for name, o := range map[string]anthropic.Options{
 		"no model":        {},
 		"bad base_url":    {Model: "m", BaseURL: "https://user:syntheticPassword123@h"},
+		"base_url anchor": {Model: "m", BaseURL: "https://h#syntheticPassword123"},
 		"bad max_tokens":  {Model: "m", MaxTokens: -1},
 		"temperature < 0": {Model: "m", Temperature: ptr(-0.1)},
 		"temperature > 1": {Model: "m", Temperature: ptr(1.5)},
+		"key as key env":  {Model: "m", APIKeyEnv: "sk-ant-api03-syntheticPassword123"},
 	} {
 		if _, err := anthropic.New("b", o); err == nil || strings.Contains(err.Error(), "syntheticPassword123") {
 			t.Errorf("%s: err = %v", name, err)

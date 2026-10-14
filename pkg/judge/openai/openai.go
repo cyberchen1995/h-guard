@@ -93,6 +93,11 @@ func New(name string, o Options) (*Backend, error) {
 	default:
 		return nil, errors.New("openai: probability must be logprobs or verbalized")
 	}
+	if b.keyEnv != "" { // 可以不写：不发认证头（本地服务）
+		if err := httpx.ValidKeyEnv(Type, b.keyEnv); err != nil { // 不回显：误填进来的可能正是 key
+			return nil, err
+		}
+	}
 	base := o.BaseURL
 	if base == "" {
 		base = DefaultBaseURL

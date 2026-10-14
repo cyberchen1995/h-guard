@@ -1,4 +1,5 @@
-// Package judgetest 提供 judge.Backend 实现的一致性测试，第三方后端应在自己的测试中调用 Run。
+// Package judgetest 提供 judge.Backend 实现的一致性测试，第三方后端应在自己的测试中调用 Run；
+// 走 HTTP 的后端另外调用 RunHTTP（重定向、错误响应、响应上限、Retry-After 与截止时间等安全检查）。
 package judgetest
 
 import (
