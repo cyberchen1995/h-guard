@@ -91,7 +91,7 @@ func runEval(args []string, o Options) int {
 	for _, r := range s.rules.All() {
 		ids = append(ids, r.ID)
 	}
-	eval.Report(o.Stdout, outs, ids)
+	eval.Report(o.Stdout, outs, ids, nil)
 	// 调用失败时结论来自保守处理，不扫描、不建议；退出码为 1，并在 stderr 写明——stdout 常被重定向到文件，
 	// 否则用户只看到退出码 0（如 API key 没传进来，全部调用都以 auth 失败）
 	if failed := eval.Failed(outs); failed > 0 {

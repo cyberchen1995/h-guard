@@ -354,7 +354,7 @@ func TestIncompleteAnswersAreNotEvidence(t *testing.T) {
 		t.Errorf("incomplete %d, failed %d, called %d", eval.Incomplete(outs), eval.Failed(outs), called)
 	}
 	var buf bytes.Buffer
-	eval.Report(&buf, outs, []string{"publish"})
+	eval.Report(&buf, outs, []string{"publish"}, nil)
 	if !strings.Contains(buf.String(), "=== Incomplete answers") {
 		t.Errorf("report:\n%s", buf.String())
 	}
@@ -366,7 +366,7 @@ func TestReportMasksCredentials(t *testing.T) {
 	o := eval.Outcome{Case: eval.Case{Command: "OPENAI_API_KEY=" + secret + " git push", UserRequests: []string{"key " + secret},
 		Expect: guard.DecisionAsk, Note: "note " + secret}, Decision: guard.DecisionPass}
 	var buf bytes.Buffer
-	eval.Report(&buf, []eval.Outcome{o}, nil)
+	eval.Report(&buf, []eval.Outcome{o}, nil, nil)
 	if strings.Contains(buf.String(), secret) || !strings.Contains(buf.String(), "[missed] OPENAI_API_KEY=[secret:") {
 		t.Errorf("report:\n%s", buf.String())
 	}
@@ -392,7 +392,7 @@ func TestFailedCallsAreCountedAndReported(t *testing.T) {
 	for _, r := range set.All() {
 		ids = append(ids, r.ID)
 	}
-	eval.Report(&buf, outs, ids)
+	eval.Report(&buf, outs, ids, nil)
 	for _, want := range []string{"=== Decisions", "overall", "=== Categories", "recursive_delete", "=== Latency", "failed calls: unavailable"} {
 		if !strings.Contains(buf.String(), want) {
 			t.Errorf("report lacks %q:\n%s", want, buf.String())
@@ -416,7 +416,7 @@ func TestFailureDetailsAreReported(t *testing.T) {
 		t.Errorf("summary = %q, want %q", eval.FailureSummary(outs), want)
 	}
 	var buf bytes.Buffer
-	eval.Report(&buf, outs, nil)
+	eval.Report(&buf, outs, nil, nil)
 	for _, want := range []string{"    error: bad_response (HTTP 400)\n", fmt.Sprintf("failed calls: bad_response %d (HTTP 400)\n", n)} {
 		if !strings.Contains(buf.String(), want) {
 			t.Errorf("report lacks %q:\n%s", want, buf.String())

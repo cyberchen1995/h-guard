@@ -14,11 +14,24 @@ import (
 // Report 写出评估报告（沿用 Python 版 evaluate.report 的结构）：最终结论（用户实际感受到的）、
 // 类别识别、误判明细、答案不完整的语料、延迟与调用失败。ruleIDs 是参与类别统计的规则。
 // 语料中的命令、指令与备注可能带凭据（--cases 的语料来自用户），输出前一律遮蔽（评审 M2-07）。
-func Report(w io.Writer, outs []Outcome, ruleIDs []string) {
+func Report(w io.Writer, outs []Outcome, ruleIDs []string, margins []Margin) {
 	total := len(outs)
 	s := ScoreOf(outs)
+	var pass, interrupt int
+	for _, o := range outs {
+		if o.Case.Expect == guard.DecisionPass {
+			pass++
+		} else {
+			interrupt++
+		}
+	}
+	runs := runsOf(outs)
 	fmt.Fprintln(w, "=== Decisions (what the user experiences) ===")
-	fmt.Fprintf(w, "overall           %d/%d  %s\n", s.Correct, total, pct(s.Correct, total))
+	fmt.Fprintf(w, "overall           %d/%d  %s  %s\n", s.Correct, total, pct(s.Correct, total), ci(s.Correct, total, runs))
+	if runs > 1 {
+		fmt.Fprintf(w, "(CI over %d distinct cases; %d runs pooled)\n", total/runs, runs)
+	}
+	fmt.Fprintf(w, "calibratable      %d/%d  (backend called, every answer valid; only these move with the thresholds)\n", EffectiveN(outs), total)
 	var with, without []Outcome
 	for _, o := range outs {
 		if len(o.Case.UserRequests) > 0 {
@@ -36,8 +49,8 @@ func Report(w io.Writer, outs []Outcome, ruleIDs []string) {
 			fmt.Fprintf(w, "%-17s %d/%d  %s\n", g.label, gs.Correct, len(g.outs), pct(gs.Correct, len(g.outs)))
 		}
 	}
-	fmt.Fprintf(w, "needless asks     %d (should pass but asked: users turn the guard off over these)\n", s.Noise)
-	fmt.Fprintf(w, "missed            %d (should ask but passed)\n", s.Missed)
+	fmt.Fprintf(w, "needless asks     %d/%d  %s  %s  (should pass but asked: users turn the guard off over these)\n", s.Noise, pass, pct(s.Noise, pass), ci(s.Noise, pass, runs))
+	fmt.Fprintf(w, "missed            %d/%d  %s  %s  (should ask but passed)\n", s.Missed, interrupt, pct(s.Missed, interrupt), ci(s.Missed, interrupt, runs))
 
 	fmt.Fprintln(w, "\n=== Categories ===")
 	fmt.Fprintf(w, "%-18s%11s%9s%5s%5s%5s\n", "rule", "precision", "recall", "TP", "FP", "FN")
@@ -149,4 +162,22 @@ func ratio(a, b int) string {
 		return "100.0%"
 	}
 	return pct(a, b)
+}
+
+// ci 把比例 k/n 的 Wilson 95% 区间写成 "95% CI [lo%, hi%]"；样本量是独立语料数 n/runs（评审 R2-01）。
+func ci(k, n, runs int) string {
+	if n == 0 {
+		return "95% CI [0.0%, 100.0%]"
+	}
+	lo, hi := wilsonRate(float64(k)/float64(n), n/max(1, runs))
+	return fmt.Sprintf("95%% CI [%.1f%%, %.1f%%]", lo*100, hi*100)
+}
+
+// runsOf 返回 outs 里的运行次数（1 + 最大的 Run）。Outcome.Run 随 --repeat 的 Pool 设置（Task 6）；单次运行为 1。
+func runsOf(outs []Outcome) int {
+	runs := 1
+	for _, o := range outs {
+		runs = max(runs, o.Run+1)
+	}
+	return runs
 }

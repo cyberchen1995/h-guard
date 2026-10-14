@@ -103,6 +103,7 @@ func parse(data []byte, name string) ([]Case, error) {
 // Outcome 是一条语料的结果。
 type Outcome struct {
 	Case      Case
+	Run       int // --repeat 时第几次运行（从 0 起）；Pool 设置
 	Decision  guard.Decision
 	Hits      []string // 结论中的命中规则
 	Signals   map[string]any
