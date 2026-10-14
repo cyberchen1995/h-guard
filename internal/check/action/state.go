@@ -5,6 +5,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/cyberchen1995/h-guard/pkg/detect/secrets"
+	"github.com/cyberchen1995/h-guard/pkg/guard"
 )
 
 // StateInput 是发给模型的 state 的原料。字段名对应问题里引用的 `call.command`、`call.cwd`、`user_requests`，
@@ -14,7 +15,8 @@ type StateInput struct {
 	Tool            string
 	Command         string
 	Cwd             string
-	Requests        []string // 用户本人的指令，按时间先后（旧的在前），已按窗口截取
+	Shell           guard.Shell // PowerShell 时写进 call.shell；POSIX 不写，发送的内容与已有校准时相同
+	Requests        []string    // 用户本人的指令，按时间先后（旧的在前），已按窗口截取
 	MaxCommandChars int
 	MaxRequestChars int
 }
@@ -29,15 +31,16 @@ func BuildState(in StateInput) (state map[string]any, truncated bool) {
 		cut = cut || c
 		requests = append(requests, t)
 	}
-	return map[string]any{
-		"call": map[string]any{
-			"harness": secrets.Redact(in.Harness),
-			"tool":    secrets.Redact(in.Tool),
-			"command": cmd,
-			"cwd":     secrets.Redact(in.Cwd),
-		},
-		"user_requests": requests,
-	}, cut
+	call := map[string]any{
+		"harness": secrets.Redact(in.Harness),
+		"tool":    secrets.Redact(in.Tool),
+		"command": cmd,
+		"cwd":     secrets.Redact(in.Cwd),
+	}
+	if in.Shell == guard.ShellPowerShell {
+		call["shell"] = string(in.Shell) // 模型才分得清 rm 是 Remove-Item 的别名、路径用反斜杠（维护者决定，2026-10-14）
+	}
+	return map[string]any{"call": call, "user_requests": requests}, cut
 }
 
 // truncateMiddle 超长时掐掉中间、保留首 2/3 与尾 1/3（按字符计，与 Python 版一致）：

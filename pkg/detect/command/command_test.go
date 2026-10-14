@@ -395,13 +395,6 @@ func TestCanceledContext(t *testing.T) {
 	}
 }
 
-func TestPowerShellIsOneUnitUntilM3(t *testing.T) {
-	e, err := command.Expand(context.Background(), "Remove-Item -Recurse x; $(ls)", guard.ShellPowerShell)
-	if err != nil || len(e.Units) != 1 || e.Units[0].Shell != guard.ShellPowerShell {
-		t.Errorf("expansion = %+v, %v", e, err)
-	}
-}
-
 func TestSegments(t *testing.T) {
 	tests := []struct {
 		in   string

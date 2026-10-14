@@ -9,7 +9,7 @@ reason:
   zh-CN: 'fork bomb'
 match:
   exec:
-    # 沿用 Python 版正则，M1 全部放在 any 组；M3 加入 PowerShell 检测时再按 shell 分组
+    # any 组沿用 Python 版正则，两种 shell 都适用（M3b 不拆分，只收紧）；PowerShell 专有的写法在 powershell 组
     any:
       - ':\s*\(\s*\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:'
     strip_quotes: true

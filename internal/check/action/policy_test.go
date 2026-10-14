@@ -346,6 +346,16 @@ func TestBuildState(t *testing.T) {
 	if cwd := state["call"].(map[string]any)["cwd"].(string); strings.Contains(cwd, "sk-reviewM2SyntheticCredential12345") || !strings.HasPrefix(cwd, "/w/") {
 		t.Errorf("cwd = %q", cwd)
 	}
+	// PowerShell 命令标明 shell，模型才分得清 rm 是 Remove-Item 的别名、路径用反斜杠；POSIX 不加这个字段，
+	// 发送的内容与已有校准时相同（维护者决定，2026-10-14）
+	state, _ = BuildState(StateInput{Command: "ls", Shell: guard.ShellPowerShell, MaxCommandChars: 60, MaxRequestChars: 10})
+	if sh := state["call"].(map[string]any)["shell"]; sh != "powershell" {
+		t.Errorf("PowerShell state: shell = %v", sh)
+	}
+	state, _ = BuildState(StateInput{Command: "ls", Shell: guard.ShellPOSIX, MaxCommandChars: 60, MaxRequestChars: 10})
+	if _, ok := state["call"].(map[string]any)["shell"]; ok {
+		t.Errorf("POSIX state has a shell field: %v", state)
+	}
 	_, cut = BuildState(StateInput{Command: long, MaxCommandChars: 60, MaxRequestChars: 10})
 	if !cut {
 		t.Error("a long command must be reported as truncated")

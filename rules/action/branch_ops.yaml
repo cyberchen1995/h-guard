@@ -9,7 +9,7 @@ reason:
   zh-CN: '改写历史、强制删分支、改 upstream 或创建跟踪分支'
 match:
   exec:
-    # 沿用 Python 版正则，M1 全部放在 any 组；M3 加入 PowerShell 检测时再按 shell 分组
+    # any 组沿用 Python 版正则，两种 shell 都适用（M3b 不拆分，只收紧）；PowerShell 专有的写法在 powershell 组
     any:
       - '\bgit(?:\.exe)?\b[^\n;&|]*\brebase\b(?![^\n;&|]*--abort)'
       - '\bgit(?:\.exe)?\b[^\n;&|]*\bbranch\s+(?:-\S+\s+)*(?-i:-D)(?:\s|$)'

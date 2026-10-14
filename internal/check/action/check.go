@@ -1,6 +1,6 @@
 // Package action 是 action 检查（spec §5）：命令检测（pkg/detect/command）+ 规则包（internal/rules）+
-// 判断后端（pkg/judge）+ 纯函数策略（Decide）。exec 动作走完整流程；文件动作只按路径匹配（pkg/detect/paths），
-// M2 只有内置的护栏自我保护作用于文件动作，其余文件规则（第 2 档）在 M3 加入。
+// 判断后端（pkg/judge）+ 纯函数策略（Decide）。exec 动作走完整流程；文件动作只按路径匹配（pkg/detect/paths）：
+// 硬规则（护栏自我保护）不受档位限制，其余文件规则（内置的 sensitive_read、用户的文件规则）须档位覆盖（第 2 档）。
 package action
 
 import (
@@ -170,7 +170,7 @@ func (c *Check) evalExec(ctx context.Context, ev guard.Event, ex *guard.ExecActi
 		in.Judge, in.JudgeFallback = JudgeFailed, FallbackJudgeUnavailable
 	default:
 		state, truncated := BuildState(StateInput{
-			Harness: ev.Harness, Tool: ev.Tool, Command: ex.Command, Cwd: ev.Cwd, Requests: requests,
+			Harness: ev.Harness, Tool: ev.Tool, Command: ex.Command, Cwd: ev.Cwd, Shell: ex.Shell, Requests: requests,
 			MaxCommandChars: c.Config.Policy.MaxCommandChars, MaxRequestChars: c.Config.Policy.MaxRequestChars,
 		})
 		qs := questions(c.Rules, policyRules)
@@ -270,6 +270,7 @@ func userRequests(reqs []guard.Request, window int) []string {
 }
 
 // evalFile 按路径匹配作用于该文件动作的规则（spec §5.2、§5.5）：不调模型，不看用户授权与影响范围。
+// 原因写明命中的文件：护栏自我保护用 guard_self_file，其余路径规则（sensitive_read、用户的文件规则）用 file_rule。
 // 硬规则不受档位限制，其余规则须当前档位覆盖该动作类型。file_rename 的源与目标都检查。
 // 目标解析失败、或受保护目录读不全时按已知的写法匹配，带 path_unresolved。
 func (c *Check) evalFile(ctx context.Context, ev guard.Event, a guard.Action) guard.Verdict {
@@ -314,14 +315,15 @@ func (c *Check) evalFile(ctx context.Context, ev guard.Event, a guard.Action) gu
 	}
 	in := Input{Rules: policyRules, Regex: hits, Judge: JudgeOff}
 	v := c.render(Decide(in), in)
-	// 改动受保护文件时，原因里写明是哪个文件（遮蔽凭据形状）
+	// 原因里写明是哪个文件（遮蔽凭据形状）
+	shown := make([]string, len(hitPaths))
+	for j, p := range hitPaths {
+		shown[j] = secrets.Redact(p)
+	}
+	fileKey := map[string]string{i18n.KeyActionGuardSelf: i18n.KeyActionGuardSelfFile, i18n.KeyActionDangerous: i18n.KeyActionFileRule}
 	for i, rs := range v.Reasons {
-		if rs.Code == i18n.KeyActionGuardSelf {
-			shown := make([]string, len(hitPaths))
-			for j, p := range hitPaths {
-				shown[j] = secrets.Redact(p)
-			}
-			v.Reasons[i] = guard.Reason{Code: i18n.KeyActionGuardSelfFile, Params: map[string]string{
+		if key, ok := fileKey[rs.Code]; ok {
+			v.Reasons[i] = guard.Reason{Code: key, Params: map[string]string{
 				"rules": rs.Params["rules"],
 				"paths": strings.Join(shown, c.Catalog.Text(c.Locale, i18n.KeyListSeparator, nil)),
 			}}

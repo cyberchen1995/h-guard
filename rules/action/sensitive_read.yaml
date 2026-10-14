@@ -1,0 +1,57 @@
+schema: 1
+id: sensitive_read
+enabled: true
+action: ask
+# 读取前按路径拦截（spec §4：第 2 档默认开启，开箱就能拦截敏感文件读取）；读取后的内容由 outbound 扫描，两者互补。
+# 只按路径匹配，不调模型，不看用户授权（spec §5.2）。通过 shell 读取（cat .env）只由命令规则覆盖。
+on: [file_read]
+reason:
+  en: 'Reads a file that usually holds secrets (.env, private keys, cloud or SSH credentials)'
+  zh-CN: '读取通常存放秘密的文件（.env、私钥、云服务或 SSH 凭据）'
+match:
+  file:
+    # Python 版 outbound 设计的敏感路径（credentials* 收窄为常见的凭据文件名），加上常见的密钥目录与凭据文件
+    # （维护者决定，2026-10-14）
+    paths:
+      - '**/.env'
+      - '**/.env.*'
+      - '**/*.pem'
+      - '**/*.key'
+      - '**/id_rsa*'
+      # 常见的凭据文件名（AWS、gcloud 等）；不写 credentials* 前缀，源码与文档里同名的文件不拦（评审 I8，维护者决定）
+      - '**/credentials'
+      - '**/credentials.json'
+      - '**/credentials.yml'
+      - '**/credentials.yaml'
+      - '**/credentials.toml'
+      - '**/credentials.ini'
+      - '**/credentials.xml'
+      - '**/.credentials*'
+      - '**/.git-credentials'
+      - '~/.ssh/**'
+      - '~/.aws/**'
+      - '~/.gnupg/**'
+      - '~/.netrc'
+      - '~/.docker/config.json'
+    # 示例文件、公钥与 known_hosts 不含秘密；逐个候选路径判断，指向秘密文件的同名符号链接照样命中
+    exclude:
+      - '**/.env.example'
+      - '**/.env.sample'
+      - '**/.env.template'
+      - '**/*.pub'
+      - '~/.ssh/known_hosts*'
+examples:
+  hit:
+    - {action: file_read, path: ".env"}
+    - {action: file_read, path: "config/.env.production"}
+    - {action: file_read, path: "/srv/tls/server.pem"}
+    - {action: file_read, path: "~/.ssh/id_ed25519"}
+    - {action: file_read, path: "~/.aws/credentials"}
+    - {action: file_read, path: "~/.netrc"}
+  miss:
+    - {action: file_read, path: ".env.example"}
+    - {action: file_read, path: "~/.ssh/id_ed25519.pub"}
+    - {action: file_read, path: "~/.ssh/known_hosts"}
+    - {action: file_read, path: ".envrc"}
+    - {action: file_read, path: "src/main.go"}
+    - {action: file_read, path: "pkg/auth/credentials.go"}

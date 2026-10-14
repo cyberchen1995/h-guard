@@ -9,7 +9,7 @@ reason:
   zh-CN: '改动安全护栏自身的配置或 harness 的 hook 设置'
 match:
   exec:
-    # 沿用 Python 版正则，全部放在 any 组；M3 加入 PowerShell 检测时再按 shell 分组。
+    # any 组沿用 Python 版正则，两种 shell 都适用（M3b 不拆分，只收紧）；PowerShell 专有的写法在 powershell 组。
     # 动词前的 (?<![\w.])(?<![^\w]-)(?<!^-) 是 M2 加的词边界：grep confirm、--format、--rm、-rm 里的 rm 不算改动。
     # 动词前可带一个字母（Homebrew 的 GNU 工具 gsed、grm、gcp，以及 scp、srm、xcp、rcp、ipython），连字符连着的
     # 工具名（uu-rm）同样算；代价是同一段命令里 arm 这类词出现在受保护的路径之前时也会请求确认
@@ -35,6 +35,14 @@ match:
       # agent 运行 backend enable 会替用户记下同意（用 script 等伪终端可以绕过终端检查），在 hook 下一律请求确认；
       # 用户在自己的终端里运行不经过 hook
       - '(?<![\w.-])h-guard\b[^\n;&|]*\bbackend\s+enable\b'
+    # PowerShell（M3b）：写入、删除、移动、复制到受保护路径的 cmdlet 及其别名，.NET 的文件写入，重定向；
+    # 路径可用 \ 或 /，也可拆在 Join-Path 的几个参数里；另覆盖 Windows 的配置与缓存目录（$env:APPDATA、${env:APPDATA}、
+    # %LOCALAPPDATA% 下的 h-guard）与 macOS 上 PowerShell 用的 ~/Library 目录。
+    # 与 any 组一样只看动词在路径之前，不分读写方向
+    powershell:
+      - '(?<![\w.-])(?:set-content|sc|add-content|ac|out-file|clear-content|clc|remove-item|rm|ri|del|erase|rd|rmdir|move-item|mi|mv|move|copy-item|cpi|cp|copy|rename-item|rni|ren|new-item|ni|set-item|si|set-itemproperty|sp|tee-object|tee)\b[^\n;&|]*(?:\.config(?:[\\/]|[''\"]?[\s,]+[''\"]?)h-guard|\.cache(?:[\\/]|[''\"]?[\s,]+[''\"]?)h-guard|\.claude(?:[\\/]|[''\"]?[\s,]+[''\"]?)settings(?:\.local)?\.json|\.codex(?:[\\/]|[''\"]?[\s,]+[''\"]?)(?:hooks\.json|config\.toml)|appdata(?:[\\/]|[''\"]?[\s,]+[''\"]?)(?:roaming|local)(?:[\\/]|[''\"]?[\s,]+[''\"]?)h-guard|\$(?:\{env:(?:local)?appdata\}|env:(?:local)?appdata)(?:[\\/]|[''\"]?[\s,]+[''\"]?)h-guard|library(?:[\\/]|[''\"]?[\s,]+[''\"]?)(?:application(?:`? | )support|caches)(?:[\\/]|[''\"]?[\s,]+[''\"]?)h-guard)'
+      - '\[(?:system\.)?io\.file\]::(?:write|append|delete|move|copy|replace|create|open)\w*\s*\([^\n]*(?:\.config(?:[\\/]|[''\"]?[\s,]+[''\"]?)h-guard|\.cache(?:[\\/]|[''\"]?[\s,]+[''\"]?)h-guard|\.claude(?:[\\/]|[''\"]?[\s,]+[''\"]?)settings(?:\.local)?\.json|\.codex(?:[\\/]|[''\"]?[\s,]+[''\"]?)(?:hooks\.json|config\.toml)|appdata(?:[\\/]|[''\"]?[\s,]+[''\"]?)(?:roaming|local)(?:[\\/]|[''\"]?[\s,]+[''\"]?)h-guard|\$(?:\{env:(?:local)?appdata\}|env:(?:local)?appdata)(?:[\\/]|[''\"]?[\s,]+[''\"]?)h-guard|library(?:[\\/]|[''\"]?[\s,]+[''\"]?)(?:application(?:`? | )support|caches)(?:[\\/]|[''\"]?[\s,]+[''\"]?)h-guard)'
+      - '>>?\s*[^\n;&|]*(?:\.config(?:[\\/]|[''\"]?[\s,]+[''\"]?)h-guard|\.cache(?:[\\/]|[''\"]?[\s,]+[''\"]?)h-guard|\.claude(?:[\\/]|[''\"]?[\s,]+[''\"]?)settings(?:\.local)?\.json|\.codex(?:[\\/]|[''\"]?[\s,]+[''\"]?)(?:hooks\.json|config\.toml)|appdata(?:[\\/]|[''\"]?[\s,]+[''\"]?)(?:roaming|local)(?:[\\/]|[''\"]?[\s,]+[''\"]?)h-guard|\$(?:\{env:(?:local)?appdata\}|env:(?:local)?appdata)(?:[\\/]|[''\"]?[\s,]+[''\"]?)h-guard|library(?:[\\/]|[''\"]?[\s,]+[''\"]?)(?:application(?:`? | )support|caches)(?:[\\/]|[''\"]?[\s,]+[''\"]?)h-guard)'
   file:
     # 文件动作（Write、Edit、NotebookEdit 等）按路径匹配，不调模型（spec §5.2）。
     # {config}、{cache} 是 h-guard 实际使用的目录；~ 开头的写法另覆盖默认位置。
@@ -79,6 +87,11 @@ question:
     'false': 'It leaves all of those intact, or it only reads them, or the text is only mentioned and never executed.'
 examples:
   hit:
+    - {shell: powershell, command: "Set-Content -Path $HOME\\.claude\\settings.json -Value '{}'"}
+    - {shell: powershell, command: "Remove-Item $env:APPDATA\\h-guard\\consent.json"}
+    - {shell: powershell, command: "Set-Content -Path (Join-Path $HOME '.claude' 'settings.json') -Value '{}'"}
+    - {shell: powershell, command: "Out-File -FilePath ~/Library/Caches/h-guard/requests.json"}
+    - {shell: powershell, command: "[IO.File]::WriteAllText(\"$HOME\\.codex\\hooks.json\", \"{}\")"}
     - {shell: posix, command: "rm ~/.claude/settings.json"}
     - {shell: posix, command: "echo '{}' > ~/.config/h-guard/config.yaml"}
     - {shell: posix, command: "mv ~/.codex/hooks.json /tmp/x"}
@@ -105,6 +118,7 @@ examples:
     - {action: file_rename, path: "~/Library/Application Support/h-guard/config.yaml"}
     - {action: file_write, path: "/etc/guard/extra.yaml"}
   miss:
+    - {shell: powershell, command: "Get-Content ~\\.claude\\settings.json"}
     - {shell: posix, command: "cat ~/.claude/settings.json"}
     - {shell: posix, command: "jq . ~/.codex/hooks.json"}
     - {shell: posix, command: "ls ~/.config/h-guard"}

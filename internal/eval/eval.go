@@ -4,7 +4,8 @@
 // 阈值扫描复用这些答案重算结论，不再调用后端。建议档案带指纹（模型、概率获取方式、题集），只打印、不写配置。
 //
 // 内置语料（corpus/commands.jsonl）是 Python 版的 102 条标注语料加上「先要求、后撤回」用例（spec §5.4）；
-// user_requests 按时间先后排列，旧的在前。
+// user_requests 按时间先后排列，旧的在前。PowerShell 另有一份（corpus/powershell.jsonl，spec §5.3），
+// 旧版没有对应数据，不进 golden；内置档案按 POSIX 语料校准。
 package eval
 
 import (
@@ -48,16 +49,23 @@ type Case struct {
 	Shell        guard.Shell    `json:"shell,omitempty"` // 默认 posix
 }
 
-// Corpus 返回内置语料。
-func Corpus() ([]Case, error) {
-	data, err := corpus.FS.ReadFile(corpusFile)
+// Corpus 返回内置的 POSIX 语料（校准内置档案用的那一份）。
+func Corpus() ([]Case, error) { return CorpusFor(guard.ShellPOSIX) }
+
+// CorpusFor 返回 shell 的内置语料。
+func CorpusFor(shell guard.Shell) ([]Case, error) {
+	file := corpusFiles[shell]
+	if file == "" {
+		return nil, fmt.Errorf("no built-in corpus for shell %q", shell)
+	}
+	data, err := corpus.FS.ReadFile(file)
 	if err != nil {
 		return nil, err
 	}
-	return parse(data, corpusFile)
+	return parse(data, file)
 }
 
-const corpusFile = "commands.jsonl"
+var corpusFiles = map[guard.Shell]string{guard.ShellPOSIX: "commands.jsonl", guard.ShellPowerShell: "powershell.jsonl"}
 
 // LoadCases 读取 path 中同样格式的 JSONL 语料。
 func LoadCases(path string) ([]Case, error) {

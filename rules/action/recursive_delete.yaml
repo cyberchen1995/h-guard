@@ -9,7 +9,7 @@ reason:
   zh-CN: '递归删除文件或目录'
 match:
   exec:
-    # 沿用 Python 版正则，M1 全部放在 any 组；M3 加入 PowerShell 检测时再按 shell 分组
+    # any 组沿用 Python 版正则，两种 shell 都适用（M3b 不拆分，只收紧）；PowerShell 专有的写法在 powershell 组
     any:
       - '(?:^|[\s;&|(`\"''])(?:sudo\s+(?:-\S+\s+)*)?rm(?:\.exe)?\s+(?:-\S+\s+)*-[a-z]*r'
       - '(?:^|[\s;&|(`\"''])(?:sudo\s+)?rm(?:\.exe)?\s+[^\n;&|]*--recursive\b'
@@ -20,6 +20,12 @@ match:
       - '\bshutil\.rmtree\s*\('
       - '\bRemove-Item\b[^\n;&|]*(?:-Recurse\b|\s-r(?:\s|$))'
       - '\bgit(?:\.exe)?\b[^\n;&|]*\brm\s+(?:-\S+\s+)*-[a-z]*r'
+    # PowerShell（M3b）：Remove-Item 及其别名带 -Recurse 的任意前缀；.NET 的递归删除；递归列出再交给 Remove-Item
+    powershell:
+      - '(?:^|[\s;&|({])(?:remove-item|rm|del|erase|rd|rmdir|ri)\b[^\n;&|]*\s-r(?:e(?:c(?:u(?:r(?:s(?:e)?)?)?)?)?)?(?::\$true)?(?=\s|$)'
+      - '\[(?:system\.)?io\.directory\]::delete\s*\([^\n)]*,\s*\$true'
+      - '\.delete\s*\(\s*\$true\s*\)'
+      - '\b(?:get-childitem|gci|ls|dir)\b[^\n;&|]*\s-r(?:e(?:c(?:u(?:r(?:s(?:e)?)?)?)?)?)?\b[^\n;&]*\|\s*(?:remove-item|rm|del|erase|ri)\b'
 radius_floor: 1.25
 question:
   kind: probability
@@ -32,6 +38,10 @@ question:
     'false': 'It would not delete recursively, or the deletion text is only mentioned or quoted and never executed.'
 examples:
   hit:
+    - {shell: powershell, command: "Remove-Item -Recurse -Force .\\build"}
+    - {shell: powershell, command: "rm -r node_modules"}
+    - {shell: powershell, command: "[System.IO.Directory]::Delete(\"data\", $true)"}
+    - {shell: powershell, command: "Get-ChildItem -Recurse *.log | Remove-Item"}
     - {shell: posix, command: "rm -rf build"}
     - {shell: posix, command: "rm -r ./tmp"}
     - {shell: posix, command: "bash -c \"rm -rf dist\""}
@@ -40,6 +50,8 @@ examples:
     - {shell: posix, command: "python -c \"import shutil; shutil.rmtree('out')\""}
     - {shell: posix, command: "rmdir empty_dir"}
   miss:
+    - {shell: powershell, command: "Remove-Item file.txt -Force"}
+    - {shell: powershell, command: "Get-ChildItem -Recurse"}
     - {shell: posix, command: "rm file.txt"}
     - {shell: posix, command: "ls -R"}
     - {shell: posix, command: "find . -name '*.py'"}

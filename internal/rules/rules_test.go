@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -57,6 +58,7 @@ func TestBuiltinRules(t *testing.T) {
 		"branch_ops":       {guard.DecisionAsk, false, true},
 		"publish":          {guard.DecisionAsk, false, true},
 		"verify_bypass":    {guard.DecisionAsk, false, true},
+		"sensitive_read":   {guard.DecisionAsk, false, false},
 	}
 	if len(s.All()) != len(want) {
 		t.Fatalf("got %d rules, want %d", len(s.All()), len(want))
@@ -67,7 +69,7 @@ func TestBuiltinRules(t *testing.T) {
 			t.Errorf("%s = %+v", id, r)
 			continue
 		}
-		if _, ok := r.JudgeQuestion(); ok != (id != "catastrophic" && id != "fork_bomb") {
+		if _, ok := r.JudgeQuestion(); ok != (id != "catastrophic" && id != "fork_bomb" && id != "sensitive_read") {
 			t.Errorf("%s: has question = %v", id, ok)
 		}
 	}
@@ -189,7 +191,11 @@ func TestLoadRejects(t *testing.T) {
 		"unknown field":     userPublish + "colour: red\n",
 		"bad regex":         strings.Replace(userPublish, `'\bship-it\b'`, `'(unclosed'`, 1),
 		"bad action":        strings.Replace(userPublish, "action: ask", "action: warn", 1),
-		"file rule":         strings.Replace(userPublish, "on: [exec]", "on: [file_read]", 1),
+		"file rule asks":    strings.Replace(userFileRule, "on: [file_read]", "on: [file_read]\nquestion: {kind: probability, instructions: {question: q}}", 1),
+		"signal id":         strings.Replace(userPublish, "id: publish", "id: explicitly_requested", 1),
+		"signal id radius":  strings.Replace(userPublish, "id: publish", "id: blast_radius", 1),
+		"bad exclude":       strings.Replace(userFileRule, "exclude: ['**/secrets/README.md']", "exclude: ['README.md']", 1),
+		"exclude, no paths": strings.Replace(userFileRule, "paths: ['**/secrets/**']", "paths: []", 1),
 		"no reason":         strings.Replace(userPublish, "reason: {en: custom publish}", "reason: {zh-CN: x}", 1),
 		"judge no question": strings.Replace(userPublish, "on: [exec]", "on: [exec]\nrequires_judge: true", 1),
 		"no patterns":       strings.Replace(userPublish, `any: ['\bship-it\b']`, "any: []", 1),
@@ -471,7 +477,6 @@ func TestBuiltinFileRuleValidation(t *testing.T) {
 		"file match, no file":  strings.Replace(strings.Replace(builtinFileRule, "on: [file_write]", "on: [exec]", 1), "  file:", "  exec: {any: [x]}\n  file:", 1),
 		"example action":       strings.Replace(builtinFileRule, "miss: [{action: file_write", "miss: [{action: file_delete", 1),
 		"example with command": strings.Replace(builtinFileRule, "path: /tmp/x}", "path: /tmp/x, command: ls}", 1),
-		"unlocked file rule":   strings.Replace(builtinFileRule, "locked: true\n", "", 1),
 	} {
 		if _, err := rules.ParseBuiltin([]byte(body)); err == nil {
 			t.Errorf("%s: accepted", name)
@@ -484,5 +489,247 @@ func TestBuiltinFileRuleValidation(t *testing.T) {
 	}
 	if err := bad.CheckExamples(context.Background()); err == nil || !strings.Contains(err.Error(), "/xdg/config/h-guard/y") {
 		t.Errorf("CheckExamples = %v", err)
+	}
+}
+
+const userFileRule = `schema: 1
+id: my.secrets
+action: ask
+on: [file_read]
+reason: {en: reads my secrets}
+match:
+  file:
+    paths: ['**/secrets/**']
+    exclude: ['**/secrets/README.md']
+examples:
+  hit: [{action: file_read, path: secrets/prod.json}]
+  miss: [{action: file_read, path: secrets/README.md}]
+`
+
+// TestUserFileRules：第 2 档开放用户的文件规则（spec §4、§5.2）：不必 locked，按路径匹配，exclude 里的写法不算；
+// 样例照常运行。文件规则不调模型，所以不能带判断题（见 TestLoadRejects）。
+func TestUserFileRules(t *testing.T) {
+	dir := t.TempDir()
+	writeRule(t, dir, "secrets.yaml", userFileRule)
+	s, err := rules.Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := s.Get("my.secrets")
+	if r == nil || r.Locked || !r.AppliesTo(guard.ActionFileRead) || r.AppliesTo(guard.ActionExec) {
+		t.Fatalf("my.secrets = %+v", r)
+	}
+	if err := r.CheckExamples(context.Background()); err != nil {
+		t.Error(err)
+	}
+	for p, want := range map[string]bool{
+		"secrets/prod.json": true, "secrets/README.md": false, "src/secrets.go": false, "/srv/app/secrets/x/y.key": true,
+	} {
+		if got, _ := r.MatchFile(paths.Resolve(p, rules.ExampleEnv), rules.ExampleEnv); got != want {
+			t.Errorf("%s: hit = %v, want %v", p, got, want)
+		}
+	}
+}
+
+// TestExcludeIsPerCandidate：exclude 逐个候选路径判断。README.md 是指向 prod.json 的符号链接时，
+// 解析后的路径没有被排除，照样命中；不透明的路径（无法得知是哪个文件）不受 exclude 影响。
+func TestExcludeIsPerCandidate(t *testing.T) {
+	dir := t.TempDir()
+	writeRule(t, dir, "secrets.yaml", userFileRule)
+	s, err := rules.Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := s.Get("my.secrets")
+	env := paths.Env{Home: "/home/user", Cwd: "/home/user/project", Lexical: true}
+	for _, c := range []struct {
+		target paths.Resolved
+		want   bool
+	}{
+		{paths.Resolved{Clean: "/p/secrets/README.md"}, false},
+		{paths.Resolved{Clean: "/p/secrets/README.md", Real: "/p/secrets/prod.json"}, true},
+		{paths.Resolved{Clean: "/p/docs/README.md", Real: "/p/secrets/README.md"}, false},
+		{paths.Resolved{Clean: "/p/secrets/README.md", Opaque: true}, true},
+	} {
+		if got, _ := r.MatchFile(c.target, env); got != c.want {
+			t.Errorf("%+v: hit = %v, want %v", c.target, got, c.want)
+		}
+	}
+}
+
+// TestSensitiveReadPaths：内置 sensitive_read 只作用于读取，覆盖 .env、私钥、常见的凭据文件名与密钥目录；
+// .env 的示例文件、公钥与 known_hosts 不算（维护者决定，2026-10-14）。
+func TestSensitiveReadPaths(t *testing.T) {
+	r := builtinSet(t).Get("sensitive_read")
+	if r == nil || r.Locked || !r.Enabled() || r.Action != guard.DecisionAsk || !slices.Equal(r.On, []guard.ActionKind{guard.ActionFileRead}) {
+		t.Fatalf("sensitive_read = %+v", r)
+	}
+	env := rules.ExampleEnv
+	for p, want := range map[string]bool{
+		".env": true, "config/.env.production": true, ".env.local": true, "/srv/tls/server.pem": true, "certs/server.key": true,
+		"~/.ssh/id_ed25519": true, "~/.ssh/config": true, "deploy/id_rsa": true, "~/.aws/credentials": true, "~/.aws/config": true,
+		"~/.gnupg/private-keys-v1.d/x.key": true, "~/.netrc": true, "~/.docker/config.json": true, "gcloud/credentials.json": true,
+		"~/.git-credentials": true, "app/credentials.yaml": true, ".credentials.json": true,
+		// 源码与文档里叫 credentials 的文件不算（维护者决定，2026-10-14，评审 I8）
+		"pkg/auth/credentials.go": false, "src/CredentialsForm.tsx": false, "docs/credentials.md": false,
+		".env.example": false, "app/.env.sample": false, ".env.template": false, "~/.ssh/id_ed25519.pub": false,
+		"~/.ssh/known_hosts": false, ".envrc": false, "README.md": false, "src/env.go": false, "docker/config.json": false,
+	} {
+		if got, _ := r.MatchFile(paths.Resolve(p, env), env); got != want {
+			t.Errorf("%s: hit = %v, want %v", p, got, want)
+		}
+	}
+}
+
+// pwshHits 与 hits 相同，但按 PowerShell 展开。
+func pwshHits(t *testing.T, s *rules.Set, cmd string) []string {
+	t.Helper()
+	e, err := command.Expand(context.Background(), cmd, guard.ShellPowerShell)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []string
+	for _, r := range s.All() {
+		res, err := r.MatchExec(context.Background(), e)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.Hit {
+			out = append(out, r.ID)
+		}
+	}
+	slices.Sort(out)
+	return out
+}
+
+// TestPowerShellRules：内置规则覆盖 PowerShell 的写法（spec §5.3）：Remove-Item 及其别名与参数前缀、.NET 的删除、
+// Invoke-RestMethod 的写操作、$env:HUSKY 这类环境变量、反斜杠路径与 Windows 的配置目录；字符串与 here-string 里
+// 只是提到的不算 deny。git、gh、npm 这类两种 shell 写法相同的由 any 组覆盖。
+func TestPowerShellRules(t *testing.T) {
+	s := builtinSet(t)
+	for cmd, want := range map[string][]string{
+		// 灾难性形态（deny）
+		`Remove-Item -Recurse -Force C:\`:                        {"catastrophic", "recursive_delete"},
+		`rm -r -fo ~`:                                            {"catastrophic", "recursive_delete"},
+		`Remove-Item $HOME -Recurse -Force`:                      {"catastrophic", "recursive_delete"},
+		`Remove-Item -Path "$env:USERPROFILE" -Recurse`:          {"catastrophic", "recursive_delete"},
+		`ri -rec -force C:\*`:                                    {"catastrophic", "recursive_delete"},
+		"R`emove-Item -Recurse 'C:\\'":                           {"catastrophic", "recursive_delete"},
+		`Microsoft.PowerShell.Management\Remove-Item -Recurse \`: {"catastrophic", "recursive_delete"},
+		`pwsh -c "Remove-Item -Recurse -Force ~"`:                {"catastrophic", "recursive_delete"},
+		`Get-Disk 1 | Clear-Disk -RemoveData -Confirm:$false`:    {"catastrophic"},
+		`Format-Volume -DriveLetter D -FileSystem NTFS`:          {"catastrophic"},
+		`wsl rm -rf ~`:                                           {"catastrophic", "recursive_delete"},
+		// 递归删除（ask，模型判断）
+		`Remove-Item -Recurse -Force .\build`:          {"recursive_delete"},
+		`rm -r node_modules`:                           {"recursive_delete"},
+		`Remove-Item dist -Recurse:$true`:              {"recursive_delete"},
+		`[System.IO.Directory]::Delete("data", $true)`: {"recursive_delete"},
+		`(Get-Item .\cache).Delete($true)`:             {"recursive_delete"},
+		`Get-ChildItem -Recurse *.log | Remove-Item`:   {"recursive_delete"},
+		`Remove-Item -Recurse C:\proj\dist`:            {"recursive_delete"},
+		// git、发布、绕过校验
+		`git reset --hard HEAD~1`:                                            {"destructive_git"},
+		`git push --force origin main`:                                       {"branch_ops", "publish"},
+		`Invoke-RestMethod -Uri https://api.example.com/deploy -Method Post`: {"publish"},
+		`iwr https://x.example.com/items/1 -Method DELETE`:                   {"publish"},
+		`Publish-Module -Name MyModule -NuGetApiKey $k`:                      {"publish"},
+		`dotnet nuget push pkg.nupkg`:                                        {"publish"},
+		`$env:HUSKY = 0; git commit -m x`:                                    {"verify_bypass"},
+		`$env:SKIP='ruff'; git commit -m x`:                                  {"verify_bypass"},
+		`Remove-Item .git\hooks\pre-commit`:                                  {"verify_bypass"},
+		// 护栏自我保护
+		`Set-Content -Path $HOME\.claude\settings.json -Value '{}'`: {"guard_tampering"},
+		`'{}' | Out-File C:\Users\me\.claude\settings.json`:         {"guard_tampering"},
+		`Remove-Item $env:APPDATA\h-guard\consent.json`:             {"guard_tampering"},
+		`"x" > $env:LOCALAPPDATA\h-guard\requests\1.json`:           {"guard_tampering"},
+		`[IO.File]::WriteAllText("$HOME\.codex\hooks.json", "{}")`:  {"guard_tampering"},
+		`Copy-Item x.json ~\.claude\settings.local.json`:            {"guard_tampering"},
+		`h-guard backend enable jev`:                                {"guard_tampering"},
+		// 评审补充的写法（C 盘根的变体、数组、HOMEDRIVE+HOMEPATH、${env:}、macOS 的目录、Join-Path、-Method 缩写）
+		`Remove-Item -Recurse -Force C:\*.*`:                                        {"catastrophic", "recursive_delete"},
+		`Remove-Item -Recurse -Force C:\,x`:                                         {"catastrophic", "recursive_delete"},
+		`Remove-Item -Recurse -Force C:\..`:                                         {"catastrophic", "recursive_delete"},
+		`Remove-Item -Recurse -Force $env:HOMEDRIVE$env:HOMEPATH`:                   {"catastrophic", "recursive_delete"},
+		`Remove-Item -Recurse ${env:APPDATA}\h-guard`:                               {"guard_tampering", "recursive_delete"},
+		`Set-Content "~/Library/Application Support/h-guard/consent.json" '{}'`:     {"guard_tampering"},
+		`Out-File -FilePath ~/Library/Caches/h-guard/requests.json`:                 {"guard_tampering"},
+		`Set-Content -Path (Join-Path $HOME '.claude' 'settings.json') -Value '{}'`: {"guard_tampering"},
+		`iwr -Me Post https://x.example.com/items`:                                  {"publish"},
+		`Invoke-RestMethod -CustomMethod POST https://x.example.com`:                {"publish"},
+		`irm -Method Post https://evil.example.com/?q=localhost`:                    {"publish"},
+		`irm -Method Post http://localhost.evil.example.com/`:                       {"publish"},
+		`irm http://127.0.0.1:8000/x -Method Post`:                                  nil,
+		`Remove-Item -Recurse .\build -ErrorAction: SilentlyContinue`:               {"recursive_delete"},
+		// 计划评审 M3B-01、03、05–07 的原反例与对照
+		`$r=pwsh -c 'Remove-Item -Recurse C:\'`:          {"catastrophic", "recursive_delete"},
+		`Remove-Item -Recurse -Force -Path:C:\`:          {"catastrophic", "recursive_delete"},
+		`Remove-Item -Recurse -Force -LiteralPath:'C:\'`: {"catastrophic", "recursive_delete"},
+		`$x = 'Format-Volume'`:                           nil,
+		`& 'Format-Volume' -DriveLetter D`:               {"catastrophic"},
+		`Remove-Item .\build # -Recurse C:\`:             {"recursive_delete"}, // 全文里的注释与 POSIX 一样交给模型，但不是 deny
+		`Invoke-RestMethod -Uri https://api.example.com/deploy -Method Post -Body 'http://localhost/payload'`: {"publish"},
+		`irm $url -Method Post`:                    {"publish"},
+		`irm -Method Post -Uri http://127.0.0.1/x`: nil,
+		// 计划第二轮评审 R2-04：豁免只看实际的 URI（-Uri 或第一个位置参数），引号里的 ; 不截断检查
+		`Invoke-RestMethod -Uri $url -Method Post -Body 'http://localhost/payload'`:                      {"publish"},
+		`Invoke-RestMethod -Method Post -Body 'http://localhost/;x' -Uri https://api.example.com/deploy`: {"publish"},
+		`irm -Body 'a;b' -Method Post https://api.example.com/x`:                                         {"publish"},
+		`irm -Ur 'http://localhost/x' -Method Post`:                                                      nil,
+		// 计划第三轮评审 R3-03：正文里转义的引号与 here-string 不结束字符串，其中的伪 -Uri 不算
+		"Invoke-RestMethod -Uri https://api.example.com/deploy -Method Post -Body \"hello`\" -Uri http://localhost/payload\"": {"publish"},
+		"irm -Body @\"\nx -Uri http://localhost/\n\"@ -Method Post -Uri https://api.example.com/x":                            {"publish"},
+		`irm -Method Post -Body "a""b" -Uri http://localhost/x`:                                                               nil,
+		// 大量 "" 与 '' 不能让正则指数回溯：超时按命中处理，这里会变成多余的命中
+		`irm -Body "` + strings.Repeat(`""`, 200) + `" x`: nil,
+		`irm -Body '` + strings.Repeat(`''`, 200) + `' x`: nil,
+		// 不命中
+		`Remove-Item file.txt -Force`:                                   nil,
+		`Get-ChildItem -Recurse`:                                        nil,
+		`Write-Output 'Remove-Item -Recurse C:\'`:                       {"recursive_delete"}, // 引号里的提到：全文规则交给模型判断，但不是 deny
+		`Invoke-RestMethod https://api.example.com/items`:               nil,
+		`irm http://localhost:8000/echo -Method Post`:                   nil,
+		`$env:HUSKY_DEBUG = 1`:                                          nil,
+		`Get-Content ~\.claude\settings.json`:                           nil,
+		`Select-String hooks $HOME\.codex\hooks.json`:                   nil,
+		"Set-Content notes.md @'\nRemove-Item -Recurse -Force C:\\\n'@": nil,
+		`Get-Disk`: nil,
+	} {
+		if got := pwshHits(t, s, cmd); !slices.Equal(got, want) {
+			t.Errorf("%q: hits %v, want %v", cmd, got, want)
+		}
+	}
+}
+
+// TestPowerShellFinalReview：整分支审查的三项（模型关闭时灾难性形态静默放行）。
+func TestPowerShellFinalReview(t *testing.T) {
+	s := builtinSet(t)
+	deep := `Remove-Item -Recurse -Force $HOME`
+	for _, open := range []string{"function f {", "foreach ($x in 1..2) {", "if ($a) {", "try {", "if ($b) {", "& {"} {
+		deep = open + "\n" + deep + "\n}"
+	}
+	for _, cmd := range []string{
+		// 空 here-string 的结束行不能被当作正文剥掉（剥掉后 here-string 不再闭合，后面的命令落进字符串）
+		"$x = @'\n'@\nRemove-Item -Recurse -Force C:\\",
+		"$x = @\"\n\"@\nRemove-Item -Recurse -Force C:\\",
+		// Start-Process 带引号、以 - 开头的位置参数是参数列表，不是 Start-Process 自己的选项
+		`Start-Process pwsh "-c Remove-Item -Recurse -Force C:\"`,
+		`saps pwsh "-c rm -r -fo ~"`,
+		`Start-Process bash "-c 'rm -rf /'"`,
+		// 普通的控制流块不是嵌套调用，不消耗展开深度
+		deep,
+	} {
+		if got := pwshHits(t, s, cmd); !slices.Contains(got, "catastrophic") {
+			t.Errorf("%q: hits %v, want catastrophic", cmd, got)
+		}
+	}
+	for cmd, want := range map[string][]string{
+		"Set-Content f @'\n'@":                             nil,
+		"Set-Content f @'\nRemove-Item -Recurse C:\\\n'@":  nil,
+		`Start-Process pwsh -ArgumentList '-c','Get-Date'`: nil,
+	} {
+		if got := pwshHits(t, s, cmd); !slices.Equal(got, want) {
+			t.Errorf("%q: hits %v, want %v", cmd, got, want)
+		}
 	}
 }
