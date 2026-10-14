@@ -71,8 +71,8 @@ func TestDefaultsIncludeTheRecommendedBackends(t *testing.T) {
 		t.Errorf("judge = %+v, want disabled with backend jev", c.Judge)
 	}
 	want := []struct{ name, typ, profile, target, model, probability string }{
-		{"claude-haiku", "anthropic", "", "https://api.anthropic.com:443", "claude-haiku-5-5", "verbalized"},
-		{"claude-sonnet", "anthropic", "", "https://api.anthropic.com:443", "claude-sonnet-5-5", "verbalized-structured-effort-low"},
+		{"claude-haiku", "anthropic", "claude-haiku", "https://api.anthropic.com:443", "claude-haiku-5-5", "verbalized"},
+		{"claude-sonnet", "anthropic", "claude-sonnet", "https://api.anthropic.com:443", "claude-sonnet-5-5", "verbalized-structured-effort-low"},
 		{"gemma4-local", "openai", "gemma4-local", "http://localhost:11434", "gemma4:12b-mlx", "logprobs-reasoning-effort-none"},
 		{"jev", "typesafe", "jev", "https://api.typesafe.ai:443", "jev-latest", "native"},
 	}

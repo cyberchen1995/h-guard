@@ -11,8 +11,9 @@ import (
 // builtinProfiles 是内置后端引用的档案；builtinUncalibrated 是故意还没有档案的内置后端。
 // 两个表合起来必须覆盖 default.yaml 的全部后端：新增内置后端时要在这里明确归类。
 var (
-	builtinProfiles     = map[string]string{"jev": "jev", "gemma4-local": "gemma4-local"}
-	builtinUncalibrated = []string{"claude-haiku", "claude-sonnet"}
+	builtinProfiles = map[string]string{"jev": "jev", "gemma4-local": "gemma4-local",
+		"claude-haiku": "claude-haiku", "claude-sonnet": "claude-sonnet"}
+	builtinUncalibrated = []string{}
 )
 
 // TestBuiltinProfileMatchesTheQuestions：每个引用了档案的内置后端，其档案的指纹都与当前内置题集及该后端的

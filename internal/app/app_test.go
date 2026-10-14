@@ -1266,20 +1266,21 @@ func TestStatusAndListShowHowTheBackendAnswers(t *testing.T) {
 }
 
 // TestBuiltinBackendsInListAndStatus：不写任何配置时，backend list 列出四个内置后端（jev 是默认的 *，
-// 本机回环的 gemma4-local 不警告），模型默认关闭；选 gemma4-local 时 status 显示已校准的档案，选 claude-haiku、
-// claude-sonnet 时在它们的档案写入之前显示 uncalibrated (no_profile)。增减内置后端要在这里有意识地改。
+// 本机回环的 gemma4-local 不警告），模型默认关闭；选 gemma4-local、claude-haiku、claude-sonnet 时 status 都显示
+// 已校准的内置档案。增减内置后端要在这里有意识地改。
 func TestBuiltinBackendsInListAndStatus(t *testing.T) {
 	e := newEnv(t)
 	list, _, code := e.run(nil, "backend", "list")
 	if code != 0 {
 		t.Fatalf("backend list exit %d: %s", code, list)
 	}
-	const uncal = "    calibration: uncalibrated (no_profile); conservative thresholds hit 0.3, veto 0.05, requested 0.9\n"
 	for _, want := range []string{
 		"  claude-haiku (anthropic) https://api.anthropic.com:443\n    answers: forced_tool (probability, scale); probability: verbalized\n" +
-			"    consent: missing; run h-guard backend enable claude-haiku\n" + uncal,
+			"    consent: missing; run h-guard backend enable claude-haiku\n" +
+			"    calibration: profile claude-haiku (hit 0.3, veto 0.05, requested 0.85)\n",
 		"  claude-sonnet (anthropic) https://api.anthropic.com:443\n    answers: json_schema (probability, scale); probability: verbalized-structured-effort-low\n" +
-			"    consent: missing; run h-guard backend enable claude-sonnet\n" + uncal,
+			"    consent: missing; run h-guard backend enable claude-sonnet\n" +
+			"    calibration: profile claude-sonnet (hit 0.3, veto 0.05, requested 0.85)\n",
 		"  gemma4-local (openai) http://localhost:11434\n    answers: logprobs (probability, scale); probability: logprobs-reasoning-effort-none\n" +
 			"    consent: missing; run h-guard backend enable gemma4-local\n" +
 			"    calibration: profile gemma4-local (hit 0.3, veto 0.05, requested 0.9)\n",
@@ -1297,8 +1298,8 @@ func TestBuiltinBackendsInListAndStatus(t *testing.T) {
 	}
 	for name, want := range map[string]string{
 		"gemma4-local":  "calibration: profile gemma4-local (hit 0.3, veto 0.05, requested 0.9)\n",
-		"claude-haiku":  "calibration: uncalibrated (no_profile); conservative thresholds hit 0.3, veto 0.05, requested 0.9\n",
-		"claude-sonnet": "calibration: uncalibrated (no_profile); conservative thresholds hit 0.3, veto 0.05, requested 0.9\n",
+		"claude-haiku":  "calibration: profile claude-haiku (hit 0.3, veto 0.05, requested 0.85)\n",
+		"claude-sonnet": "calibration: profile claude-sonnet (hit 0.3, veto 0.05, requested 0.85)\n",
 	} {
 		e.config("version: 1\njudge: {enabled: true, backend: " + name + "}\n")
 		status, errs, code := e.run(nil, "status")
