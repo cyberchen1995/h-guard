@@ -16,6 +16,8 @@ import (
 // runEval 用标注语料评估判断后端（spec §12）：报告结论与类别识别的准确率；--sweep 复用答案扫描阈值并打印
 // 带指纹的建议档案（不写配置）。会把语料中的命令与指令发给后端，所以先说明目标与条数，在终端里确认或带 --yes。
 // 内置语料是标注数据、不含用户的内容，因此不要求同意记录（同意约束的是 hook 发出的用户数据）。
+// --repeat K 把语料跑 K 遍，K 次结论拼在一起报告与扫描（每条都是单次判断，任一次失败都算失败）；
+// --bootstrap B 对整个扫描重采样，只报告稳定性与乐观偏差，不改建议。
 func runEval(args []string, o Options) int {
 	fs := flag.NewFlagSet("eval", flag.ContinueOnError)
 	fs.SetOutput(o.Stderr)
@@ -23,9 +25,17 @@ func runEval(args []string, o Options) int {
 	sweep := fs.Bool("sweep", false, "scan thresholds with the recorded answers and suggest a profile")
 	casesPath := fs.String("cases", "", "JSONL corpus to use instead of the built-in one")
 	yes := fs.Bool("yes", false, "send the corpus without asking")
+	repeat := fs.Int("repeat", 1, "run the corpus this many times; every run's decisions are pooled and reported")
+	boot := fs.Int("bootstrap", 100, "with --sweep: resample the corpus this many times to test the suggestion (0 disables)")
+	seed := fs.Uint64("seed", 1, "random seed for --bootstrap")
 	extra := fs.String("config", "", "extra config file")
 	pos, err := parseInterleaved(fs, args)
 	if err != nil || len(pos) != 0 {
+		fmt.Fprint(o.Stderr, usage)
+		return 2
+	}
+	if *repeat < 1 || *boot < 0 {
+		fmt.Fprintln(o.Stderr, "h-guard: --repeat must be at least 1 and --bootstrap at least 0")
 		fmt.Fprint(o.Stderr, usage)
 		return 2
 	}
@@ -61,9 +71,13 @@ func runEval(args []string, o Options) int {
 		source = shown(*casesPath)
 	}
 	// 这是一次数据发送授权：写明目标、来源与发送的内容（评审：--cases 的语料可能含用户数据）
-	fmt.Fprintf(o.Stderr, "h-guard eval sends %d cases from %s to backend %s (%s) %s: each command and its user instructions,\n"+
+	times := ""
+	if *repeat > 1 {
+		times = fmt.Sprintf(" %d times (--repeat)", *repeat)
+	}
+	fmt.Fprintf(o.Stderr, "h-guard eval sends %d cases from %s to backend %s (%s) %s%s: each command and its user instructions,\n"+
 		"with credentials that h-guard recognizes masked; the cwd, harness and tool are fixed placeholders.\n",
-		len(cases), source, shown(name), st.typ, targetOf(st))
+		len(cases), source, shown(name), st.typ, targetOf(st), times)
 	if !*yes {
 		if !o.IsTerminal() {
 			fmt.Fprintln(o.Stderr, "h-guard: not a terminal; pass --yes to send without asking")
@@ -76,12 +90,26 @@ func runEval(args []string, o Options) int {
 			return 1
 		}
 	}
-	env := eval.Env{Rules: s.rules, Config: s.cfg, Backend: st.backend, Thresholds: st.thresholds,
-		Progress: func(i, n int, out eval.Outcome) {
-			fmt.Fprintf(o.Stderr, "[%d/%d] %s -> %s\n", i, n, shown(out.Case.Command), out.Decision)
-		}}
+	env := eval.Env{Rules: s.rules, Config: s.cfg, Backend: st.backend, Thresholds: st.thresholds}
 	ctx := context.Background()
-	outs, err := eval.Run(ctx, env, cases)
+	var runs [][]eval.Outcome
+	for k := 1; k <= *repeat; k++ {
+		prefix := ""
+		if *repeat > 1 {
+			prefix = fmt.Sprintf("[run %d/%d] ", k, *repeat)
+		}
+		env.Progress = func(i, n int, out eval.Outcome) {
+			fmt.Fprintf(o.Stderr, "%s[%d/%d] %s -> %s\n", prefix, i, n, shown(out.Case.Command), out.Decision)
+		}
+		outs, err := eval.Run(ctx, env, cases)
+		if err != nil {
+			fmt.Fprintln(o.Stderr, "h-guard:", shown(err.Error()))
+			return 1
+		}
+		runs = append(runs, outs)
+	}
+	outs := eval.Pool(runs)
+	margins, err := eval.Margins(ctx, env, outs, st.thresholds)
 	if err != nil {
 		fmt.Fprintln(o.Stderr, "h-guard:", shown(err.Error()))
 		return 1
@@ -91,7 +119,10 @@ func runEval(args []string, o Options) int {
 	for _, r := range s.rules.All() {
 		ids = append(ids, r.ID)
 	}
-	eval.Report(o.Stdout, outs, ids, nil)
+	eval.Report(o.Stdout, outs, ids, margins)
+	if *repeat > 1 {
+		eval.WriteRepeatability(o.Stdout, eval.Repeat(runs))
+	}
 	// 调用失败时结论来自保守处理，不扫描、不建议；退出码为 1，并在 stderr 写明——stdout 常被重定向到文件，
 	// 否则用户只看到退出码 0（如 API key 没传进来，全部调用都以 auth 失败）
 	if failed := eval.Failed(outs); failed > 0 {
@@ -114,7 +145,7 @@ func runEval(args []string, o Options) int {
 		}
 		return 0
 	}
-	tables, th, score, err := eval.Sweep(ctx, env, outs, st.thresholds, 1)
+	tables, th, score, err := eval.Sweep(ctx, env, outs, st.thresholds, *repeat)
 	if err != nil {
 		fmt.Fprintln(o.Stderr, "h-guard:", shown(err.Error()))
 		return 1
@@ -124,6 +155,16 @@ func runEval(args []string, o Options) int {
 	if incomplete > 0 {
 		fmt.Fprintf(o.Stdout, "\nNo profile suggested: %d cases had questions without a valid answer. Fix the backend and run again.\n", incomplete)
 		return 1
+	}
+	var notes []string
+	if *boot > 0 {
+		bs, err := eval.BootstrapSweep(ctx, env, outs, len(cases), st.thresholds, th, *boot, *seed)
+		if err != nil {
+			fmt.Fprintln(o.Stderr, "h-guard:", shown(err.Error()))
+			return 1
+		}
+		eval.WriteBootstrap(o.Stdout, bs)
+		notes = eval.BootstrapNotes(bs)
 	}
 	profile := st.cal.Profile
 	if profile == "" {
@@ -135,7 +176,7 @@ func runEval(args []string, o Options) int {
 		fmt.Fprintln(o.Stderr, "h-guard:", err)
 		return 1
 	}
-	fmt.Fprint(o.Stdout, eval.ProfileYAML(profile, th, eval.Fingerprint(st.backend, action.QuestionSet(builtin)), score, len(cases), nil))
+	fmt.Fprint(o.Stdout, eval.ProfileYAML(profile, th, eval.Fingerprint(st.backend, action.QuestionSet(builtin)), score, len(outs), notes))
 	if own := s.ownQuestions(); len(own) > 0 {
 		fmt.Fprintf(o.Stdout, "# Your rules %s ask their own questions; the fingerprint covers only the built-in ones.\n", strings.Join(own, ", "))
 	}
