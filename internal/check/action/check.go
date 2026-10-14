@@ -170,7 +170,7 @@ func (c *Check) evalExec(ctx context.Context, ev guard.Event, ex *guard.ExecActi
 		in.Judge, in.JudgeFallback = JudgeFailed, FallbackJudgeUnavailable
 	default:
 		state, truncated := BuildState(StateInput{
-			Harness: ev.Harness, Tool: ev.Tool, Command: ex.Command, Cwd: ev.Cwd, Requests: requests,
+			Harness: ev.Harness, Tool: ev.Tool, Command: ex.Command, Cwd: ev.Cwd, Shell: ex.Shell, Requests: requests,
 			MaxCommandChars: c.Config.Policy.MaxCommandChars, MaxRequestChars: c.Config.Policy.MaxRequestChars,
 		})
 		qs := questions(c.Rules, policyRules)

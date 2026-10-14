@@ -153,6 +153,9 @@ func TestPowerShellFullTexts(t *testing.T) {
 		{"Remove-Item `\r\n-Recurse x", "Remove-Item -Recurse x"},
 		{"Write-Output 'a`\nb'", ""},
 		{"ls # a`\nb", ""},
+		// 代码里的反引号转义也去掉：R`emove-Item 就是 Remove-Item；字符串里的不动
+		{"R`emove-Item -Rec`urse x", "Remove-Item -Recurse x"},
+		{"Write-Output \"a`tb\"", ""},
 		{"Remove-Item -Recurse x", ""},
 	} {
 		got := pwsh(t, c.in).Units[0].FullTexts()

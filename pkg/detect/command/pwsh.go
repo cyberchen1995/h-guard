@@ -32,15 +32,15 @@ type pwToken struct {
 	comma      bool     // 词：以未转义的逗号结尾（数组未完，下一行接着读）
 }
 
-// pwLexed 是一段 PowerShell 命令的词法分析结果。conts 是代码里的续行（反引号加换行，或反引号加 \r\n）：
-// 起点与长度。
+// pwLexed 是一段 PowerShell 命令的词法分析结果。conts 是代码里要去掉的字符：续行（反引号加换行，或反引号加
+// \r\n）与转义用的反引号（R`emove-Item 就是 Remove-Item），记为起点与长度。字符串里的反引号不在其中。
 type pwLexed struct {
 	src    string
 	tokens []pwToken
 	conts  [][2]int
 }
 
-// join 返回 src[a:b] 去掉其中续行后的文本。
+// join 返回 src[a:b] 去掉其中续行与转义反引号后的文本。
 func (lx pwLexed) join(a, b int) string {
 	var sb strings.Builder
 	last := a
@@ -264,6 +264,7 @@ func (l *pwLexer) readWord(start int) pwToken {
 				return t
 			}
 			if i+1 < len(s) {
+				l.lx.conts = append(l.lx.conts, [2]int{i, 1})
 				val.WriteByte(s[i+1])
 				bare.WriteString(s[i : i+2])
 				i += 2
@@ -451,6 +452,7 @@ func (l *pwLexer) skipCode(i int, closer byte) int {
 			tokenStart = true
 			continue
 		case c == '`':
+			l.lx.conts = append(l.lx.conts, [2]int{i, 1})
 			i += 2
 		case c == closer:
 			return i

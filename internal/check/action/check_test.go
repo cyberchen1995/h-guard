@@ -788,6 +788,36 @@ func TestSensitiveRead(t *testing.T) {
 	}
 }
 
+// TestPowerShellStateNamesTheShell：PowerShell 的 exec 动作发给模型的 state 带 call.shell。
+func TestPowerShellStateNamesTheShell(t *testing.T) {
+	b := &fakeBackend{answers: with(low(), action.SignalRequested, 0.0)}
+	ev := event(nil, "Remove-Item -Recurse -Force .\\build")
+	ev.Actions[0].Exec.Shell = guard.ShellPowerShell
+	run(t, newCheck(t, true, action.Judge{Backend: b}), ev)
+	if len(b.states) != 1 || b.states[0]["call"].(map[string]any)["shell"] != "powershell" {
+		t.Errorf("states = %v", b.states)
+	}
+}
+
+// TestPowerShellPublishAsksWhenTheJudgeIsUnsure：远端写请求的本地命中在模型不确定时（概率在否决与命中阈值之间）
+// 照常请求确认；请求正文里的本机 URL 不能消掉这个命中（计划评审 M3B-07）。
+func TestPowerShellPublishAsksWhenTheJudgeIsUnsure(t *testing.T) {
+	b := &fakeBackend{answers: with(low(), "publish", 0.35, action.SignalRequested, 0.0, action.SignalRadius, []float64{0, 0, 1, 0})}
+	for _, cmd := range []string{
+		"Invoke-RestMethod -Uri https://api.example.com/deploy -Method Post -Body 'http://localhost/payload'",
+		"Invoke-RestMethod -Uri $url -Method Post -Body 'http://localhost/payload'",                                           // 计划第二轮评审 R2-04
+		"Invoke-RestMethod -Method Post -Body 'http://localhost/;x' -Uri https://api.example.com/deploy",                      // 同上
+		"Invoke-RestMethod -Uri https://api.example.com/deploy -Method Post -Body \"hello`\" -Uri http://localhost/payload\"", // 第三轮 R3-03
+	} {
+		ev := event(nil, cmd)
+		ev.Actions[0].Exec.Shell = guard.ShellPowerShell
+		if v := run(t, newCheck(t, true, action.Judge{Backend: b}), ev); v.Decision != guard.DecisionAsk ||
+			!slices.ContainsFunc(v.Findings, func(f guard.Finding) bool { return f.Rule == "publish" }) {
+			t.Errorf("%s: verdict = %+v", cmd, v)
+		}
+	}
+}
+
 // TestSignalIDsAreReserved：规则 id 不能与信号题同名，否则两道题的答案会混在一起（M2 遗留）。
 func TestSignalIDsAreReserved(t *testing.T) {
 	if !slices.Equal(rules.ReservedIDs, []string{action.SignalRequested, action.SignalRadius}) {

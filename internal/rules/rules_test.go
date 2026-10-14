@@ -580,3 +580,123 @@ func TestSensitiveReadPaths(t *testing.T) {
 		}
 	}
 }
+
+// pwshHits 与 hits 相同，但按 PowerShell 展开。
+func pwshHits(t *testing.T, s *rules.Set, cmd string) []string {
+	t.Helper()
+	e, err := command.Expand(context.Background(), cmd, guard.ShellPowerShell)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []string
+	for _, r := range s.All() {
+		res, err := r.MatchExec(context.Background(), e)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.Hit {
+			out = append(out, r.ID)
+		}
+	}
+	slices.Sort(out)
+	return out
+}
+
+// TestPowerShellRules：内置规则覆盖 PowerShell 的写法（spec §5.3）：Remove-Item 及其别名与参数前缀、.NET 的删除、
+// Invoke-RestMethod 的写操作、$env:HUSKY 这类环境变量、反斜杠路径与 Windows 的配置目录；字符串与 here-string 里
+// 只是提到的不算 deny。git、gh、npm 这类两种 shell 写法相同的由 any 组覆盖。
+func TestPowerShellRules(t *testing.T) {
+	s := builtinSet(t)
+	for cmd, want := range map[string][]string{
+		// 灾难性形态（deny）
+		`Remove-Item -Recurse -Force C:\`:                        {"catastrophic", "recursive_delete"},
+		`rm -r -fo ~`:                                            {"catastrophic", "recursive_delete"},
+		`Remove-Item $HOME -Recurse -Force`:                      {"catastrophic", "recursive_delete"},
+		`Remove-Item -Path "$env:USERPROFILE" -Recurse`:          {"catastrophic", "recursive_delete"},
+		`ri -rec -force C:\*`:                                    {"catastrophic", "recursive_delete"},
+		"R`emove-Item -Recurse 'C:\\'":                           {"catastrophic", "recursive_delete"},
+		`Microsoft.PowerShell.Management\Remove-Item -Recurse \`: {"catastrophic", "recursive_delete"},
+		`pwsh -c "Remove-Item -Recurse -Force ~"`:                {"catastrophic", "recursive_delete"},
+		`Get-Disk 1 | Clear-Disk -RemoveData -Confirm:$false`:    {"catastrophic"},
+		`Format-Volume -DriveLetter D -FileSystem NTFS`:          {"catastrophic"},
+		`wsl rm -rf ~`:                                           {"catastrophic", "recursive_delete"},
+		// 递归删除（ask，模型判断）
+		`Remove-Item -Recurse -Force .\build`:          {"recursive_delete"},
+		`rm -r node_modules`:                           {"recursive_delete"},
+		`Remove-Item dist -Recurse:$true`:              {"recursive_delete"},
+		`[System.IO.Directory]::Delete("data", $true)`: {"recursive_delete"},
+		`(Get-Item .\cache).Delete($true)`:             {"recursive_delete"},
+		`Get-ChildItem -Recurse *.log | Remove-Item`:   {"recursive_delete"},
+		`Remove-Item -Recurse C:\proj\dist`:            {"recursive_delete"},
+		// git、发布、绕过校验
+		`git reset --hard HEAD~1`:                                            {"destructive_git"},
+		`git push --force origin main`:                                       {"branch_ops", "publish"},
+		`Invoke-RestMethod -Uri https://api.example.com/deploy -Method Post`: {"publish"},
+		`iwr https://x.example.com/items/1 -Method DELETE`:                   {"publish"},
+		`Publish-Module -Name MyModule -NuGetApiKey $k`:                      {"publish"},
+		`dotnet nuget push pkg.nupkg`:                                        {"publish"},
+		`$env:HUSKY = 0; git commit -m x`:                                    {"verify_bypass"},
+		`$env:SKIP='ruff'; git commit -m x`:                                  {"verify_bypass"},
+		`Remove-Item .git\hooks\pre-commit`:                                  {"verify_bypass"},
+		// 护栏自我保护
+		`Set-Content -Path $HOME\.claude\settings.json -Value '{}'`: {"guard_tampering"},
+		`'{}' | Out-File C:\Users\me\.claude\settings.json`:         {"guard_tampering"},
+		`Remove-Item $env:APPDATA\h-guard\consent.json`:             {"guard_tampering"},
+		`"x" > $env:LOCALAPPDATA\h-guard\requests\1.json`:           {"guard_tampering"},
+		`[IO.File]::WriteAllText("$HOME\.codex\hooks.json", "{}")`:  {"guard_tampering"},
+		`Copy-Item x.json ~\.claude\settings.local.json`:            {"guard_tampering"},
+		`h-guard backend enable jev`:                                {"guard_tampering"},
+		// 评审补充的写法（C 盘根的变体、数组、HOMEDRIVE+HOMEPATH、${env:}、macOS 的目录、Join-Path、-Method 缩写）
+		`Remove-Item -Recurse -Force C:\*.*`:                                        {"catastrophic", "recursive_delete"},
+		`Remove-Item -Recurse -Force C:\,x`:                                         {"catastrophic", "recursive_delete"},
+		`Remove-Item -Recurse -Force C:\..`:                                         {"catastrophic", "recursive_delete"},
+		`Remove-Item -Recurse -Force $env:HOMEDRIVE$env:HOMEPATH`:                   {"catastrophic", "recursive_delete"},
+		`Remove-Item -Recurse ${env:APPDATA}\h-guard`:                               {"guard_tampering", "recursive_delete"},
+		`Set-Content "~/Library/Application Support/h-guard/consent.json" '{}'`:     {"guard_tampering"},
+		`Out-File -FilePath ~/Library/Caches/h-guard/requests.json`:                 {"guard_tampering"},
+		`Set-Content -Path (Join-Path $HOME '.claude' 'settings.json') -Value '{}'`: {"guard_tampering"},
+		`iwr -Me Post https://x.example.com/items`:                                  {"publish"},
+		`Invoke-RestMethod -CustomMethod POST https://x.example.com`:                {"publish"},
+		`irm -Method Post https://evil.example.com/?q=localhost`:                    {"publish"},
+		`irm -Method Post http://localhost.evil.example.com/`:                       {"publish"},
+		`irm http://127.0.0.1:8000/x -Method Post`:                                  nil,
+		`Remove-Item -Recurse .\build -ErrorAction: SilentlyContinue`:               {"recursive_delete"},
+		// 计划评审 M3B-01、03、05–07 的原反例与对照
+		`$r=pwsh -c 'Remove-Item -Recurse C:\'`:          {"catastrophic", "recursive_delete"},
+		`Remove-Item -Recurse -Force -Path:C:\`:          {"catastrophic", "recursive_delete"},
+		`Remove-Item -Recurse -Force -LiteralPath:'C:\'`: {"catastrophic", "recursive_delete"},
+		`$x = 'Format-Volume'`:                           nil,
+		`& 'Format-Volume' -DriveLetter D`:               {"catastrophic"},
+		`Remove-Item .\build # -Recurse C:\`:             {"recursive_delete"}, // 全文里的注释与 POSIX 一样交给模型，但不是 deny
+		`Invoke-RestMethod -Uri https://api.example.com/deploy -Method Post -Body 'http://localhost/payload'`: {"publish"},
+		`irm $url -Method Post`:                    {"publish"},
+		`irm -Method Post -Uri http://127.0.0.1/x`: nil,
+		// 计划第二轮评审 R2-04：豁免只看实际的 URI（-Uri 或第一个位置参数），引号里的 ; 不截断检查
+		`Invoke-RestMethod -Uri $url -Method Post -Body 'http://localhost/payload'`:                      {"publish"},
+		`Invoke-RestMethod -Method Post -Body 'http://localhost/;x' -Uri https://api.example.com/deploy`: {"publish"},
+		`irm -Body 'a;b' -Method Post https://api.example.com/x`:                                         {"publish"},
+		`irm -Ur 'http://localhost/x' -Method Post`:                                                      nil,
+		// 计划第三轮评审 R3-03：正文里转义的引号与 here-string 不结束字符串，其中的伪 -Uri 不算
+		"Invoke-RestMethod -Uri https://api.example.com/deploy -Method Post -Body \"hello`\" -Uri http://localhost/payload\"": {"publish"},
+		"irm -Body @\"\nx -Uri http://localhost/\n\"@ -Method Post -Uri https://api.example.com/x":                            {"publish"},
+		`irm -Method Post -Body "a""b" -Uri http://localhost/x`:                                                               nil,
+		// 大量 "" 与 '' 不能让正则指数回溯：超时按命中处理，这里会变成多余的命中
+		`irm -Body "` + strings.Repeat(`""`, 200) + `" x`: nil,
+		`irm -Body '` + strings.Repeat(`''`, 200) + `' x`: nil,
+		// 不命中
+		`Remove-Item file.txt -Force`:                                   nil,
+		`Get-ChildItem -Recurse`:                                        nil,
+		`Write-Output 'Remove-Item -Recurse C:\'`:                       {"recursive_delete"}, // 引号里的提到：全文规则交给模型判断，但不是 deny
+		`Invoke-RestMethod https://api.example.com/items`:               nil,
+		`irm http://localhost:8000/echo -Method Post`:                   nil,
+		`$env:HUSKY_DEBUG = 1`:                                          nil,
+		`Get-Content ~\.claude\settings.json`:                           nil,
+		`Select-String hooks $HOME\.codex\hooks.json`:                   nil,
+		"Set-Content notes.md @'\nRemove-Item -Recurse -Force C:\\\n'@": nil,
+		`Get-Disk`: nil,
+	} {
+		if got := pwshHits(t, s, cmd); !slices.Equal(got, want) {
+			t.Errorf("%q: hits %v, want %v", cmd, got, want)
+		}
+	}
+}

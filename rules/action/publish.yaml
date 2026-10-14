@@ -9,7 +9,7 @@ reason:
   zh-CN: '向远端发布或修改远端状态（push、PR/MR、release、registry、写 API）'
 match:
   exec:
-    # 沿用 Python 版正则，M1 全部放在 any 组；M3 加入 PowerShell 检测时再按 shell 分组
+    # any 组沿用 Python 版正则，两种 shell 都适用（M3b 不拆分，只收紧）；PowerShell 专有的写法在 powershell 组
     any:
       - '\bgit(?:\.exe)?\b[^\n;&|]*\bpush\b(?![^\n;&|]*--dry-run)'
       - '\bgh(?:\.exe)?\s+pr\s+(?:create|merge|close|edit|comment|review|ready|reopen)\b'
@@ -21,6 +21,17 @@ match:
       - '\b(?:npm|pnpm|yarn)\s+publish\b'
       - '\b(?:twine\s+upload|uv\s+publish|cargo\s+publish|gem\s+push|docker\s+push)\b'
       - '\b(?:curl|wget|http|https)\b[^\n;&|]*(?:-X\s*|--request(?:=|\s+)|--method(?:=|\s+))(?:POST|PUT|PATCH|DELETE)\b(?![^\n;&|]*(?:localhost|127\.0\.0\.1))'
+    # PowerShell（M3b）：Invoke-RestMethod / Invoke-WebRequest（5.1 里 curl、wget 是它们的别名）的写操作，
+    # -Method 可缩写（-Me），也可用 -CustomMethod；只在实际的 URI 是本机时豁免：-Uri（或 -Ur）的值、或紧跟命令的
+    # 第一个位置参数是本机 URL。正文、请求头里的本机 URL 不算，URI 是变量时照常命中；扫描时按 PowerShell 的规则
+    # 跳过字符串（here-string、单引号里的 ''、双引号里的反引号转义与 ""）与引号外的反引号转义，字符串里的
+    # ; & | 与伪参数都不算；字符串内部用原子组，'' 与 "" 只有一种读法，不会指数回溯（计划评审 M3B-07、第二轮 R2-04、
+    # 第三轮 R3-03）；
+    # 发布 PowerShell 模块与 NuGet 包
+    powershell:
+      - '\b(?:invoke-restmethod|irm|invoke-webrequest|iwr|curl|wget)\b(?=(?:@''[ \t]*\r?\n[\s\S]*?\n''@|@"[ \t]*\r?\n[\s\S]*?\n"@|''(?>(?:[^'']|'''')*)''|"(?>(?:[^"`]|`[\s\S]|"")*)"|`[\s\S]|[^\n;&|''"`])*\s-(?:me(?:t(?:h(?:o(?:d)?)?)?)?|custommethod)(?::|\s+)[''"]?(?:post|put|patch|delete)\b)(?!\s+[''\"]?https?://(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?(?:[/\s''"]|$)|(?:@''[ \t]*\r?\n[\s\S]*?\n''@|@"[ \t]*\r?\n[\s\S]*?\n"@|''(?>(?:[^'']|'''')*)''|"(?>(?:[^"`]|`[\s\S]|"")*)"|`[\s\S]|[^\n;&|''"`])*\s-ur(?:i)?(?::|\s+)[''"]?https?://(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?(?:[/\s''"]|$))'
+      - '\b(?:publish-module|publish-script|publish-psresource)\b'
+      - '\bnuget(?:\.exe)?\s+push\b'
 question:
   kind: probability
   instructions:
@@ -32,6 +43,10 @@ question:
     'false': 'It only reads from remotes or stays local, or the text is only mentioned and never executed.'
 examples:
   hit:
+    - {shell: powershell, command: "Invoke-RestMethod -Uri https://api.example.com/deploy -Method Post"}
+    - {shell: powershell, command: "dotnet nuget push pkg.nupkg"}
+    - {shell: powershell, command: "Invoke-RestMethod -Uri https://api.example.com/deploy -Method Post -Body 'http://localhost/payload'"}
+    - {shell: powershell, command: "git push origin main"}
     - {shell: posix, command: "git push"}
     - {shell: posix, command: "git push -u origin HEAD"}
     - {shell: posix, command: "gh pr create --fill"}
@@ -41,6 +56,8 @@ examples:
     - {shell: posix, command: "glab mr create"}
     - {shell: posix, command: "curl -X POST https://api.example.com/deploy"}
   miss:
+    - {shell: powershell, command: "Invoke-RestMethod https://api.example.com/items"}
+    - {shell: powershell, command: "irm http://localhost:8000/echo -Method Post"}
     - {shell: posix, command: "git push --dry-run"}
     - {shell: posix, command: "git fetch"}
     - {shell: posix, command: "gh pr view 12"}

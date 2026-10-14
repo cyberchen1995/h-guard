@@ -90,7 +90,7 @@ func (e *Expansion) expand(ctx context.Context, text string, shell guard.Shell, 
 		stripped, sub := pwshExpand(text)
 		u := Unit{Text: stripped, Depth: depth, Shell: shell}
 		if lx := pwshLex(stripped); len(lx.conts) > 0 {
-			u.joined = lx.join(0, len(stripped)) // 反引号续行
+			u.joined = lx.join(0, len(stripped)) // 反引号续行与代码里的转义反引号
 		}
 		e.Units = append(e.Units, u)
 		inner = sub

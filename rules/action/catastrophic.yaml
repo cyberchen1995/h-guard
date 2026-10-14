@@ -9,7 +9,7 @@ reason:
   zh-CN: '灾难性操作：删除根目录或家目录、覆写块设备、格式化文件系统'
 match:
   exec:
-    # 沿用 Python 版正则，M1 全部放在 any 组；M3 加入 PowerShell 检测时再按 shell 分组
+    # any 组沿用 Python 版正则，两种 shell 都适用（M3b 不拆分，只收紧）；PowerShell 专有的写法在 powershell 组
     any:
       - '^rm(?:\.exe)?\s+(?:-\S+\s+)*-[a-z]*r[a-z]*\s+(?:-\S+\s+)*(?:/|/\*|~|~/|~/\*|\$HOME|\$\{HOME\}|\$HOME/\*)(?:\s|$|[;&|])'
       - '^rm(?:\.exe)?\s+(?:-\S+\s+)*--recursive\b[^\n]*\s(?:/|/\*|~|~/|~/\*|\$HOME|\$\{HOME\}|\$HOME/\*)(?:\s|$)'
@@ -19,7 +19,16 @@ match:
       # （同一段、组合命令或前面的 exec），正则确认不了。后两类与 M1 一样拒绝
       - '^dd\b[^\n]*\bof=/dev/(?!(?:null|zero|tty|u?random)(?![\w./-]))'
       - '^(?:mkfs(?:\.\w+)?|mke2fs|mkdosfs|mkntfs)\b[^\n]*/dev/'
-      - '^(?:remove-item|rd|rmdir)\b[^\n]*-(?:recurse|r)\b[^\n]*[a-z]:\\?(?:\s|$)'
+      # 盘符前须是空白或引号：-ErrorAction: SilentlyContinue 里的 n: 不是盘符（评审 M2）
+      - '^(?:remove-item|rd|rmdir)\b[^\n]*-(?:recurse|r)\b[^\n]*(?<=[\s''"])[a-z]:\\?(?:\s|$)'
+    # PowerShell（M3b）：Remove-Item 及其别名递归删除盘符根（含 C:\*.*、C:\..）、主目录或系统目录；参数可以是
+    # -Recurse 的任意前缀与 -Recurse:$true，顺序任意，路径可带引号、可在数组里（C:\,x），-Path 与 -LiteralPath 可用冒号
+    # 绑定（-Path:C:\，计划评审 M3B-03）；格式化与清空磁盘。
+    # 经管道送来的目标（Get-Item C:\ | Remove-Item -Recurse）不在此列，与 POSIX 的 xargs 一样（已知边界）
+    powershell:
+      - '^(?:remove-item|rm|del|erase|rd|rmdir|ri)\b(?=[^\n]*\s-r(?:e(?:c(?:u(?:r(?:s(?:e)?)?)?)?)?)?(?::\$true)?(?:\s|$))[^\n]*[\s,](?:-(?:pa(?:th?)?|li(?:t(?:e(?:r(?:a(?:l(?:p(?:a(?:th?)?)?)?)?)?)?)?)?|lp|pspath)(?::\s*|\s+))?[''"]?(?:[a-z]:(?:[\\/](?:\*(?:\.\*)?|\.{1,2})?)?|[\\/](?:\*(?:\.\*)?)?|~(?:[\\/]\*?)?|\$home(?:[\\/]\*?)?|\$env:homedrive\$env:homepath(?:[\\/]\*?)?|\$env:(?:userprofile|homedrive|systemdrive|systemroot|windir)(?:[\\/]\*?)?|[a-z]:[\\/](?:windows|users|program files(?: \(x86\))?)(?:[\\/]\*?)?)[''"]?(?:\s|$|,)'
+      - '^(?:format-volume|clear-disk|initialize-disk|remove-partition)\b'
+      - '^format(?:\.com)?\s+[a-z]:'
     command_position: true
     # 重定向视图（词法分析给出的「命令词 重定向」，评审 R2-04、R3-01）：dd 的输出、或没有命令词的重定向
     # （组合命令 ( … ) >/dev/sda、bash 的 &>）写到设备时拒绝。of=/dev/null 2>/dev/sda 会把状态信息写进磁盘。
@@ -30,6 +39,16 @@ match:
       - '^dd (?:[0-9]+)?<>/dev/(?!(?:null|zero|tty|u?random|stdout|stderr)$)'
 examples:
   hit:
+    - {shell: powershell, command: "Remove-Item -Recurse -Force C:\\"}
+    - {shell: powershell, command: "rm -r -fo ~"}
+    - {shell: powershell, command: "Remove-Item -Path \"$env:USERPROFILE\" -Recurse"}
+    - {shell: powershell, command: "R`emove-Item -Recurse 'C:\\'"}
+    - {shell: powershell, command: "Get-Disk 1 | Clear-Disk -RemoveData"}
+    - {shell: powershell, command: "Remove-Item -Recurse -Force C:\\*.*"}
+    - {shell: powershell, command: "Remove-Item -Recurse -Force $env:HOMEDRIVE$env:HOMEPATH"}
+    - {shell: powershell, command: "Remove-Item -Recurse -Force -Path:C:\\"}
+    - {shell: powershell, command: "Remove-Item –Recurse –Force C:\\"}
+    - {shell: powershell, command: "pwsh -c \"Remove-Item -Recurse -Force ~\""}
     - {shell: posix, command: "rm -rf /"}
     - {shell: posix, command: "sudo rm -rf ~"}
     - {shell: posix, command: "rm -rf $HOME/*"}
@@ -56,6 +75,14 @@ examples:
     - {shell: posix, command: "/bin/rm -rf /"}
     - {shell: posix, command: "timeout 5 rm -rf /"}
   miss:
+    - {shell: powershell, command: "Remove-Item -Recurse -Force .\\build"}
+    - {shell: powershell, command: "Remove-Item -Recurse C:\\proj\\dist"}
+    - {shell: powershell, command: "Write-Output 'Remove-Item -Recurse C:\\'"}
+    - {shell: powershell, command: "Set-Content notes.md @'\nRemove-Item -Recurse -Force C:\\\n'@"}
+    - {shell: powershell, command: "Get-Disk"}
+    - {shell: powershell, command: "$x = 'Format-Volume'"}
+    - {shell: powershell, command: "Remove-Item .\\build # -Recurse C:\\"}
+    - {shell: powershell, command: "Remove-Item -Recurse .\\build -ErrorAction: SilentlyContinue"}
     - {shell: posix, command: "dd if=/dev/zero of=/dev/null bs=1m count=100"}
     - {shell: posix, command: "dd if=/dev/zero of=/dev/null 2>/dev/null"}
     - {shell: posix, command: "dd if=/dev/zero of=/dev/null bs=1M count=1 # example alternative: >/dev/sda"}
