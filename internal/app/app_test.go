@@ -752,6 +752,59 @@ func TestCheckShowRequest(t *testing.T) {
 	}
 }
 
+// TestCheckNoJudgeIgnoresTheJudgeConfig：--no-judge 只跑本地规则，判断后端答不了全部题型（配置期的能力错误）时
+// 照样可用；不带它时仍报配置错误（终审 M-1）。
+func TestCheckNoJudgeIgnoresTheJudgeConfig(t *testing.T) {
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := newEnv(t)
+	e.config("version: 1\njudge: {enabled: true, backend: local}\nbackends: {local: {type: exec, command: '" + self + "', kinds: [probability]}}\n")
+	if out, stderr, code := e.run(nil, "check", "rm -rf src", "--no-judge"); code != 0 || !strings.Contains(out, "decision: ") {
+		t.Errorf("check --no-judge: exit %d, stdout %q, stderr %q", code, out, stderr)
+	}
+	if _, stderr, code := e.run(nil, "check", "rm -rf src"); code != 1 || !strings.Contains(stderr, "cannot answer scale questions") {
+		t.Errorf("check: exit %d, stderr %q", code, stderr)
+	}
+}
+
+// TestCheckShowRequestPrintsTheFailure：--show-request 时调用失败的类别与固定说明写到 stderr，后端有提示的
+// （anthropic tool 方式收到 HTTP 400）再打印提示，用户不必跑 eval 就知道该改什么（已定决策 3，终审 M-2）。
+// 不带 --show-request 时 stderr 保持为空。
+func TestCheckShowRequestPrintsTheFailure(t *testing.T) {
+	e := newEnv(t)
+	t.Setenv("HG_TEST_KEY", "test-key-not-a-secret")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		io.WriteString(w, `{"type":"error","error":{"type":"invalid_request_error","message":"tool_choice: type \"tool\" is not supported"}}`)
+	}))
+	defer srv.Close()
+	id := consent.Identity{Backend: "claude", Type: "anthropic", Target: srv.URL}
+	if err := (consent.Store{Dir: e.configDir}).Grant(id, []consent.Scope{consent.ScopeAction}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	const failure = "h-guard: the backend failed: bad_response (HTTP 400)\n"
+	const hint = "h-guard: hint: If this model rejects forced tool use"
+	for answer, wantHint := range map[string]bool{"tool": true, "structured": false} {
+		e.config("version: 1\njudge: {enabled: true, backend: claude}\nbackends: {claude: {type: anthropic, model: m, answer: " + answer +
+			", base_url: '" + srv.URL + "', api_key_env: HG_TEST_KEY, retries: 0}}\n")
+		out, stderr, code := e.run(nil, "check", "git push origin main", "--show-request")
+		if code != 0 || !strings.Contains(out, "judge_unavailable") || strings.Count(stderr, failure) != 1 {
+			t.Fatalf("answer %s: exit %d, stdout %q, stderr %q", answer, code, out, stderr)
+		}
+		if got := strings.Count(stderr, hint); wantHint && (got != 1 || strings.Index(stderr, hint) < strings.Index(stderr, failure)) || !wantHint && got != 0 {
+			t.Errorf("answer %s: the hint appears %d times, stderr %q", answer, got, stderr)
+		}
+		if strings.Contains(stderr, "test-key-not-a-secret") || strings.Contains(stderr, "tool_choice") {
+			t.Errorf("answer %s: stderr echoes the key or the response body: %q", answer, stderr)
+		}
+		if _, stderr, _ := e.run(nil, "check", "git push origin main"); stderr != "" {
+			t.Errorf("answer %s: check without --show-request wrote %q", answer, stderr)
+		}
+	}
+}
+
 // TestMissingExtraConfigIsAnError：--config 指定的文件不存在时报错，不再静默忽略（M1 遗留问题）。
 func TestMissingExtraConfigIsAnError(t *testing.T) {
 	e := newEnv(t)

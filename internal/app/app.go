@@ -158,7 +158,11 @@ type setup struct {
 // load 读取配置（内置默认 → 用户配置 → extra）、规则包（内置 → 用户目录）与 .env，并做配置期的能力校验
 // （judgeKindsError）。
 // 消息目录总能加载（内嵌）；返回的 setup 在出错时仍带 catalog 与 locale，供渲染兜底结论。
-func load(o Options, extra string) (setup, error) {
+func load(o Options, extra string) (setup, error) { return loadConfig(o, extra, true) }
+
+// loadConfig 同 load；checkKinds 为假时跳过配置期的题型校验，只给 check --no-judge 用：它不调用判断后端，
+// 后端答不了哪些题与它无关，用户正要排查判断后端时本地规则也得能跑（终审 M-1）。
+func loadConfig(o Options, extra string, checkKinds bool) (setup, error) {
 	s := setup{locale: i18n.DefaultLocale}
 	cat, err := i18n.Load()
 	if err != nil {
@@ -181,8 +185,10 @@ func load(o Options, extra string) (setup, error) {
 	}
 	s.cfg = cfg
 	s.locale = i18n.SelectLocale(cfg.Locale, o.Getenv)
-	if err := judgeKindsError(cfg); err != nil {
-		return s, err
+	if checkKinds {
+		if err := judgeKindsError(cfg); err != nil {
+			return s, err
+		}
 	}
 	set, err := rules.Load(under(o.ConfigDir, "rules"))
 	if err != nil {

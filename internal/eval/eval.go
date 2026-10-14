@@ -151,7 +151,7 @@ func Run(ctx context.Context, env Env, cases []Case) ([]Outcome, error) {
 		if rec.rec != nil {
 			o.Called, o.Latency, o.Invalid = true, rec.rec.latency, rec.rec.invalid
 			if rec.rec.err != nil {
-				o.Err, o.ErrDetail = string(judge.KindOf(rec.rec.err)), errDetail(rec.rec.err)
+				o.Err, o.ErrDetail = string(judge.KindOf(rec.rec.err)), ErrDetail(rec.rec.err)
 			}
 		}
 		out = append(out, o)
@@ -334,8 +334,8 @@ func Failed(outs []Outcome) int {
 	return n
 }
 
-// errDetail 返回判断错误的说明（不含类别），遮蔽本地能识别的凭据；没有说明时为空。
-func errDetail(err error) string {
+// ErrDetail 返回判断错误的说明（不含类别），遮蔽本地能识别的凭据；没有说明时为空。eval 与 check --show-request 共用。
+func ErrDetail(err error) string {
 	var je *judge.Error
 	if !errors.As(err, &je) || je.Err == nil {
 		return ""
