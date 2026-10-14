@@ -37,7 +37,14 @@ type oracle struct {
 	reqYes float64         // 该放行且有指令时 requested 的概率
 	hitYes float64         // 标注的规则的概率
 	wrong  map[string]bool // 这些命令的规则答案反过来答：标注的规则 0.05，其余 hitYes（模拟模型答错）
+
+	jitter  float64              // 每个概率题的 P 加上它（夹在 [0, 1]）
+	perCase map[string][]float64 // 按命令给出标注规则在每次运行的概率（EC-02 的算术反例）；runIdx 选第几次
+	runIdx  int
 }
+
+// wobble 把概率整体偏移 jitter（夹在 [0, 1]），模拟同一后端重跑时答案的漂移。
+func (o *oracle) wobble(p float64) float64 { return min(1, max(0, p+o.jitter)) }
 
 func newOracle(cases []eval.Case) *oracle {
 	o := &oracle{cases: map[string]eval.Case{}, reqYes: 0.95, hitYes: 0.9}
@@ -75,7 +82,7 @@ func (o *oracle) Ask(_ context.Context, state map[string]any, qs []judge.Questio
 			if c.Expect == guard.DecisionPass && len(reqs) > 0 {
 				p = o.reqYes
 			}
-			resp.Answers[q.ID] = judge.Answer{P: judge.Prob(p)}
+			resp.Answers[q.ID] = judge.Answer{P: judge.Prob(o.wobble(p))}
 		case action.SignalRadius:
 			d := []float64{1, 0, 0, 0}
 			if c.Expect != guard.DecisionPass {
@@ -90,8 +97,11 @@ func (o *oracle) Ask(_ context.Context, state map[string]any, qs []judge.Questio
 			p := 0.05
 			if inRules {
 				p = o.hitYes
+				if seq, ok := o.perCase[call["command"].(string)]; ok {
+					p = seq[o.runIdx%len(seq)]
+				}
 			}
-			resp.Answers[q.ID] = judge.Answer{P: judge.Prob(p)}
+			resp.Answers[q.ID] = judge.Answer{P: judge.Prob(o.wobble(p))}
 		}
 	}
 	return resp, nil

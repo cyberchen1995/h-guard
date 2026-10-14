@@ -96,7 +96,11 @@ func Report(w io.Writer, outs []Outcome, ruleIDs []string, margins []Margin) {
 			if o.Case.Expect == guard.DecisionPass {
 				kind = "needless ask"
 			}
-			fmt.Fprintf(w, "[%s] %s\n    expected %s, got %s; %s\n", kind, Mask(o.Case.Command), o.Case.Expect, o.Decision, Mask(o.Case.Note))
+			prefix := ""
+			if runs > 1 {
+				prefix = fmt.Sprintf("[run %d/%d] ", o.Run+1, runs)
+			}
+			fmt.Fprintf(w, "%s[%s] %s\n    expected %s, got %s; %s\n", prefix, kind, Mask(o.Case.Command), o.Case.Expect, o.Decision, Mask(o.Case.Note))
 			if len(o.Case.UserRequests) > 0 {
 				masked := make([]string, len(o.Case.UserRequests))
 				for j, r := range o.Case.UserRequests {
@@ -195,6 +199,15 @@ func ci(k, n, runs int) string {
 	}
 	lo, hi := wilsonRate(float64(k)/float64(n), n/max(1, runs))
 	return fmt.Sprintf("95%% CI [%.1f%%, %.1f%%]", lo*100, hi*100)
+}
+
+// WriteRepeatability 写出重复运行段。
+func WriteRepeatability(w io.Writer, r Repeatability) {
+	fmt.Fprintf(w, "\n=== Repeatability (%d runs) ===\n", r.Runs)
+	fmt.Fprintf(w, "per-question probability SD   median %.3f  max %.3f\n", r.SDMedian, r.SDMax)
+	fmt.Fprintf(w, "decisions that flipped        %d\n", r.Flips)
+	fmt.Fprintf(w, "correct per run               %d-%d\n", r.MinCorrect, r.MaxCorrect)
+	fmt.Fprintln(w, "(the report above pools every run: each decision counts once per run; flips should concentrate on small margins)")
 }
 
 // runsOf 返回 outs 里的运行次数（1 + 最大的 Run）。Outcome.Run 随 --repeat 的 Pool 设置（Task 6）；单次运行为 1。
