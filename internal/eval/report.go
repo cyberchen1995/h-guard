@@ -205,3 +205,19 @@ func runsOf(outs []Outcome) int {
 	}
 	return runs
 }
+
+// WriteBootstrap 写出 bootstrap 段：袋外正确率及区间、乐观偏差、每个阈值的稳定性。没有袋外样本时写 not estimable。
+func WriteBootstrap(w io.Writer, bs Bootstrap) {
+	fmt.Fprintf(w, "\n=== Bootstrap (%d resamples of the corpus; the whole sweep re-run on each) ===\n", bs.B)
+	if bs.OOBRuns == 0 {
+		fmt.Fprintf(w, "out-of-bag correct  not estimable (no resample left a case out)    in-bag %.1f%%\n", bs.InBag*100)
+	} else {
+		fmt.Fprintf(w, "out-of-bag correct  %.1f%%  [%.1f%%, %.1f%%]  over %d resamples    in-bag %.1f%%    optimism %.1f points\n",
+			bs.OOB*100, bs.OOBLow*100, bs.OOBHigh*100, bs.OOBRuns, bs.InBag*100, bs.Optimism()*100)
+	}
+	fmt.Fprintf(w, "%-14s%10s%10s%12s\n", "threshold", "suggested", "agree", "2.5-97.5%")
+	for _, st := range bs.Params {
+		fmt.Fprintf(w, "%-14s%10s%9.0f%%%12s\n", st.Param, num(st.Chosen), st.Agree*100, num(st.Low)+"-"+num(st.High))
+	}
+	fmt.Fprintln(w, "(agree: how often the resamples chose the suggested value; below 50% the value is unsettled, and the suggestion is reported as swept)")
+}

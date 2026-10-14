@@ -135,7 +135,7 @@ func runEval(args []string, o Options) int {
 		fmt.Fprintln(o.Stderr, "h-guard:", err)
 		return 1
 	}
-	fmt.Fprint(o.Stdout, eval.ProfileYAML(profile, th, eval.Fingerprint(st.backend, action.QuestionSet(builtin)), score, len(cases)))
+	fmt.Fprint(o.Stdout, eval.ProfileYAML(profile, th, eval.Fingerprint(st.backend, action.QuestionSet(builtin)), score, len(cases), nil))
 	if own := s.ownQuestions(); len(own) > 0 {
 		fmt.Fprintf(o.Stdout, "# Your rules %s ask their own questions; the fingerprint covers only the built-in ones.\n", strings.Join(own, ", "))
 	}

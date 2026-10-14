@@ -33,9 +33,10 @@ type oracle struct {
 	cases  map[string]eval.Case
 	calls  atomic.Int32
 	err    error
-	drop   string  // 不回答这道题（答案不完整）
-	reqYes float64 // 该放行且有指令时 requested 的概率
-	hitYes float64 // 标注的规则的概率
+	drop   string          // 不回答这道题（答案不完整）
+	reqYes float64         // 该放行且有指令时 requested 的概率
+	hitYes float64         // 标注的规则的概率
+	wrong  map[string]bool // 这些命令的规则答案反过来答：标注的规则 0.05，其余 hitYes（模拟模型答错）
 }
 
 func newOracle(cases []eval.Case) *oracle {
@@ -82,8 +83,12 @@ func (o *oracle) Ask(_ context.Context, state map[string]any, qs []judge.Questio
 			}
 			resp.Answers[q.ID] = judge.Answer{Dist: d}
 		default:
+			inRules := slices.Contains(c.Rules, q.ID)
+			if o.wrong[call["command"].(string)] {
+				inRules = !inRules
+			}
 			p := 0.05
-			if slices.Contains(c.Rules, q.ID) {
+			if inRules {
 				p = o.hitYes
 			}
 			resp.Answers[q.ID] = judge.Answer{P: judge.Prob(p)}
@@ -314,7 +319,7 @@ func TestSuggestedProfileIsUsable(t *testing.T) {
 	b := newOracle(nil)
 	fp := eval.Fingerprint(b, action.QuestionSet(set))
 	th := config.Thresholds{Hit: 0.6, Veto: 0.1, Requested: 0.75, RadiusFloor: map[string]float64{"recursive_delete": 1.5}}
-	yaml := eval.ProfileYAML("local", th, fp, eval.Score{Correct: 100, Noise: 2, Missed: 1}, 103)
+	yaml := eval.ProfileYAML("local", th, fp, eval.Score{Correct: 100, Noise: 2, Missed: 1}, 103, nil)
 	if !strings.Contains(yaml, "100/103 correct") {
 		t.Errorf("yaml = %s", yaml)
 	}

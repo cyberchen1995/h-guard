@@ -295,23 +295,26 @@ func Fingerprint(b judge.Backend, qs []judge.Question) *config.Fingerprint {
 	return &config.Fingerprint{Model: info.Model, Probability: info.Probability, Questions: config.QuestionsDigest(qs)}
 }
 
-// ProfileYAML 返回建议档案的 YAML 片段（可直接并入配置）。fp 为 nil 时不写指纹，并注明这样的档案不会被使用。
+// ProfileYAML 返回建议档案的 YAML 片段（可直接并入配置）。notes 逐条写成注释（bootstrap 的稳定性与乐观偏差）。fp 为 nil 时不写指纹，并注明这样的档案不会被使用。
 // 名字与字符串值一律写成带引号的 YAML 标量；其中本地能识别的凭据形状换成占位符（仍是合法的 YAML），
 // 并加一行注释说明，不为了能直接复制而输出凭据（评审 R3-02）。
-func ProfileYAML(name string, th config.Thresholds, fp *config.Fingerprint, s Score, n int) string {
-	raw := profileYAML(name, th, fp, s, n)
+func ProfileYAML(name string, th config.Thresholds, fp *config.Fingerprint, s Score, n int, notes []string) string {
+	raw := profileYAML(name, th, fp, s, n, notes)
 	if masked := secrets.MaskForLog(raw); masked != raw {
 		return "# Some names or values looked like credentials and were replaced with placeholders; put the real ones back before use.\n" + masked
 	}
 	return raw
 }
 
-func profileYAML(name string, th config.Thresholds, fp *config.Fingerprint, s Score, n int) string {
+func profileYAML(name string, th config.Thresholds, fp *config.Fingerprint, s Score, n int, notes []string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# Suggested by h-guard eval --sweep: %d/%d correct, %d needless interruptions, %d missed.\n", s.Correct, n, s.Noise, s.Missed)
 	b.WriteString("# Review it before adding it to the config. The fingerprint ties it to this model, probability method and question set.\n")
 	if fp == nil {
 		b.WriteString("# The backend does not describe its model, so the profile has no fingerprint and h-guard will not use it.\n")
+	}
+	for _, note := range notes {
+		b.WriteString("# " + note + "\n")
 	}
 	floors := make([]string, 0, len(th.RadiusFloor))
 	for _, id := range slices.Sorted(maps.Keys(th.RadiusFloor)) {
