@@ -60,40 +60,73 @@ type Table struct {
 	Rows  []Row
 }
 
-// Sweep 用记下的答案扫描阈值（不调用后端）：先在 base 处逐个扫描每个阈值（其余取 base），得到扫描表；
-// 再从 base 出发做坐标下降，依次把每个阈值换成使结论最好的取值（正确数多、其次漏判少；同样好时保留当前值，
-// 否则取离当前值最近的），直到一轮下来不再变化（至多 3 轮），得到建议阈值及其统计。
-func Sweep(ctx context.Context, env Env, outs []Outcome, base config.Thresholds) ([]Table, config.Thresholds, Score, error) {
-	base = withFloors(env, base)
-	floors := floorRules(env.Rules, base)
-	scoreAt := func(th config.Thresholds) (Score, error) {
-		res, err := Rescore(ctx, env, outs, th)
-		if err != nil {
-			return Score{}, err
-		}
+// scorer 按阈值记住每条结论的重算结果。坐标下降、shrink、margin 与 bootstrap 会反复落在同一组阈值上，
+// 缓存使它们的代价从「每次都重跑全部语料」降到「每组阈值重跑一次」。一个 scorer 只服务一组 outs。
+type scorer struct {
+	ctx  context.Context
+	env  Env
+	outs []Outcome
+	memo map[string][]Outcome
+}
+
+func newScorer(ctx context.Context, env Env, outs []Outcome) *scorer {
+	return &scorer{ctx: ctx, env: env, outs: outs, memo: map[string][]Outcome{}}
+}
+
+// at 返回 th 下全部结论的重算结果（记忆化）。
+func (s *scorer) at(th config.Thresholds) ([]Outcome, error) {
+	k := thKey(th)
+	if res, ok := s.memo[k]; ok {
+		return res, nil
+	}
+	res, err := Rescore(s.ctx, s.env, s.outs, th)
+	if err != nil {
+		return nil, err
+	}
+	s.memo[k] = res
+	return res, nil
+}
+
+// score 统计 th 下的结论：idx 为 nil 时统计全部，否则只统计这些下标（可重复，重复即加权——bootstrap 的重采样）。
+func (s *scorer) score(th config.Thresholds, idx []int) (Score, error) {
+	res, err := s.at(th)
+	if err != nil {
+		return Score{}, err
+	}
+	if idx == nil {
 		return ScoreOf(res), nil
 	}
-	var tables []Table
-	for _, p := range params {
-		if p.name == "radius_floor" && len(floors) == 0 {
-			continue
-		}
-		t := Table{Param: p.name}
-		for _, v := range p.values {
-			th := clone(base)
-			p.set(&th, floors, v)
-			s, err := scoreAt(th)
-			if err != nil {
-				return nil, config.Thresholds{}, Score{}, err
-			}
-			t.Rows = append(t.Rows, Row{Value: v, Score: s, Current: near(v, p.get(base, floors))})
-		}
-		tables = append(tables, t)
+	sub := make([]Outcome, 0, len(idx))
+	for _, i := range idx {
+		sub = append(sub, res[i])
 	}
+	return ScoreOf(sub), nil
+}
+
+// thKey 把阈值写成缓存键。数值用最短的精确表示：两个不同的浮点阈值一定是不同的键（评审 EC-06），
+// 需要合并浮点噪声的调用方（margin 的扰动）在构造阈值之前自己取整。
+func thKey(th config.Thresholds) string {
+	var b strings.Builder
+	for _, v := range []float64{th.Hit, th.Veto, th.Requested} {
+		b.WriteString(strconv.FormatFloat(v, 'g', -1, 64))
+		b.WriteByte('|')
+	}
+	for _, id := range slices.Sorted(maps.Keys(th.RadiusFloor)) {
+		b.WriteString(id)
+		b.WriteByte('=')
+		b.WriteString(strconv.FormatFloat(th.RadiusFloor[id], 'g', -1, 64))
+		b.WriteByte(',')
+	}
+	return b.String()
+}
+
+// descend 从 base 出发做坐标下降：依次把每个阈值换成使结论最好的取值（正确数多、其次漏判少；同样好时保留当前值，
+// 否则取离当前值最近的），直到一轮下来不再变化（至多 3 轮）。idx 的含义同 scorer.score。
+func descend(s *scorer, base config.Thresholds, floors []string, idx []int) (config.Thresholds, Score, error) {
 	cur := clone(base)
-	curScore, err := scoreAt(cur)
+	curScore, err := s.score(cur, idx)
 	if err != nil {
-		return nil, config.Thresholds{}, Score{}, err
+		return config.Thresholds{}, Score{}, err
 	}
 	for round := 0; round < 3; round++ {
 		changed := false
@@ -106,12 +139,12 @@ func Sweep(ctx context.Context, env Env, outs []Outcome, base config.Thresholds)
 			for _, v := range p.values {
 				th := clone(cur)
 				p.set(&th, floors, v)
-				s, err := scoreAt(th)
+				sc, err := s.score(th, idx)
 				if err != nil {
-					return nil, config.Thresholds{}, Score{}, err
+					return config.Thresholds{}, Score{}, err
 				}
-				if s.better(bestScore) || (s == bestScore && !near(best, now) && math.Abs(v-now) < math.Abs(best-now)) {
-					best, bestScore = v, s
+				if sc.better(bestScore) || (sc == bestScore && !near(best, now) && math.Abs(v-now) < math.Abs(best-now)) {
+					best, bestScore = v, sc
 				}
 			}
 			if !near(best, now) {
@@ -122,6 +155,36 @@ func Sweep(ctx context.Context, env Env, outs []Outcome, base config.Thresholds)
 		if !changed {
 			break
 		}
+	}
+	return cur, curScore, nil
+}
+
+// Sweep 用记下的答案扫描阈值（不调用后端）：先在 base 处逐个扫描每个阈值（其余取 base），得到扫描表；
+// 再从 base 出发做坐标下降（见 descend），得到建议阈值及其统计。
+func Sweep(ctx context.Context, env Env, outs []Outcome, base config.Thresholds) ([]Table, config.Thresholds, Score, error) {
+	base = withFloors(env, base)
+	floors := floorRules(env.Rules, base)
+	s := newScorer(ctx, env, outs)
+	var tables []Table
+	for _, p := range params {
+		if p.name == "radius_floor" && len(floors) == 0 {
+			continue
+		}
+		t := Table{Param: p.name}
+		for _, v := range p.values {
+			th := clone(base)
+			p.set(&th, floors, v)
+			sc, err := s.score(th, nil)
+			if err != nil {
+				return nil, config.Thresholds{}, Score{}, err
+			}
+			t.Rows = append(t.Rows, Row{Value: v, Score: sc, Current: near(v, p.get(base, floors))})
+		}
+		tables = append(tables, t)
+	}
+	cur, curScore, err := descend(s, base, floors, nil)
+	if err != nil {
+		return nil, config.Thresholds{}, Score{}, err
 	}
 	return tables, cur, curScore, nil
 }

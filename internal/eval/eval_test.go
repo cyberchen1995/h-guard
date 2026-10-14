@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -439,5 +440,32 @@ func TestFailureDetailsAreReported(t *testing.T) {
 	if strings.Contains(got, secret) || !strings.Contains(got, "auth 1 (key [secret:") || !strings.Contains(got, "unavailable 1") ||
 		!strings.Contains(got, fmt.Sprintf("bad_response %d (HTTP 400 ×%d; the response has no answer tool call ×1)", n-2, n-3)) {
 		t.Errorf("summary = %q", got)
+	}
+}
+
+// TestScorerKeyIsExact：缓存键必须区分每一个不同的浮点阈值（评审 EC-06：0.3 与 0.30001 在策略里结论可能不同）；
+// 同一个值的键相同；radius_floor 也在键里。
+func TestScorerKeyIsExact(t *testing.T) {
+	a := config.Thresholds{Hit: 0.3, Veto: 0.05, Requested: 0.9, RadiusFloor: map[string]float64{"recursive_delete": 1.25}}
+	for _, mutate := range []func(*config.Thresholds){
+		func(th *config.Thresholds) { th.Hit = 0.30001 },
+		func(th *config.Thresholds) { th.Hit = 0.31 },
+		func(th *config.Thresholds) { th.Veto = 0.05000001 },
+		func(th *config.Thresholds) { th.RadiusFloor = map[string]float64{"recursive_delete": 1.5} },
+		func(th *config.Thresholds) {
+			th.RadiusFloor = map[string]float64{"recursive_delete": 1.25, "publish": 1.25}
+		},
+	} {
+		b := a
+		b.RadiusFloor = maps.Clone(a.RadiusFloor)
+		mutate(&b)
+		if eval.ThresholdKey(a) == eval.ThresholdKey(b) {
+			t.Errorf("%+v and %+v share the key %q", a, b, eval.ThresholdKey(a))
+		}
+	}
+	c := a
+	c.RadiusFloor = maps.Clone(a.RadiusFloor)
+	if eval.ThresholdKey(a) != eval.ThresholdKey(c) {
+		t.Errorf("equal thresholds, different keys: %q vs %q", eval.ThresholdKey(a), eval.ThresholdKey(c))
 	}
 }
