@@ -32,9 +32,9 @@ h-guard 的动作检查会把一组判断题交给判断后端，取回概率。
 |---|---|---|---|
 | `MechanismNative` | `native` | 服务端原生给出概率 | typesafe |
 | `MechanismLogprobs` | `logprobs` | 读模型作答位置候选字符的 logprob | openai（`probability: logprobs`） |
-| `MechanismJSONSchema` | `json_schema` | 结构化输出：OpenAI `response_format`、Anthropic `output_config.format` | openai（`probability: verbalized`） |
-| `MechanismForcedTool` | `forced_tool` | 强制模型调用参数为答案的工具 | anthropic |
-| `MechanismAutoTool` | `auto_tool` | 提供答案工具但不强制调用，模型没有调用就没有答案 | 暂无，预留 |
+| `MechanismJSONSchema` | `json_schema` | 结构化输出：OpenAI `response_format`、Anthropic `output_config.format` | openai（`probability: verbalized`）、anthropic（`answer: structured`） |
+| `MechanismForcedTool` | `forced_tool` | 强制模型调用参数为答案的工具 | anthropic（`answer: tool`，默认） |
+| `MechanismAutoTool` | `auto_tool` | 提供答案工具但不强制调用，模型没有调用就没有答案 | anthropic（`answer: auto_tool`） |
 | `MechanismProgram` | `program` | 外部程序，取答方式由程序决定 | exec |
 
 `Mechanism` 只用于显示和诊断，能力判断只看下一节的 `Kinds`；它也不进入校准指纹。指纹仍然用 `Info.Probability` 区分取答方式：请求形态不同、概率分布也就不同的方式，要用不同的 `Info.Probability` 分别校准。
@@ -67,7 +67,7 @@ exec 后端在自己的 `Ask` 里也只把声明的题型发给程序。即使�
 | typesafe | `native` | probability、scale |
 | openai，`probability: logprobs` | `logprobs` | probability、scale |
 | openai，`probability: verbalized` | `json_schema` | probability、scale |
-| anthropic | `forced_tool` | probability、scale |
+| anthropic | 按配置项 `answer`：`forced_tool`（默认）、`json_schema` 或 `auto_tool` | probability、scale |
 | exec | `program` | 配置项 `kinds`，默认两种 |
 
 ### 6. 一致性测试

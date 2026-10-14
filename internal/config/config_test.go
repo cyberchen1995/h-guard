@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/cyberchen1995/h-guard/pkg/judge"
+	_ "github.com/cyberchen1995/h-guard/pkg/judge/anthropic"
 	_ "github.com/cyberchen1995/h-guard/pkg/judge/exec"
 	_ "github.com/cyberchen1995/h-guard/pkg/judge/typesafe"
 )
@@ -137,6 +138,7 @@ func TestErrorsDoNotEchoValues(t *testing.T) {
 		"version: 1\naction: {tier: " + canary + "}\n",
 		"version: 1\nbackends: {jev: {type: " + canary + "}}\n",
 		"version: 1\njudge: {backend: " + canary + "}\n",
+		"version: 1\nbackends: {claude: {type: anthropic, model: m, answer: " + canary + "}}\n",
 	} {
 		p := write(t, t.TempDir(), "config.yaml", body)
 		_, err := Load(p)
@@ -340,5 +342,37 @@ func TestFingerprintValidation(t *testing.T) {
 	p := write(t, t.TempDir(), "c.yaml", "version: 1\nprofiles: {jev: {thresholds: {hit: 0.5, veto: 0.2, requested: 0.7}, fingerprint: {model: m, probability: native, questions: "+digestA+"}}}\n")
 	if _, err := Load(p); err != nil {
 		t.Errorf("valid fingerprint rejected: %v", err)
+	}
+}
+
+// TestAnthropicAnswerFromYAML：anthropic 的 answer 从配置读入（取答方式体现在 Caps().Mechanism 与校准用的
+// Info.Probability 上）；未知取值是配置错误，说明不回显取值。
+func TestAnthropicAnswerFromYAML(t *testing.T) {
+	const prefix = "version: 1\nbackends: {claude: {type: anthropic, model: claude-sonnet-5-5"
+	for answer, want := range map[string]struct {
+		mechanism   judge.Mechanism
+		probability string
+	}{
+		"":                     {judge.MechanismForcedTool, "verbalized"},
+		", answer: structured": {judge.MechanismJSONSchema, "verbalized-structured"},
+		", answer: auto_tool":  {judge.MechanismAutoTool, "verbalized-auto-tool"},
+	} {
+		c, err := Load(write(t, t.TempDir(), "c.yaml", prefix+answer+"}}\n"))
+		if err != nil {
+			t.Fatalf("%q: %v", answer, err)
+		}
+		b, err := c.NewBackend("claude")
+		if err != nil {
+			t.Fatal(err)
+		}
+		d, ok := b.(judge.Describer)
+		if !ok || b.Caps().Mechanism != want.mechanism || d.Describe().Probability != want.probability {
+			t.Errorf("%q: backend = %v, want mechanism %q and probability %q", answer, b, want.mechanism, want.probability)
+		}
+	}
+	const canary = "HGCanaryAnswer864209"
+	_, err := Load(write(t, t.TempDir(), "c.yaml", prefix+", answer: "+canary+"}}\n"))
+	if err == nil || !strings.Contains(err.Error(), "backends.claude: anthropic: answer") || strings.Contains(err.Error(), canary) {
+		t.Errorf("err = %v", err)
 	}
 }

@@ -3,6 +3,7 @@ package prompt
 import (
 	"encoding/json"
 	"math"
+	"slices"
 	"strings"
 	"testing"
 
@@ -203,4 +204,60 @@ func TestParseBatchErrorIsFixedText(t *testing.T) {
 			t.Errorf("%q: err = %v", raw, err)
 		}
 	}
+}
+
+// TestSchemaFitsStrictStructuredOutputs：同一份 schema 用作 anthropic 的 strict 工具参数与 output_config.format，
+// 也用作 openai 的 strict json_schema。这些接口要求每个 object 都写 additionalProperties: false 与 required（列出全部属性），
+// 并且不支持数值范围、字符串长度与复杂数组约束。
+func TestSchemaFitsStrictStructuredOutputs(t *testing.T) {
+	data, err := json.Marshal(Schema([]judge.Question{probQ, scaleQ}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var root any
+	if err := json.Unmarshal(data, &root); err != nil {
+		t.Fatal(err)
+	}
+	unsupported := []string{"minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum", "multipleOf",
+		"minLength", "maxLength", "pattern", "minItems", "maxItems", "uniqueItems", "contains", "prefixItems",
+		"minProperties", "maxProperties", "patternProperties"}
+	var walk func(path string, n any)
+	walk = func(path string, n any) {
+		m, ok := n.(map[string]any)
+		if !ok {
+			t.Fatalf("%s: schema node is %T", path, n)
+		}
+		for _, k := range unsupported {
+			if _, ok := m[k]; ok {
+				t.Errorf("%s: unsupported constraint %q", path, k)
+			}
+		}
+		switch m["type"] {
+		case "object":
+			props, _ := m["properties"].(map[string]any)
+			if m["additionalProperties"] != false {
+				t.Errorf("%s: additionalProperties = %v, want false", path, m["additionalProperties"])
+			}
+			var req []string
+			for _, r := range m["required"].([]any) {
+				req = append(req, r.(string))
+			}
+			var keys []string
+			for k, v := range props {
+				keys = append(keys, k)
+				walk(path+"."+k, v)
+			}
+			slices.Sort(req)
+			slices.Sort(keys)
+			if len(keys) == 0 || !slices.Equal(req, keys) {
+				t.Errorf("%s: required = %v, properties = %v", path, req, keys)
+			}
+		case "array":
+			walk(path+"[]", m["items"])
+		case "number":
+		default:
+			t.Errorf("%s: unexpected type %v", path, m["type"])
+		}
+	}
+	walk("$", root)
 }
