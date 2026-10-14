@@ -41,6 +41,8 @@ type oracle struct {
 	jitter  float64              // 每个概率题的 P 加上它（夹在 [0, 1]）
 	perCase map[string][]float64 // 按命令给出标注规则在每次运行的概率（EC-02 的算术反例）；runIdx 选第几次
 	runIdx  int
+
+	radius map[string][]float64 // 按命令覆盖 blast_radius 的分布
 }
 
 // wobble 把概率整体偏移 jitter（夹在 [0, 1]），模拟同一后端重跑时答案的漂移。
@@ -84,6 +86,10 @@ func (o *oracle) Ask(_ context.Context, state map[string]any, qs []judge.Questio
 			}
 			resp.Answers[q.ID] = judge.Answer{P: judge.Prob(o.wobble(p))}
 		case action.SignalRadius:
+			if d, ok := o.radius[call["command"].(string)]; ok {
+				resp.Answers[q.ID] = judge.Answer{Dist: d}
+				break
+			}
 			d := []float64{1, 0, 0, 0}
 			if c.Expect != guard.DecisionPass {
 				d = []float64{0, 0, 0, 1}
@@ -486,7 +492,7 @@ func TestScorerKeyIsExact(t *testing.T) {
 	}
 }
 
-// TestShrinkStaysOnThePlateauClosestToBase：建议阈值的正确数与坐标下降的最优至多差 plateauWidth；
+// TestShrinkStaysOnThePlateauClosestToBase：建议阈值的正确数与坐标下降的最优至多差 plateauWidth（漏判至多多 plateauWidth）；
 // 每个阈值在 plateau 内（其余阈值取建议值）都是离 base 最近的取值；扫描表标出 plateau。
 func TestShrinkStaysOnThePlateauClosestToBase(t *testing.T) {
 	cases := corpus(t)
@@ -540,13 +546,15 @@ func TestShrinkStaysOnThePlateauClosestToBase(t *testing.T) {
 		t.Errorf("sweep table does not mark the plateau:\n%s", buf.String())
 	}
 	for _, tb := range tables {
-		best := 0
-		for _, r := range tb.Rows {
-			best = max(best, r.Score.Correct)
+		best := tb.Rows[0].Score
+		for _, r := range tb.Rows[1:] {
+			if eval.Better(r.Score, best) {
+				best = r.Score
+			}
 		}
 		for _, r := range tb.Rows {
-			if r.Plateau != (r.Score.Correct >= best-1) {
-				t.Errorf("%s %v: plateau %v, correct %d, best %d", tb.Param, r.Value, r.Plateau, r.Score.Correct, best)
+			if want := eval.Within(r.Score, best, 1); r.Plateau != want {
+				t.Errorf("%s %v: plateau %v, want %v (score %+v, best %+v)", tb.Param, r.Value, r.Plateau, want, r.Score, best)
 			}
 		}
 	}
@@ -600,5 +608,26 @@ func TestShrinkKeepsAnOffGridBaseOnThePlateau(t *testing.T) {
 	}
 	if th2.Requested > 0.8 || s2.Correct < 1 {
 		t.Errorf("with two cases the base is off the plateau; suggested requested %v (%+v)", th2.Requested, s2)
+	}
+}
+
+// TestWithinBoundsMisses：plateau 同时约束正确数与漏判；用多出的打断换正确数可以，用漏判换不行。
+func TestWithinBoundsMisses(t *testing.T) {
+	best := eval.Score{Correct: 100, Noise: 10, Missed: 0}
+	for _, tc := range []struct {
+		name string
+		a    eval.Score
+		best eval.Score
+		runs int
+		want bool
+	}{
+		{"one fewer correct but eleven misses", eval.Score{Correct: 99, Noise: 0, Missed: 11}, best, 1, false},
+		{"one fewer correct, one miss", eval.Score{Correct: 99, Noise: 10, Missed: 1}, best, 1, true},
+		{"two runs, two fewer correct, two misses", eval.Score{Correct: 98, Noise: 10, Missed: 2}, best, 2, true},
+		{"two runs, four misses", eval.Score{Correct: 98, Noise: 8, Missed: 4}, best, 2, false},
+	} {
+		if got := eval.Within(tc.a, tc.best, tc.runs); got != tc.want {
+			t.Errorf("%s: Within = %v, want %v", tc.name, got, tc.want)
+		}
 	}
 }

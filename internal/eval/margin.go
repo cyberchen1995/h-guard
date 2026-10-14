@@ -68,8 +68,26 @@ func Margins(ctx context.Context, env Env, outs []Outcome, base config.Threshold
 				if v < lo-1e-9 || v > hi+1e-9 {
 					break // 越出合法范围：这一侧不再有可部署的翻转
 				}
+				v = math.Max(lo, math.Min(hi, v)) // 夹进合法范围，吸收 1e-9 容差带来的越界
 				th := clone(base)
-				p.set(&th, floors, v)
+				if p.name == "radius_floor" {
+					// 每条下限规则从自己的 base 值出发移动同样的 d（评审 Important-1）：get 只读第一条，
+					// set 又把同一个值写给所有规则，base 下限不同时会把后面的规则移错。
+					out := false
+					for _, id := range floors {
+						f := base.RadiusFloor[id] + sign*d
+						if f < lo-1e-9 || f > hi+1e-9 {
+							out = true
+							break
+						}
+						th.RadiusFloor[id] = math.Max(lo, math.Min(hi, f))
+					}
+					if out {
+						break // 任一条越出合法范围：报告的 d 就不再是每条规则实际回放的移动量
+					}
+				} else {
+					p.set(&th, floors, v)
+				}
 				res, err := s.at(th)
 				if err != nil {
 					return nil, err

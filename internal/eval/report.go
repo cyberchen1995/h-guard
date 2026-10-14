@@ -155,7 +155,7 @@ func Report(w io.Writer, outs []Outcome, ruleIDs []string, margins []Margin) {
 // WriteSweep 写出扫描表（每行为一个取值下的正确数、多余打断、漏判，←current 标出 base）。
 func WriteSweep(w io.Writer, tables []Table) {
 	fmt.Fprintln(w, "\n=== Threshold sweep (recorded answers, no new calls) ===")
-	fmt.Fprintln(w, "  (= plateau: within 1 correct per run of the best value in this table; differences that small are noise on this corpus)")
+	fmt.Fprintln(w, "  (= plateau: within 1 correct per run of the best value in this table and not more than 1 extra miss; differences that small are noise on this corpus)")
 	for _, t := range tables {
 		fmt.Fprintf(w, "\n%s:\n  %8s%9s%16s%8s\n", t.Param, "value", "correct", "needless asks", "missed")
 		for _, r := range t.Rows {

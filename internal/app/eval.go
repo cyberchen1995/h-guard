@@ -157,6 +157,9 @@ func runEval(args []string, o Options) int {
 		return 1
 	}
 	var notes []string
+	if *repeat > 1 {
+		notes = append(notes, fmt.Sprintf("%d runs pooled: the counts above are decisions, not distinct cases (%d cases).", *repeat, len(cases)))
+	}
 	if *boot > 0 {
 		bs, err := eval.BootstrapSweep(ctx, env, outs, len(cases), st.thresholds, th, *boot, *seed)
 		if err != nil {
@@ -164,7 +167,7 @@ func runEval(args []string, o Options) int {
 			return 1
 		}
 		eval.WriteBootstrap(o.Stdout, bs)
-		notes = eval.BootstrapNotes(bs)
+		notes = append(notes, eval.BootstrapNotes(bs)...)
 	}
 	profile := st.cal.Profile
 	if profile == "" {

@@ -4,3 +4,7 @@ package eval
 var ThresholdKey = thKey
 
 var LegalRange = legalRange
+
+var Within = func(a, best Score, runs int) bool { return a.within(best, runs) }
+
+var Better = func(a, b Score) bool { return a.better(b) }

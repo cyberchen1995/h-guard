@@ -901,12 +901,16 @@ func TestEvalRepeatSendsKTimes(t *testing.T) {
 	if _, stderr, code := e.run(nil, "eval", "--cases", cases, "--yes", "--repeat", "0"); code != 2 || !strings.Contains(stderr, "repeat") {
 		t.Errorf("--repeat 0: exit %d, stderr %q", code, stderr)
 	}
+	if _, stderr, code := e.run(nil, "eval", "--cases", cases, "--yes", "--bootstrap", "-1"); code != 2 || !strings.Contains(stderr, "bootstrap") {
+		t.Errorf("--bootstrap -1: exit %d, stderr %q", code, stderr)
+	}
 	out, stderr, code := e.run(nil, "eval", "--cases", cases, "--yes", "--sweep", "--repeat", "3", "--bootstrap", "20")
 	if code != 0 || srv.calls != 6 {
 		t.Fatalf("eval --repeat 3: exit %d, calls %d, stderr %q", code, srv.calls, stderr)
 	}
 	for _, want := range []string{"overall           6/9", "(CI over 3 distinct cases; 3 runs pooled)", "calibratable      6/9", "=== Repeatability (3 runs) ===", "decisions that flipped        0",
-		"[run 1/3] [needless ask] ls -la", "[run 3/3] [needless ask] ls -la", "=== Bootstrap (20 resamples", "profiles:\n"} {
+		"[run 1/3] [needless ask] ls -la", "[run 3/3] [needless ask] ls -la", "=== Bootstrap (20 resamples", "profiles:\n",
+		"# 3 runs pooled: the counts above are decisions, not distinct cases (3 cases)."} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output lacks %q:\n%s", want, out)
 		}

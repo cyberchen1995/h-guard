@@ -187,3 +187,46 @@ func TestWrongDecisionsCarryTheirMargin(t *testing.T) {
 		t.Errorf("wrong decisions lack margins:\n%s", buf.String())
 	}
 }
+
+// TestMarginsPerturbEachFloorFromItsOwnBase（评审 Important-1）：两条规则的下限不同（recursive_delete 1.25、publish 2.0）时，
+// 每条规则从自己的 base 值移动。两条语料的命中规则都过了概率线，但影响范围低于各自的下限（publish 1.75，
+// recursive_delete 1.0），base 下放行；各自把下限降 0.25 才恰好 ask，所以 margin 都是 0.25 (radius_floor)。
+// 旧实现把所有下限设成第一条的 start-d：不论谁排第一，另一条都被移错（要么在 0.01 就翻转，要么够不到）。
+func TestMarginsPerturbEachFloorFromItsOwnBase(t *testing.T) {
+	var picked []eval.Case
+	b := newOracle(nil)
+	b.radius = map[string][]float64{}
+	for rule, dist := range map[string][]float64{
+		"publish":          {0, 0.25, 0.75, 0}, // 影响范围 1.75
+		"recursive_delete": {0, 1, 0, 0},       // 影响范围 1.0
+	} {
+		i := slices.IndexFunc(corpus(t), func(c eval.Case) bool {
+			return c.Expect == guard.DecisionAsk && len(c.UserRequests) == 0 && slices.Equal(c.Rules, []string{rule})
+		})
+		if i < 0 {
+			t.Fatalf("no ask case with only the %s rule in the corpus", rule)
+		}
+		c := corpus(t)[i]
+		picked = append(picked, c)
+		b.cases[key(c.Command, c.UserRequests)] = c
+		b.radius[c.Command] = dist
+	}
+	th := config.Thresholds{Hit: 0.5, Veto: 0.2, Requested: 0.7, RadiusFloor: map[string]float64{"recursive_delete": 1.25, "publish": 2.0}}
+	env := newEnv(t, b, th)
+	outs, err := eval.Run(context.Background(), env, picked)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ms, err := eval.Margins(context.Background(), env, outs, th)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, o := range outs {
+		if o.Decision != guard.DecisionPass {
+			t.Fatalf("%q: base decision %s, want pass (radius below its floor)", o.Case.Command, o.Decision)
+		}
+		if ms[i].Param != "radius_floor" || math.Abs(ms[i].Delta-0.25) > 1e-9 {
+			t.Errorf("%q: margin %s (%+v), want 0.25 (radius_floor)", o.Case.Command, ms[i], ms[i])
+		}
+	}
+}

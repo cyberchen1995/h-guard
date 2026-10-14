@@ -105,7 +105,7 @@ func (s *scorer) score(th config.Thresholds, idx []int) (Score, error) {
 }
 
 // thKey 把阈值写成缓存键。数值用最短的精确表示：两个不同的浮点阈值一定是不同的键（评审 EC-06），
-// 需要合并浮点噪声的调用方（margin 的扰动）在构造阈值之前自己取整。
+// 调用方从不取整：margin 的扰动值（R2-02）按实际移动量直接有自己的键。
 func thKey(th config.Thresholds) string {
 	var b strings.Builder
 	for _, v := range []float64{th.Hit, th.Veto, th.Requested} {
@@ -164,9 +164,11 @@ func descend(s *scorer, base config.Thresholds, floors []string, idx []int) (con
 // 113 条语料上差 1 条分不出好坏，为 1 条更换阈值是在拟合噪声（方法调研 §1.3、§2.4）。
 const plateauWidth = 1
 
-// within 报告 a 是否在 best 的 plateau 内；runs 是每条语料在结果里出现的次数（--repeat），宽度随之缩放。
+// within 报告 a 是否在 best 的 plateau 内：正确数不少于最优减 plateauWidth×runs，且漏判不多于最优加 plateauWidth×runs
+// （用多出的打断换正确数可以，用漏判换不行）。runs 是每条语料在结果里出现的次数（--repeat），宽度随之缩放。
 func (a Score) within(best Score, runs int) bool {
-	return a.Correct >= best.Correct-plateauWidth*max(1, runs)
+	w := plateauWidth * max(1, runs)
+	return a.Correct >= best.Correct-w && a.Missed <= best.Missed+w
 }
 
 // candidates 返回阈值 p 的候选取值：扫描网格加上 base 的值与当前值（网格外的合法 base 也要能被保留，评审 EC-07），
@@ -183,7 +185,8 @@ func candidates(p param, cur, base config.Thresholds, floors []string) []float64
 }
 
 // shrink 把 th 的每个阈值换成 plateau 内离 base 最近的候选。依次进行，每一步都用已改过的其余阈值重算并要求
-// 仍在 best 的 plateau 内，所以整体结论的正确数最多比 best 少 plateauWidth×runs。
+// 仍在 best 的 plateau 内（正确数不少于最优减 plateauWidth×runs，且漏判不多于最优加 plateauWidth×runs），
+// 所以整体结论的正确数最多比 best 少、漏判最多比 best 多 plateauWidth×runs。
 func shrink(s *scorer, th, base config.Thresholds, best Score, floors []string, idx []int, runs int) (config.Thresholds, Score, error) {
 	cur := clone(th)
 	curScore, err := s.score(cur, idx)
@@ -219,8 +222,7 @@ func shrink(s *scorer, th, base config.Thresholds, best Score, floors []string, 
 }
 
 // Sweep 用记下的答案扫描阈值（不调用后端）：先在 base 处逐个扫描每个阈值（其余取 base），得到扫描表；
-// 再从 base 出发做坐标下降（见 descend），得到建议阈值及其统计。收敛后在 plateau（每次运行正确数与最优相差
-// 不超过 1）内把每个阈值拉回离当前值最近的候选，候选含当前值本身；不为 1 条正确数的差异更换阈值。
+// 再从 base 出发做坐标下降（见 descend），得到建议阈值及其统计。收敛后在 plateau（正确数不少于最优减 plateauWidth×runs，且漏判不多于最优加 plateauWidth×runs）内把每个阈值拉回离当前值最近的候选，候选含当前值本身；不为 1 条正确数的差异更换阈值。
 // runs 是 outs 里每条语料出现的次数（单次运行为 1）。
 func Sweep(ctx context.Context, env Env, outs []Outcome, base config.Thresholds, runs int) ([]Table, config.Thresholds, Score, error) {
 	base = withFloors(env, base)
@@ -241,12 +243,14 @@ func Sweep(ctx context.Context, env Env, outs []Outcome, base config.Thresholds,
 			}
 			t.Rows = append(t.Rows, Row{Value: v, Score: sc, Current: near(v, p.get(base, floors))})
 		}
-		best := 0
-		for _, r := range t.Rows {
-			best = max(best, r.Score.Correct)
+		best := t.Rows[0].Score
+		for _, r := range t.Rows[1:] {
+			if r.Score.better(best) {
+				best = r.Score
+			}
 		}
 		for i := range t.Rows {
-			t.Rows[i].Plateau = t.Rows[i].Score.Correct >= best-plateauWidth*max(1, runs)
+			t.Rows[i].Plateau = t.Rows[i].Score.within(best, runs)
 		}
 		tables = append(tables, t)
 	}

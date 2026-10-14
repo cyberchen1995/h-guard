@@ -90,7 +90,7 @@ const usage = `usage:
   h-guard check <command> [--shell posix|powershell] [--request <text>]... [--cwd <dir>] [--no-judge] [--show-request] [--config <file>]
   h-guard backend list | enable <name> | disable <name>
   h-guard status
-  h-guard eval [--backend <name>] [--sweep] [--cases <file>] [--yes] [--config <file>]
+  h-guard eval [--backend <name>] [--sweep] [--cases <file>] [--repeat <K>] [--bootstrap <N>] [--seed <n>] [--yes] [--config <file>]
   h-guard version
 `
 
