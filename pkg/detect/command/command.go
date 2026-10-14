@@ -3,8 +3,7 @@
 // 交给解释器的 heredoc 正文、bash -c 等嵌套调用的脚本。每个单元再提供三种视图：全文、命令位置、去引号。
 // 切段、去前缀、去引号与 heredoc 识别共用同一个 POSIX 词法分析（lex.go）。
 //
-// 只做展开，不做匹配；规则匹配在规则包中完成。M1 实现 POSIX shell；PowerShell 命令在 M3 之前
-// 不展开，整条作为一个单元。
+// 只做展开，不做匹配；规则匹配在规则包中完成。POSIX shell 的词法在 lex.go，PowerShell 的在 pwsh.go。
 package command
 
 import (
@@ -34,26 +33,26 @@ func (u Unit) FullTexts() []string {
 	return []string{u.Text, u.joined}
 }
 
-// Positions 返回该单元各段处于命令位置的文本（见 CommandPositions）。
+// Positions 返回该单元各段处于命令位置的文本（POSIX 见 CommandPositions，PowerShell 见 pwsh.go）。
 func (u Unit) Positions() []string {
-	if u.Shell != guard.ShellPOSIX {
-		return []string{strings.TrimSpace(u.Text)}
+	if u.Shell == guard.ShellPowerShell {
+		return pwshPositions(pwshLex(u.Text))
 	}
 	return CommandPositions(u.Text)
 }
 
-// NormalizedPositions 返回该单元各段命令位置的规范写法（见 NormalizedPositions）；非 POSIX 单元没有。
+// NormalizedPositions 返回该单元各段命令位置的规范写法（POSIX 见 NormalizedPositions，PowerShell 见 pwsh.go）。
 func (u Unit) NormalizedPositions() []string {
-	if u.Shell != guard.ShellPOSIX {
-		return nil
+	if u.Shell == guard.ShellPowerShell {
+		return pwshNormalized(pwshLex(u.Text))
 	}
 	return NormalizedPositions(u.Text)
 }
 
-// Unquoted 返回抹掉引号内容后的文本（见 StripQuoted）。
+// Unquoted 返回抹掉引号内容后的文本（POSIX 见 StripQuoted，PowerShell 见 pwsh.go）。
 func (u Unit) Unquoted() string {
-	if u.Shell != guard.ShellPOSIX {
-		return u.Text
+	if u.Shell == guard.ShellPowerShell {
+		return pwshUnquoted(pwshLex(u.Text))
 	}
 	return StripQuoted(u.Text)
 }
@@ -78,11 +77,17 @@ func (e *Expansion) expand(ctx context.Context, text string, shell guard.Shell, 
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if depth > MaxDepth || shell != guard.ShellPOSIX {
-		if depth > MaxDepth {
-			e.Limited = true
-		}
+	if depth > MaxDepth {
+		e.Limited = true
 		e.Units = append(e.Units, Unit{Text: text, Depth: depth, Shell: shell})
+		return nil
+	}
+	if shell == guard.ShellPowerShell {
+		u := Unit{Text: text, Depth: depth, Shell: shell}
+		if lx := pwshLex(text); len(lx.conts) > 0 {
+			u.joined = lx.join(0, len(text)) // 反引号续行
+		}
+		e.Units = append(e.Units, u)
 		return nil
 	}
 	stripped, expandable, executed := stripHeredocs(text)
