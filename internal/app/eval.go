@@ -5,12 +5,15 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 
 	"github.com/cyberchen1995/h-guard/internal/check/action"
 	"github.com/cyberchen1995/h-guard/internal/eval"
 	"github.com/cyberchen1995/h-guard/internal/rules"
 	"github.com/cyberchen1995/h-guard/pkg/detect/secrets"
+	"github.com/cyberchen1995/h-guard/pkg/judge"
 )
 
 // runEval 用标注语料评估判断后端（spec §12）：报告结论与类别识别的准确率；--sweep 复用答案扫描阈值并打印
@@ -45,6 +48,12 @@ func runEval(args []string, o Options) int {
 	st := s.inspectJudge(o, name)
 	if st.err != nil {
 		fmt.Fprintln(o.Stderr, "h-guard: backend", shown(name)+":", shown(st.err.Error()))
+		return 1
+	}
+	// 与模型开启时的配置期校验相同（不论模型是否开启、judge.backend 是不是它）：缺一种题型，那些题永远问不出，
+	// 拟合出的阈值不能作为校准的证据。按配置错误退出，不发送语料
+	if err := kindsError(name, st.backend, "which h-guard eval asks"); err != nil {
+		fmt.Fprintln(o.Stderr, "h-guard:", secrets.MaskForLog(err.Error()))
 		return 1
 	}
 	cases, err := eval.Corpus()
@@ -100,6 +109,18 @@ func runEval(args []string, o Options) int {
 			next = "Nothing was swept or suggested; fix the backend and run again."
 		}
 		fmt.Fprintf(o.Stderr, "h-guard: %d of %d calls failed: %s. %s\n", failed, calledCount(outs), eval.FailureSummary(outs), next)
+		for _, hint := range failureHints(st.backend, outs) {
+			fmt.Fprintln(o.Stderr, "h-guard: hint:", hint)
+		}
+		return 1
+	}
+	// 一条都没有调用后端（如语料全是 deny 级的命令）：这次评估对后端什么也没说明，同样不扫描、不建议
+	if calledCount(outs) == 0 {
+		next := "Use cases that call the backend and run again."
+		if *sweep {
+			next = "Nothing was swept or suggested; use cases that call the backend and run again."
+		}
+		fmt.Fprintf(o.Stderr, "h-guard: no case called the backend, so this run says nothing about it. %s\n", next)
 		return 1
 	}
 	// 答案不完整同样不能作为证据（评审 M2-05）：照常扫描给出参考，但不建议档案，退出码为 1 并在 stderr 写明
@@ -143,6 +164,30 @@ func runEval(args []string, o Options) int {
 		fmt.Fprintf(o.Stdout, "# and reference it from the backend: backends.%s.profile: %s\n", name, profile)
 	}
 	return 0
+}
+
+// failureHints 返回后端对这次各个失败说明给出的提示，按说明排序、去重；后端没有提示时为空。
+// 提示来自后端的可选方法 FailureHint（如 anthropic 在强制工具调用被拒时建议改用 structured）。b 必须是配置
+// 创建的原对象：eval 的记录器与 check 的包装只嵌入 judge.Backend，不转发这个方法。说明（ErrDetail）是后端的
+// 固定写法、凭据已遮蔽，没有说明的失败不问。
+func failureHints(b judge.Backend, outs []eval.Outcome) []string {
+	h, ok := b.(interface{ FailureHint(detail string) string })
+	if !ok {
+		return nil
+	}
+	details := map[string]bool{}
+	for _, o := range outs {
+		if o.Err != "" && o.ErrDetail != "" {
+			details[o.ErrDetail] = true
+		}
+	}
+	var hints []string
+	for _, d := range slices.Sorted(maps.Keys(details)) {
+		if hint := h.FailureHint(d); hint != "" && !slices.Contains(hints, hint) {
+			hints = append(hints, hint)
+		}
+	}
+	return hints
 }
 
 // calledCount 返回调用了后端的条数（deny 级的不调用）。

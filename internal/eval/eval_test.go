@@ -360,6 +360,73 @@ func TestIncompleteAnswersAreNotEvidence(t *testing.T) {
 	}
 }
 
+// partial 是只能回答 kinds 中题型的 oracle（不能批量，像 logprobs 后端一样按题提问）。
+type partial struct {
+	*oracle
+	kinds []judge.Kind
+}
+
+func (p partial) Caps() judge.BackendCaps { return judge.BackendCaps{Kinds: p.kinds} }
+
+// TestUnsupportedKindsAreIncomplete：后端答不了某种题型时，这些题没有问出，结论靠缺题时的保守处理得出，
+// 与缺答一样不能作为校准证据：记为答案不完整，报告单独列出。一种都答不了时一条也不调用后端，同样不完整。
+func TestUnsupportedKindsAreIncomplete(t *testing.T) {
+	cases := corpus(t)[:12]
+	for _, kinds := range [][]judge.Kind{{judge.KindProbability}, {judge.KindScale}, {}} {
+		t.Run(fmt.Sprint(kinds), func(t *testing.T) {
+			b := partial{newOracle(cases), kinds}
+			outs, err := eval.Run(context.Background(), newEnv(t, b, jev), cases)
+			if err != nil {
+				t.Fatal(err)
+			}
+			asked := 0 // 动作检查要问模型的语料（不是 deny 级）
+			for _, o := range outs {
+				if o.Signals["judge"] == "off" {
+					continue
+				}
+				asked++
+				if !slices.Contains(o.Fallbacks, action.FallbackKindUnsupported) {
+					t.Errorf("%q: fallbacks %v, want %s", o.Case.Command, o.Fallbacks, action.FallbackKindUnsupported)
+				}
+			}
+			if asked == 0 || eval.Incomplete(outs) != asked || eval.Failed(outs) != 0 {
+				t.Errorf("incomplete %d, failed %d, want incomplete %d", eval.Incomplete(outs), eval.Failed(outs), asked)
+			}
+			if len(kinds) == 0 && b.calls.Load() != 0 {
+				t.Errorf("a backend that answers no kind was called %d times", b.calls.Load())
+			}
+			var buf bytes.Buffer
+			eval.Report(&buf, outs, []string{"publish"})
+			if !strings.Contains(buf.String(), fmt.Sprintf("=== Incomplete answers (%d cases) ===", asked)) ||
+				!strings.Contains(buf.String(), "the backend cannot answer") {
+				t.Errorf("report:\n%s", buf.String())
+			}
+		})
+	}
+}
+
+// TestRescoreKeepsTheUnsupportedKindReason：重算时按记录时后端声明的题型提问，原因码与 Run 一致
+// （judge_kind_unsupported，而不是 judge_answer_invalid）。
+func TestRescoreKeepsTheUnsupportedKindReason(t *testing.T) {
+	cases := corpus(t)[:12]
+	b := partial{newOracle(cases), []judge.Kind{judge.KindProbability}}
+	env := newEnv(t, b, jev)
+	outs, err := eval.Run(context.Background(), env, cases)
+	if err != nil {
+		t.Fatal(err)
+	}
+	again, err := eval.Rescore(context.Background(), env, outs, jev)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range outs {
+		o, n := outs[i], again[i]
+		if n.Decision != o.Decision || !slices.Equal(n.Fallbacks, o.Fallbacks) {
+			t.Errorf("%q: replayed %s fallbacks %v, recorded %s fallbacks %v", o.Case.Command, n.Decision, n.Fallbacks, o.Decision, o.Fallbacks)
+		}
+	}
+}
+
 // TestReportMasksCredentials：报告里的命令、指令与备注遮蔽凭据（评审 M2-07）。
 func TestReportMasksCredentials(t *testing.T) {
 	const secret = "sk-proj-ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdefghijklmno"

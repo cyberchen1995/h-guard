@@ -193,6 +193,9 @@ type recording struct {
 	err     error
 	invalid int // 调用成功时，所问题目中没有有效答案的题数（按 judge.Validate）
 	latency time.Duration
+	// kinds 是记录时后端声明的题型（Caps().Kinds，nil 为全部）。重算时 replay 照样声明，
+	// 动作检查才会把没有问出的题记成 judge_kind_unsupported，与记录时一致
+	kinds []judge.Kind
 }
 
 // recorder 把一次判断的全部题目交给真实后端（经 judge.AskAll，不能批量的后端按题提问），记下合并后的答案。
@@ -212,7 +215,7 @@ func (r *recorder) Caps() judge.BackendCaps {
 func (r *recorder) Ask(ctx context.Context, state map[string]any, qs []judge.Question) (judge.Response, error) {
 	start := time.Now()
 	resp, err := judge.AskAll(ctx, r.Backend, state, qs)
-	rec := &recording{resp: resp, err: err, latency: time.Since(start)}
+	rec := &recording{resp: resp, err: err, latency: time.Since(start), kinds: slices.Clone(r.Backend.Caps().Kinds)}
 	if err == nil {
 		rec.invalid = len(qs) - len(judge.Validate(qs, resp))
 	}
@@ -222,11 +225,13 @@ func (r *recorder) Ask(ctx context.Context, state map[string]any, qs []judge.Que
 	return resp, err
 }
 
-// replay 按记下的答案或错误回答，不调用后端。
+// replay 按记下的答案或错误回答，不调用后端；能力声明里带着记录时后端的题型。
 type replay struct{ rec *recording }
 
-func (replay) Name() string            { return "replay" }
-func (replay) Caps() judge.BackendCaps { return judge.BackendCaps{Batch: true} }
+func (replay) Name() string { return "replay" }
+func (p replay) Caps() judge.BackendCaps {
+	return judge.BackendCaps{Batch: true, Kinds: slices.Clone(p.rec.kinds)}
+}
 func (p replay) Ask(context.Context, map[string]any, []judge.Question) (judge.Response, error) {
 	return p.rec.resp, p.rec.err
 }
@@ -297,17 +302,26 @@ func floorRules(set *rules.Set, th config.Thresholds) []string {
 	return ids
 }
 
-// Incomplete 返回调用成功、但有题目没有有效答案的语料条数。这样的结论靠缺题时的保守处理得出，
-// 不能作为校准的证据（评审 M2-05）。
+// Incomplete 返回答案不完整的语料条数：调用成功、但有题目没有有效答案，或者有题目因为后端答不了它的题型而
+// 没有问出（降级原因 judge_kind_unsupported，一道都问不出时后端根本没有被调用）。这样的结论靠缺题时的保守处理
+// 得出，不能作为校准的证据（评审 M2-05）。
 func Incomplete(outs []Outcome) int {
 	n := 0
 	for _, o := range outs {
-		if o.Err == "" && o.Invalid > 0 {
+		if incomplete(o) {
 			n++
 		}
 	}
 	return n
 }
+
+// incomplete 报告 o 的答案是否不完整（见 Incomplete）。
+func incomplete(o Outcome) bool {
+	return o.Err == "" && (o.Invalid > 0 || unasked(o))
+}
+
+// unasked 报告 o 是否有题目因为后端答不了它的题型而没有问出。
+func unasked(o Outcome) bool { return slices.Contains(o.Fallbacks, action.FallbackKindUnsupported) }
 
 // Failed 返回调用后端失败的语料条数。
 func Failed(outs []Outcome) int {
