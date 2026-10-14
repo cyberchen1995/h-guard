@@ -8,6 +8,14 @@ const (
 	SignalRadius    = "blast_radius"
 )
 
+// BuiltinQuestionsDigest 是内置题集（内置规则包里 exec 规则的题 + 两个信号题）的指纹，即
+// config.QuestionsDigest(QuestionSet(rules.Builtin()))。所有内置校准档案（internal/config/default.yaml）的
+// fingerprint.questions 都是它，TestBuiltinQuestionsDigestIsPinned 把它固定下来。
+//
+// 阈值是在这一套措辞上校准的：改内置题目或信号题的措辞是破坏性变更，只在大版本做——同时重新校准全部内置
+// 档案、更新本常量，并在发布说明里写明。用户自定义规则的题不在其中（它们由 status 单独提示）。
+const BuiltinQuestionsDigest = "sha256:cdd8dab0be5e906b5d5f0fda6c5c60412214db02637af427adcc8e7a9415a5ab"
+
 // explicitly_requested 的措辞按时间先后列出指令并写明撤回语义（spec §5.4，M2）；blast_radius 沿用 Python 版
 // 措辞。阈值在措辞上校准（spec §8.3）：改动任一题的措辞都会改变题集指纹，已有档案随之视为未校准。
 var (

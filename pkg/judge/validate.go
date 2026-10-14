@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"slices"
 	"sync"
 )
 
@@ -74,11 +75,18 @@ func Validate(qs []Question, r Response) map[string]Answer {
 // MaxConcurrent 是不能批量的后端按题并发的上限（spec §3.4、§8.1）。
 const MaxConcurrent = 4
 
-// AskAll 按后端能力提问：Caps().Batch 为真时一次问完，否则按题并发（至多 MaxConcurrent 个）。
+// AskAll 按后端能力提问。先去掉后端不支持的题型（Caps().Supports 为假）：这些题不发给后端、保持未答，
+// 不能产生放行；一道都不剩时不调用后端，返回空答案与 nil 错误。其余的题在 Caps().Batch 为真时一次问完，
+// 否则按题并发（至多 MaxConcurrent 个）。
 // 按题提问时，失败的题只当未答；全部失败才返回错误（取第一道题的错误）。
-// 返回的答案只含 qs 中的题目 ID；后端多给的答案被丢弃。
+// 返回的答案只含发出的题目 ID；后端多给的答案被丢弃。
 func AskAll(ctx context.Context, b Backend, state map[string]any, qs []Question) (Response, error) {
-	if b.Caps().Batch {
+	caps := b.Caps()
+	qs = slices.DeleteFunc(slices.Clone(qs), func(q Question) bool { return !caps.Supports(q.Kind) })
+	if len(qs) == 0 {
+		return Response{Answers: map[string]Answer{}}, nil
+	}
+	if caps.Batch {
 		r, err := b.Ask(ctx, state, qs)
 		if err != nil {
 			return Response{}, err

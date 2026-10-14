@@ -7,6 +7,7 @@ import (
 	"os"
 	osexec "os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -76,6 +77,13 @@ func helper(mode string) int {
 		}
 	}
 	model := "helper-model"
+	if mode == "ids" { // 把收到的题目 ID 放进 model 字段带回
+		ids := make([]string, len(req.Questions))
+		for i, q := range req.Questions {
+			ids[i] = q.ID
+		}
+		model = strings.Join(ids, ",")
+	}
 	if mode == "env" { // 把收到的环境变量名与工作目录放进 model 字段带回
 		var keys []string
 		for _, kv := range os.Environ() {
@@ -245,8 +253,49 @@ func TestFailuresAreErrors(t *testing.T) {
 }
 
 func TestConformance(t *testing.T) {
-	judgetest.Run(t, func(t *testing.T) judge.Backend { return newBackend(t, "answer", exec.Options{}) },
-		[]judge.Question{probQ, scaleQ})
+	for name, kinds := range map[string][]judge.Kind{
+		"default":          nil,
+		"probability only": {judge.KindProbability},
+		"scale only":       {judge.KindScale},
+	} {
+		t.Run(name, func(t *testing.T) {
+			judgetest.Run(t, func(t *testing.T) judge.Backend { return newBackend(t, "answer", exec.Options{Kinds: kinds}) },
+				[]judge.Question{probQ, scaleQ})
+		})
+	}
+}
+
+// TestKindsLimitWhatTheProgramIsAsked：程序只收到 kinds 中题型的题；一道都不剩时不启动程序。
+func TestKindsLimitWhatTheProgramIsAsked(t *testing.T) {
+	b := newBackend(t, "ids", exec.Options{Kinds: []judge.Kind{judge.KindProbability}})
+	if c := b.Caps(); !slices.Equal(c.Kinds, []judge.Kind{judge.KindProbability}) || !c.Supports(judge.KindProbability) || c.Supports(judge.KindScale) {
+		t.Errorf("caps = %+v", c)
+	}
+	resp, err := b.Ask(context.Background(), map[string]any{}, []judge.Question{probQ, scaleQ})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Model != "publish" {
+		t.Errorf("the program was asked %q, want only publish", resp.Model)
+	}
+	if _, ok := resp.Answers["blast_radius"]; ok || resp.Answers["publish"].P == nil {
+		t.Errorf("answers = %+v", resp.Answers)
+	}
+	// exit3 模式一旦启动就是后端出错：没有出错说明程序没有启动
+	b = newBackend(t, "exit3", exec.Options{Kinds: []judge.Kind{judge.KindScale}})
+	if resp, err := b.Ask(context.Background(), map[string]any{}, []judge.Question{probQ}); err != nil || len(resp.Answers) != 0 {
+		t.Errorf("nothing to ask: answers %+v, err %v", resp.Answers, err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := b.Ask(ctx, map[string]any{}, []judge.Question{probQ}); judge.KindOf(err) != judge.Timeout {
+		t.Errorf("nothing to ask, canceled ctx: err = %v, want a timeout", err)
+	}
+	// Caps 返回副本：改动它不影响后端
+	b.Caps().Kinds[0] = judge.KindProbability
+	if c := b.Caps(); c.Kinds[0] != judge.KindScale {
+		t.Errorf("Caps().Kinds aliases the backend: %+v", c)
+	}
 }
 
 func TestNewAndDescribe(t *testing.T) {
@@ -255,9 +304,13 @@ func TestNewAndDescribe(t *testing.T) {
 		"env with value":   {Command: "/opt/judge", Env: []string{"KEY=v"}},
 		"negative timeout": {Command: "/opt/judge", TimeoutMS: -1},
 		"bad probability":  {Command: "/opt/judge", Probability: "guess"},
+		"unknown kind":     {Command: "/opt/judge", Kinds: []judge.Kind{judge.KindProbability, "HGCanaryKind987654"}},
+		"empty kinds":      {Command: "/opt/judge", Kinds: []judge.Kind{}},
+		"duplicate kinds":  {Command: "/opt/judge", Kinds: []judge.Kind{judge.KindScale, judge.KindProbability, judge.KindScale}},
 	} {
-		if _, err := exec.New("b", o); err == nil {
-			t.Errorf("%s: no error", name)
+		_, err := exec.New("b", o)
+		if err == nil || strings.Contains(err.Error(), "HGCanaryKind987654") {
+			t.Errorf("%s: err = %v", name, err)
 		}
 	}
 	b, err := exec.New("local", exec.Options{Command: "/opt/judge/../judge/run", Args: []string{"--model", "a b"}, Model: "m1", Probability: "logprobs"})
@@ -267,7 +320,8 @@ func TestNewAndDescribe(t *testing.T) {
 	if got := b.Describe(); got != (judge.Info{Target: `"/opt/judge/run" "--model" "a b"`, Model: "m1", Probability: "logprobs"}) {
 		t.Errorf("Describe() = %+v", got)
 	}
-	if c := b.Caps(); !c.Calibrated || !c.Batch {
+	if c := b.Caps(); !c.Calibrated || !c.Batch || c.Mechanism != judge.MechanismProgram ||
+		!slices.Equal(c.Kinds, []judge.Kind{judge.KindProbability, judge.KindScale}) {
 		t.Errorf("caps = %+v", c)
 	}
 	if b2, _ := exec.New("v", exec.Options{Command: "/opt/judge"}); b2.Caps().Calibrated || b2.Describe().Probability != "verbalized" {

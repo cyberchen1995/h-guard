@@ -3,6 +3,8 @@ package app
 import (
 	"errors"
 	"io"
+	"slices"
+	"strings"
 
 	"github.com/cyberchen1995/h-guard/internal/check/action"
 	"github.com/cyberchen1995/h-guard/internal/config"
@@ -94,6 +96,56 @@ func builtinDigest() string {
 		return ""
 	}
 	return config.QuestionsDigest(action.QuestionSet(set))
+}
+
+// judgeKindsError 是配置期的能力校验（spec：不可能的组合报配置错误）：模型开启时，judge.backend 必须能回答
+// 内置题集用到的全部题型，否则这些题永远缺答（影响范围按最大、不能否决）。config 包不能依赖 action 的题集，
+// 所以在配置加载之后、由这里检查。按配置错误处理：hook 对动作请求确认，命令行报错退出。
+// 后端构造不出来时同样报配置错误（fail closed）：正常流程里 config.Load 已逐个校验后端、报告了原因，
+// 走不到这里；万一加载顺序变了，也不能把它当作没有问题放过。说明不回显构造错误的原文。
+func judgeKindsError(cfg *config.Config) error {
+	if !cfg.Judge.Enabled {
+		return nil
+	}
+	name := cfg.Judge.Backend
+	b, err := cfg.NewBackend(name)
+	if err != nil {
+		return &config.Error{Issues: []config.Issue{{Path: "backends." + name, Msg: "cannot be created, so the judge cannot use it"}}}
+	}
+	return kindsError(name, b, "which the judge asks (judge.enabled is true)")
+}
+
+// kindsError 检查后端 b（配置名 name）能否回答内置题集用到的全部题型；不能时返回配置错误：用字段路径写出后端名，
+// 再写缺的题型与 why（谁要问这些题），不回显任何配置值。judgeKindsError 与 eval 共用。
+func kindsError(name string, b judge.Backend, why string) error {
+	set, err := rules.Builtin()
+	if err != nil {
+		return err
+	}
+	caps := b.Caps()
+	var missing []string
+	for _, k := range questionKinds(action.QuestionSet(set)) {
+		if !caps.Supports(k) {
+			missing = append(missing, string(k))
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	return &config.Error{Issues: []config.Issue{{Path: "backends." + name,
+		Msg: "cannot answer " + strings.Join(missing, " or ") + " questions, " + why}}}
+}
+
+// questionKinds 返回 qs 用到的题型，排序、去重。
+func questionKinds(qs []judge.Question) []judge.Kind {
+	var ks []judge.Kind
+	for _, q := range qs {
+		if !slices.Contains(ks, q.Kind) {
+			ks = append(ks, q.Kind)
+		}
+	}
+	slices.Sort(ks)
+	return ks
 }
 
 // ownQuestions 返回启用的、带自己题目的用户规则（含覆盖内置规则的）：它们的题目不在校准指纹内（spec §8.3）。

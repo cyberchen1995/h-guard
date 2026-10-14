@@ -15,6 +15,7 @@ const (
 	FallbackJudgeTimeout     = "judge_timeout"
 	FallbackConsentMissing   = "judge_consent_missing"
 	FallbackAnswerInvalid    = "judge_answer_invalid"
+	FallbackKindUnsupported  = "judge_kind_unsupported" // 后端不支持这次要问的某种题型
 	FallbackTruncated        = "evidence_truncated"
 	FallbackRegexTimeout     = "regex_timeout"
 	FallbackBudget           = "local_budget_exceeded"
@@ -46,7 +47,7 @@ type JudgeStatus int
 
 const (
 	JudgeOff      JudgeStatus = iota // judge.enabled: false
-	JudgeFailed                      // 已开启但不可用：同意缺失、超时、出错
+	JudgeFailed                      // 已开启但不可用：同意缺失、超时、出错、一道题都发不出去
 	JudgeAnswered                    // 拿到了答案（逐题仍可能无效）
 )
 
@@ -61,6 +62,12 @@ type Input struct {
 	Truncated     bool                    // 命令或任一条指令被截断
 	Thresholds    config.Thresholds
 	OnUnavailable guard.Decision // 模型不可用且无正则命中时的结论
+	// Unsupported 是这次要问、但后端不支持其题型的题的 ID：它们没有发给后端、保持未答（不产生放行），
+	// 缺答的原因记 judge_kind_unsupported，而不是 judge_answer_invalid。只是原因码，不改结论。
+	Unsupported []string
+	// JudgeTimedOut：取答返回时截止时间已到（AskAll 没有返回错误，已答的保留，如 openai logprobs 逐题请求）。
+	// 此时缺答的原因记 judge_timeout，而不是 judge_answer_invalid。只是原因码，不改结论。
+	JudgeTimedOut bool
 }
 
 // Hit 是合并后的一条命中。
@@ -145,6 +152,9 @@ func Decide(in Input) Result {
 	case JudgeFailed:
 		// 3. 模型开启但不可用：有正则命中即按正则请求确认，否则按 on_unavailable（spec §5.1）。
 		res.Fallbacks = appendOnce(res.Fallbacks, in.JudgeFallback)
+		if len(in.Unsupported) > 0 {
+			res.Fallbacks = appendOnce(res.Fallbacks, FallbackKindUnsupported)
+		}
 		res.Hits, res.Branch = regex, BranchUnavailable
 		if len(regex) == 0 {
 			res.Decision = in.OnUnavailable
@@ -159,11 +169,25 @@ func Decide(in Input) Result {
 	if in.Truncated {
 		res.Fallbacks = appendOnce(res.Fallbacks, FallbackTruncated)
 	}
+	if len(in.Unsupported) > 0 {
+		res.Fallbacks = appendOnce(res.Fallbacks, FallbackKindUnsupported)
+	}
 	byRule := make(map[string]Hit, len(regex))
 	for _, h := range regex {
 		byRule[h.Rule] = h
 	}
-	invalid := false
+	// 缺答（或答案无效）一律不能否决、不能授权、影响范围按最大，不论原因；原因只决定原因码：
+	// 题型不支持的已由 judge_kind_unsupported 说明，其余在截止时间已到时是 judge_timeout，否则是 judge_answer_invalid。
+	invalid, timedOut := false, false
+	missing := func(id string) {
+		switch {
+		case slices.Contains(in.Unsupported, id):
+		case in.JudgeTimedOut:
+			timedOut = true
+		default:
+			invalid = true
+		}
+	}
 	for _, id := range sortedRuleIDs(in.Rules) {
 		rule := in.Rules[id]
 		if !rule.Asked {
@@ -171,7 +195,7 @@ func Decide(in Input) Result {
 		}
 		a, ok := in.Answers[id]
 		if !ok {
-			invalid = true // 无效答案：不能否决，也不新增命中（spec §8.1）
+			missing(id) // 无效答案：不能否决，也不新增命中（spec §8.1）
 			continue
 		}
 		p := *a.P
@@ -193,7 +217,7 @@ func Decide(in Input) Result {
 	if a, ok := in.Answers[SignalRequested]; ok {
 		res.Requested = judge.Prob(*a.P)
 	} else {
-		invalid = true
+		missing(SignalRequested)
 	}
 	if a, ok := in.Answers[SignalRadius]; ok {
 		r := 0.0
@@ -202,7 +226,10 @@ func Decide(in Input) Result {
 		}
 		res.Radius = &r
 	} else {
-		invalid = true
+		missing(SignalRadius)
+	}
+	if timedOut {
+		res.Fallbacks = appendOnce(res.Fallbacks, FallbackJudgeTimeout)
 	}
 	if invalid {
 		res.Fallbacks = appendOnce(res.Fallbacks, FallbackAnswerInvalid)

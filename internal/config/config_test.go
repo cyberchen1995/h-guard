@@ -5,10 +5,15 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
+	"github.com/cyberchen1995/h-guard/pkg/guard"
 	"github.com/cyberchen1995/h-guard/pkg/judge"
+	"github.com/cyberchen1995/h-guard/pkg/judge/anthropic"
+	_ "github.com/cyberchen1995/h-guard/pkg/judge/exec"
+	"github.com/cyberchen1995/h-guard/pkg/judge/openai"
 	_ "github.com/cyberchen1995/h-guard/pkg/judge/typesafe"
 )
 
@@ -54,6 +59,107 @@ func TestDefaultsAreValid(t *testing.T) {
 	if c.Policy.RequestWindow != 3 || c.Policy.MaxCommandChars != 8000 || c.Policy.MaxRequestChars != 2000 ||
 		c.Policy.OnUnavailable != "pass" || c.Policy.WhenAskUnsupported != "deny" {
 		t.Errorf("policy = %+v", c.Policy)
+	}
+}
+
+// TestDefaultsIncludeTheRecommendedBackends：内置后端是 spec 里的稳定名字（jev、claude-haiku、claude-sonnet、
+// gemma4-local），名字合法、构造得出、说得出模型与概率获取方式；默认仍然不开启模型，后端仍是 jev。
+// 增减内置后端要在这里有意识地改。
+func TestDefaultsIncludeTheRecommendedBackends(t *testing.T) {
+	c := Defaults()
+	if c.Judge.Enabled || c.Judge.Backend != "jev" {
+		t.Errorf("judge = %+v, want disabled with backend jev", c.Judge)
+	}
+	want := []struct{ name, typ, profile, target, model, probability string }{
+		{"claude-haiku", "anthropic", "claude-haiku", "https://api.anthropic.com:443", "claude-haiku-5-5", "verbalized"},
+		{"claude-sonnet", "anthropic", "claude-sonnet", "https://api.anthropic.com:443", "claude-sonnet-5-5", "verbalized-structured-effort-low"},
+		{"gemma4-local", "openai", "gemma4-local", "http://localhost:11434", "gemma4:12b-mlx", "logprobs-reasoning-effort-none"},
+		{"jev", "typesafe", "jev", "https://api.typesafe.ai:443", "jev-latest", "native"},
+	}
+	var got []string
+	for name := range c.Backends {
+		got = append(got, name)
+	}
+	slices.Sort(got)
+	var names []string
+	for _, w := range want {
+		names = append(names, w.name)
+	}
+	if !slices.Equal(got, names) {
+		t.Fatalf("built-in backends = %v, want %v", got, names)
+	}
+	for _, w := range want {
+		if !guard.ValidName(w.name) {
+			t.Errorf("%s is not a valid name", w.name)
+		}
+		bc := c.Backends[w.name]
+		if bc.Type != w.typ || bc.Profile != w.profile {
+			t.Errorf("%s: type %q profile %q, want %q %q", w.name, bc.Type, bc.Profile, w.typ, w.profile)
+		}
+		b, err := c.NewBackend(w.name)
+		if err != nil {
+			t.Errorf("%s: %v", w.name, err)
+			continue
+		}
+		d, ok := b.(judge.Describer)
+		if !ok {
+			t.Errorf("%s does not describe itself", w.name)
+			continue
+		}
+		if info := d.Describe(); info.Target != w.target || info.Model != w.model || info.Probability != w.probability {
+			t.Errorf("%s describes itself as %+v, want %s %s %s", w.name, info, w.target, w.model, w.probability)
+		}
+	}
+	// claude-sonnet 的思考占用 max_tokens，所以结构化输出（强制工具调用在该模型上返回 400）与较低的 effort、
+	// 较大的 max_tokens 一起出厂；claude-haiku 保持默认（answer tool）
+	var sonnet, haiku anthropic.Options
+	if err := c.Backends["claude-sonnet"].Decode(&sonnet); err != nil {
+		t.Fatal(err)
+	}
+	if sonnet.Model != "claude-sonnet-5-5" || sonnet.Answer != "structured" || sonnet.Effort != "low" || sonnet.MaxTokens != 4096 {
+		t.Errorf("claude-sonnet options = %+v", sonnet)
+	}
+	if err := c.Backends["claude-haiku"].Decode(&haiku); err != nil {
+		t.Fatal(err)
+	}
+	if haiku.Model != "claude-haiku-5-5" || haiku.Answer != "" || haiku.Effort != "" || haiku.MaxTokens != 0 {
+		t.Errorf("claude-haiku options = %+v", haiku)
+	}
+	// gemma4-local：本地 Ollama，读 logprobs，关掉思考让第一个 token 就是答案；本地模型慢，超时放宽到 30 秒
+	var gemma openai.Options
+	if err := c.Backends["gemma4-local"].Decode(&gemma); err != nil {
+		t.Fatal(err)
+	}
+	if gemma.Model != "gemma4:12b-mlx" || gemma.BaseURL != "http://localhost:11434/v1" || gemma.Probability != "logprobs" ||
+		gemma.ReasoningEffort != "none" || gemma.TimeoutMS != 30000 || gemma.APIKeyEnv != "" {
+		t.Errorf("gemma4-local options = %+v", gemma)
+	}
+}
+
+// TestGemma4LocalProfile：本地模型的内置档案是 M2 验收 sweep 的建议（拟合 113 条语料）：与保守默认值相比，
+// 只有 recursive_delete 的影响范围下限不同。指纹的 probability 带 reasoning_effort 后缀（它进入指纹）；
+// 请求与校准时逐字节相同，所以建议值仍然适用。
+func TestGemma4LocalProfile(t *testing.T) {
+	c := Defaults()
+	p, ok := c.Profiles["gemma4-local"]
+	if !ok {
+		t.Fatal("no gemma4-local profile")
+	}
+	th := p.Thresholds
+	if *th.Hit != ConservativeThresholds.Hit || *th.Veto != ConservativeThresholds.Veto || *th.Requested != ConservativeThresholds.Requested {
+		t.Errorf("thresholds %+v differ from the conservative defaults %+v", th, ConservativeThresholds)
+	}
+	if *th.Hit != 0.3 || *th.Veto != 0.05 || *th.Requested != 0.9 || len(th.RadiusFloor) != 1 || th.RadiusFloor["recursive_delete"] != 1 {
+		t.Errorf("thresholds = %+v", th)
+	}
+	fp := p.Fingerprint
+	if fp == nil || fp.Model != "gemma4:12b-mlx" || fp.Probability != "logprobs-reasoning-effort-none" ||
+		fp.Questions != "sha256:cdd8dab0be5e906b5d5f0fda6c5c60412214db02637af427adcc8e7a9415a5ab" {
+		t.Errorf("fingerprint = %+v", fp)
+	}
+	b := c.Backends["gemma4-local"]
+	if b.Type != "openai" || b.Profile != "gemma4-local" {
+		t.Errorf("backend = %+v", b)
 	}
 }
 
@@ -129,10 +235,15 @@ func TestErrorsDoNotEchoValues(t *testing.T) {
 	const canary = "HGCanaryValue987654"
 	for _, body := range []string{
 		"version: 1\nbackends: {jev: {type: typesafe, profile: jev, base_url: 'https://user:" + canary + "@example.invalid'}}\n",
+		"version: 1\nbackends: {jev: {type: typesafe, profile: jev, base_url: 'https://example.invalid/v1?key=" + canary + "'}}\n",
+		"version: 1\nbackends: {jev: {type: typesafe, profile: jev, api_key_env: 'sk-" + canary + "'}}\n",
 		"version: 1\npolicy: {on_unavailable: " + canary + "}\n",
 		"version: 1\naction: {tier: " + canary + "}\n",
 		"version: 1\nbackends: {jev: {type: " + canary + "}}\n",
 		"version: 1\njudge: {backend: " + canary + "}\n",
+		"version: 1\nbackends: {claude: {type: anthropic, model: m, answer: " + canary + "}}\n",
+		"version: 1\nbackends: {claude: {type: anthropic, model: m, effort: " + canary + "}}\n",
+		"version: 1\nbackends: {local: {type: openai, model: m, temperature: " + canary + "}}\n",
 	} {
 		p := write(t, t.TempDir(), "config.yaml", body)
 		_, err := Load(p)
@@ -209,6 +320,42 @@ func TestNewBackend(t *testing.T) {
 	}
 	if _, err := Defaults().NewBackend("nope"); err == nil {
 		t.Error("NewBackend accepted an unknown name")
+	}
+}
+
+// TestExecKindsFromYAML：exec 后端的 kinds 经配置文件解码后校验。空列表（与省略不同）、未知取值、重复都是
+// 配置错误，说明不回显取值；省略时两种题型都能回答。
+func TestExecKindsFromYAML(t *testing.T) {
+	const canary = "HGCanaryKind987654"
+	const prefix = "version: 1\nbackends: {local: {type: exec, command: /opt/judge/run"
+	for name, kinds := range map[string]string{
+		"empty list": "[]",
+		"unknown":    "[probability, " + canary + "]",
+		"duplicate":  "[scale, scale]",
+	} {
+		p := write(t, t.TempDir(), "c.yaml", prefix+", kinds: "+kinds+"}}\n")
+		_, err := Load(p)
+		// 要求 exec 自己的说明：kinds 不是已知字段时 Load 同样报错，但不是因为这一项的取值
+		if err == nil || !strings.Contains(err.Error(), "backends.local: exec: kinds") || strings.Contains(err.Error(), canary) {
+			t.Errorf("%s: err = %v", name, err)
+		}
+	}
+	for opt, want := range map[string][]judge.Kind{
+		"":                              {judge.KindProbability, judge.KindScale},
+		", kinds: [probability]":        {judge.KindProbability},
+		", kinds: [scale, probability]": {judge.KindScale, judge.KindProbability},
+	} {
+		c, err := Load(write(t, t.TempDir(), "c.yaml", prefix+opt+"}}\n"))
+		if err != nil {
+			t.Fatalf("%q: %v", opt, err)
+		}
+		b, err := c.NewBackend("local")
+		if err != nil {
+			t.Fatalf("%q: %v", opt, err)
+		}
+		if got := b.Caps().Kinds; !slices.Equal(got, want) {
+			t.Errorf("%q: kinds = %v, want %v", opt, got, want)
+		}
 	}
 }
 
@@ -300,5 +447,85 @@ func TestFingerprintValidation(t *testing.T) {
 	p := write(t, t.TempDir(), "c.yaml", "version: 1\nprofiles: {jev: {thresholds: {hit: 0.5, veto: 0.2, requested: 0.7}, fingerprint: {model: m, probability: native, questions: "+digestA+"}}}\n")
 	if _, err := Load(p); err != nil {
 		t.Errorf("valid fingerprint rejected: %v", err)
+	}
+}
+
+// TestAnthropicAnswerFromYAML：anthropic 的 answer 从配置读入（取答方式体现在 Caps().Mechanism 与校准用的
+// Info.Probability 上）；未知取值是配置错误，说明不回显取值。
+func TestAnthropicAnswerFromYAML(t *testing.T) {
+	const prefix = "version: 1\nbackends: {claude: {type: anthropic, model: claude-sonnet-5-5"
+	for answer, want := range map[string]struct {
+		mechanism   judge.Mechanism
+		probability string
+	}{
+		"":                     {judge.MechanismForcedTool, "verbalized"},
+		", answer: structured": {judge.MechanismJSONSchema, "verbalized-structured"},
+		", answer: auto_tool":  {judge.MechanismAutoTool, "verbalized-auto-tool"},
+	} {
+		c, err := Load(write(t, t.TempDir(), "c.yaml", prefix+answer+"}}\n"))
+		if err != nil {
+			t.Fatalf("%q: %v", answer, err)
+		}
+		b, err := c.NewBackend("claude")
+		if err != nil {
+			t.Fatal(err)
+		}
+		d, ok := b.(judge.Describer)
+		if !ok || b.Caps().Mechanism != want.mechanism || d.Describe().Probability != want.probability {
+			t.Errorf("%q: backend = %v, want mechanism %q and probability %q", answer, b, want.mechanism, want.probability)
+		}
+	}
+	const canary = "HGCanaryAnswer864209"
+	_, err := Load(write(t, t.TempDir(), "c.yaml", prefix+", answer: "+canary+"}}\n"))
+	if err == nil || !strings.Contains(err.Error(), "backends.claude: anthropic: answer") || strings.Contains(err.Error(), canary) {
+		t.Errorf("err = %v", err)
+	}
+}
+
+// TestOptionalParametersFromYAML：anthropic 的 effort 与 openai 的 temperature 从配置读入；
+// 取值非法是配置错误，说明带后端名，不回显取值。
+func TestOptionalParametersFromYAML(t *testing.T) {
+	load := func(t *testing.T, backend string) (judge.Backend, error) {
+		t.Helper()
+		c, err := Load(write(t, t.TempDir(), "c.yaml", "version: 1\nbackends: {b: "+backend+"}\n"))
+		if err != nil {
+			return nil, err
+		}
+		return c.NewBackend("b")
+	}
+	probability := func(b judge.Backend) string { return b.(judge.Describer).Describe().Probability }
+
+	for backend, want := range map[string]string{
+		"{type: anthropic, model: m}":                                  "verbalized",
+		"{type: anthropic, model: m, effort: low}":                     "verbalized-effort-low",
+		"{type: anthropic, model: m, answer: structured, effort: max}": "verbalized-structured-effort-max",
+	} {
+		b, err := load(t, backend)
+		if err != nil {
+			t.Fatalf("%s: %v", backend, err)
+		}
+		if got := probability(b); got != want {
+			t.Errorf("%s: Probability = %q, want %q", backend, got, want)
+		}
+	}
+	for _, backend := range []string{
+		"{type: openai, model: m, temperature: 0}",
+		"{type: openai, model: m, temperature: 0.5, probability: logprobs}",
+		"{type: openai, model: m, temperature: 1}",
+	} {
+		if _, err := load(t, backend); err != nil {
+			t.Errorf("%s: %v", backend, err)
+		}
+	}
+	for backend, want := range map[string]string{
+		"{type: anthropic, model: m, effort: Low}":    "backends.b: anthropic: effort",
+		"{type: openai, model: m, temperature: -1}":   "backends.b: openai: temperature",
+		"{type: openai, model: m, temperature: 2}":    "backends.b: openai: temperature",
+		"{type: openai, model: m, temperature: .nan}": "backends.b: openai: temperature",
+	} {
+		_, err := load(t, backend)
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%s: err = %v, want it to mention %q", backend, err, want)
+		}
 	}
 }

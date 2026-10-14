@@ -97,3 +97,57 @@ func TestRegisterType(t *testing.T) {
 		t.Errorf("Types() = %v, want sorted and containing %q", types, typ)
 	}
 }
+
+func TestBackendCapsSupports(t *testing.T) {
+	all := judge.BackendCaps{}
+	if !all.Supports(judge.KindProbability) || !all.Supports(judge.KindScale) {
+		t.Error("nil Kinds must mean every kind (a backend that declares nothing)")
+	}
+	none := judge.BackendCaps{Kinds: []judge.Kind{}}
+	if none.Supports(judge.KindProbability) || none.Supports(judge.KindScale) {
+		t.Error("an empty, non-nil Kinds must mean no kind at all")
+	}
+	prob := judge.BackendCaps{Kinds: []judge.Kind{judge.KindProbability}}
+	if !prob.Supports(judge.KindProbability) || prob.Supports(judge.KindScale) {
+		t.Errorf("Kinds %v: Supports(probability) = %v, Supports(scale) = %v",
+			prob.Kinds, prob.Supports(judge.KindProbability), prob.Supports(judge.KindScale))
+	}
+}
+
+// TestBackendCapsJSONKeepsEmptyKinds：空切片（一种都不支持）与 nil（全部支持）含义相反，
+// 序列化再解码后不能混为一谈，否则一个什么都答不了的后端会变成什么都能答。
+func TestBackendCapsJSONKeepsEmptyKinds(t *testing.T) {
+	for _, c := range []judge.BackendCaps{
+		{},
+		{Kinds: []judge.Kind{}},
+		{Batch: true, Mechanism: judge.MechanismJSONSchema, Kinds: []judge.Kind{judge.KindScale}},
+	} {
+		b, err := json.Marshal(c)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var back judge.BackendCaps
+		if err := json.Unmarshal(b, &back); err != nil {
+			t.Fatal(err)
+		}
+		if (back.Kinds == nil) != (c.Kinds == nil) || !slices.Equal(back.Kinds, c.Kinds) || back.Mechanism != c.Mechanism || back.Batch != c.Batch {
+			t.Errorf("%s decoded to %+v, want %+v", b, back, c)
+		}
+	}
+}
+
+// TestMechanismNames：取答方式的名字会显示给用户，固定下来。
+func TestMechanismNames(t *testing.T) {
+	for m, want := range map[judge.Mechanism]string{
+		judge.MechanismNative:     "native",
+		judge.MechanismLogprobs:   "logprobs",
+		judge.MechanismJSONSchema: "json_schema",
+		judge.MechanismForcedTool: "forced_tool",
+		judge.MechanismAutoTool:   "auto_tool",
+		judge.MechanismProgram:    "program",
+	} {
+		if string(m) != want {
+			t.Errorf("mechanism %q, want %q", m, want)
+		}
+	}
+}

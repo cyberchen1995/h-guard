@@ -1,7 +1,31 @@
 // Package anthropic 是 Anthropic Messages API 的判断后端（spec §8.2），后端类型名 anthropic。导入本包即注册该类型。
 //
-// 用强制 tool use 让模型按 JSON schema 一次答完全部题目，模型直接给出概率（verbalized）：
-// Calibrated=false、Batch=true。端点只来自配置（base_url），同意绑定的主机不会被环境变量改掉（spec §8.5）。
+// Messages API 不提供 logprobs，模型一次答完全部题目、直接给出概率（verbalized）：Calibrated=false、Batch=true，
+// 两种题型都能回答。三种取答方式（配置项 answer）请求形态不同，给出的概率也不同，所以 Info.Probability 各不相同，
+// 要分别校准：
+//   - tool（默认）：强制调用 answer 工具（tool_choice {type: tool}），工具的输入就是答案。Mechanism forced_tool，
+//     Probability verbalized。较新的模型（Claude Opus 5.5、Sonnet 5.5、Fable 5.1 等）拒绝强制工具调用（HTTP 400）。
+//   - structured：原生结构化输出（output_config.format 的 json_schema），不发 tools；答案是第一个 text 块里的 JSON。
+//     Mechanism json_schema，Probability verbalized-structured。
+//   - auto_tool：answer 工具带 strict: true（参数符合 schema），tool_choice {type: auto}，用户消息末尾要求调用该工具。
+//     模型仍可能不调用，这时按没有答案报错。Mechanism auto_tool，Probability verbalized-auto-tool。
+//
+// 不探测模型支持哪种方式，也不在 HTTP 400 后自动换一种：换了方式，概率分布随之改变，按原方式校准的阈值不再适用，
+// 同一份配置也会在不同时刻用不同的方式作答。方式只来自配置；tool 方式收到 HTTP 400 时，FailureHint 提示改用 structured。
+//
+// 可选参数 effort（low、medium、high、xhigh、max；默认不发送，非法值是配置错误）写入请求的 output_config.effort；
+// structured 方式与 format 合在同一个 output_config 里。Sonnet 5.5、Opus 5.5 的思考关不掉，思考既占 max_tokens 又拉长
+// 延迟，判断这类分类任务用 low 足够。effort 改变模型的行为，所以设置后 Info.Probability 末尾加 -effort-<值>
+// （如 verbalized-structured-effort-low），要分别校准；不设置时与之前相同。temperature 默认不发送（较新的模型拒绝它），
+// 配置了（包括 0）同样进入 Info.Probability，后缀 -temperature-<值>，排在 effort 之后
+// （如 verbalized-structured-effort-low-temperature-0）。
+//
+// 读答案前先看 stop_reason，只接受正常结束的 end_turn、tool_use、stop_sequence。refusal（安全分类器拒答，内容可能
+// 不符合 schema）、max_tokens（被截断）、其余取值（如被上下文窗口截断、暂停、以后新增的取值）与缺失都按 BadResponse
+// 报告，即使内容里有看似完整的答案：被截断的答案仍可能是合法的 JSON，数字截短后就成了有把握的否决。
+// 错误说明一律是固定文本，不含回复内容，也不回显 stop_reason 的取值。
+//
+// 端点只来自配置（base_url），同意绑定的主机不会被环境变量改掉（spec §8.5）。
 package anthropic
 
 import (
@@ -12,6 +36,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/cyberchen1995/h-guard/pkg/judge"
@@ -30,6 +55,27 @@ const (
 	DefaultRetries   = 1
 	APIVersion       = "2023-06-01"
 	toolName         = "answer"
+	// autoToolInstruction 加在 auto_tool 方式的用户消息末尾：tool_choice auto 不保证调用
+	autoToolInstruction = "Record the answers by calling the answer tool."
+	// forcedToolHint 是 tool 方式收到 HTTP 400 时的提示（FailureHint）
+	forcedToolHint = "If this model rejects forced tool use (Claude Opus 5.5, Sonnet 5.5, Fable 5.1 and newer do), " +
+		"set answer: structured for this backend."
+)
+
+// 取答方式（配置项 answer）。
+const (
+	AnswerTool       = "tool"       // 强制调用 answer 工具（默认）
+	AnswerStructured = "structured" // output_config.format 的 json_schema
+	AnswerAutoTool   = "auto_tool"  // strict 工具 + tool_choice auto
+)
+
+// 思考力度（配置项 effort）。
+const (
+	EffortLow    = "low"
+	EffortMedium = "medium"
+	EffortHigh   = "high"
+	EffortXHigh  = "xhigh"
+	EffortMax    = "max"
 )
 
 // Options 是 anthropic 后端的配置项。
@@ -41,8 +87,14 @@ type Options struct {
 	TimeoutMS int    `yaml:"timeout_ms" json:"timeout_ms"`
 	Retries   *int   `yaml:"retries" json:"retries"`
 	// Temperature 默认不发送：较新的模型拒绝它（HTTP 400，"temperature is deprecated for this model"）。
-	// 仍接受它的模型可以设为 0，使答案更稳定。
+	// 仍接受它的模型可以设为 0，使答案更稳定。配置了（包括 0）就进入 Info.Probability（校准指纹）。
 	Temperature *float64 `yaml:"temperature" json:"temperature"`
+	// Answer 是取答方式：tool（默认）、structured 或 auto_tool，见包注释。
+	Answer string `yaml:"answer" json:"answer"`
+	// Effort 是 output_config.effort：low、medium、high、xhigh 或 max，默认不发送。Sonnet 5.5、Opus 5.5 的
+	// 思考关不掉，思考既占 max_tokens 又拉长延迟；判断这类分类任务用 low 足够。它改变模型的行为，
+	// 所以进入 Info.Probability（校准指纹）。
+	Effort string `yaml:"effort" json:"effort"`
 }
 
 func init() {
@@ -60,6 +112,7 @@ func init() {
 // Backend 是 anthropic 后端。创建时不做任何网络操作。
 type Backend struct {
 	name, model, keyEnv string
+	answer, effort      string
 	maxTokens           int
 	temperature         *float64
 	base                *url.URL
@@ -73,9 +126,29 @@ func New(name string, o Options) (*Backend, error) {
 	if o.Model == "" {
 		return nil, errors.New("anthropic: model is required")
 	}
-	b := &Backend{name: name, model: o.Model, keyEnv: o.APIKeyEnv, maxTokens: o.MaxTokens, temperature: o.Temperature, getenv: os.Getenv}
+	b := &Backend{name: name, model: o.Model, keyEnv: o.APIKeyEnv, answer: o.Answer, effort: o.Effort, maxTokens: o.MaxTokens,
+		getenv: os.Getenv}
+	if t := o.Temperature; t != nil {
+		v := *t + 0 // 复制一份，不与调用方共享；加 0 把 -0 变成 0，请求里与指纹里都是 0
+		b.temperature = &v
+	}
+	switch b.answer {
+	case "":
+		b.answer = AnswerTool
+	case AnswerTool, AnswerStructured, AnswerAutoTool:
+	default: // 不回显取值
+		return nil, errors.New("anthropic: answer must be tool, structured or auto_tool")
+	}
+	switch b.effort {
+	case "", EffortLow, EffortMedium, EffortHigh, EffortXHigh, EffortMax:
+	default: // 不回显取值
+		return nil, errors.New("anthropic: effort must be low, medium, high, xhigh or max")
+	}
 	if b.keyEnv == "" {
 		b.keyEnv = DefaultAPIKeyEnv
+	}
+	if err := httpx.ValidKeyEnv(Type, b.keyEnv); err != nil { // 不回显：误填进来的可能正是 key
+		return nil, err
 	}
 	switch {
 	case b.maxTokens < 0:
@@ -105,37 +178,97 @@ func New(name string, o Options) (*Backend, error) {
 
 func (b *Backend) Name() string { return b.name }
 
-func (b *Backend) Caps() judge.BackendCaps { return judge.BackendCaps{Batch: true} }
+func (b *Backend) Caps() judge.BackendCaps {
+	m := judge.MechanismForcedTool
+	switch b.answer {
+	case AnswerStructured:
+		m = judge.MechanismJSONSchema
+	case AnswerAutoTool:
+		m = judge.MechanismAutoTool
+	}
+	return judge.BackendCaps{Batch: true, Mechanism: m, Kinds: []judge.Kind{judge.KindProbability, judge.KindScale}}
+}
 
-// Describe 实现 judge.Describer。
+// Describe 实现 judge.Describer。Probability 区分取答方式（进入校准指纹）：tool 仍是 verbalized，
+// 与之前的校准档案一致。
 func (b *Backend) Describe() judge.Info {
-	return judge.Info{Target: httpx.Target(b.base), Model: b.model, Probability: "verbalized"}
+	p := "verbalized"
+	switch b.answer {
+	case AnswerStructured:
+		p = "verbalized-structured"
+	case AnswerAutoTool:
+		p = "verbalized-auto-tool"
+	}
+	if b.effort != "" { // effort 改变模型的行为（思考的多少），所以进入校准指纹；不设置时与之前相同
+		p += "-effort-" + b.effort
+	}
+	if b.temperature != nil { // temperature 默认不发送，配置了（包括 0）就与默认不同；在 effort 之后
+		p += "-temperature-" + strconv.FormatFloat(*b.temperature, 'g', -1, 64)
+	}
+	return judge.Info{Target: httpx.Target(b.base), Model: b.model, Probability: p}
+}
+
+// FailureHint 返回调用失败时给用户的提示：tool 方式下失败说明正是 HTTP 400 时，提示改用 structured
+// （较新的模型拒绝强制工具调用）；其余情况为空串。只看状态码与取答方式，不回显 detail。
+func (b *Backend) FailureHint(detail string) string {
+	if b.answer == AnswerTool && detail == "HTTP 400" {
+		return forcedToolHint
+	}
+	return ""
 }
 
 // Endpoint 返回请求地址，供 status 与 check 显示（不含凭据）。
 func (b *Backend) Endpoint() string { return b.endpoint }
 
 type request struct {
-	Model       string           `json:"model"`
-	MaxTokens   int              `json:"max_tokens"`
-	Temperature *float64         `json:"temperature,omitempty"`
-	System      string           `json:"system"`
-	Messages    []map[string]any `json:"messages"`
-	Tools       []map[string]any `json:"tools"`
-	ToolChoice  map[string]any   `json:"tool_choice"`
+	Model        string           `json:"model"`
+	MaxTokens    int              `json:"max_tokens"`
+	Temperature  *float64         `json:"temperature,omitempty"`
+	System       string           `json:"system"`
+	Messages     []map[string]any `json:"messages"`
+	Tools        []map[string]any `json:"tools,omitempty"`
+	ToolChoice   map[string]any   `json:"tool_choice,omitempty"`
+	OutputConfig map[string]any   `json:"output_config,omitempty"`
 }
 
 type response struct {
-	Model   string `json:"model"`
-	Content []struct {
+	Model      string `json:"model"`
+	StopReason string `json:"stop_reason"`
+	Content    []struct {
 		Type  string          `json:"type"`
 		Name  string          `json:"name"`
 		Input json.RawMessage `json:"input"`
+		Text  string          `json:"text"`
 	} `json:"content"`
 	Usage judge.Usage `json:"usage"`
 }
 
-// Ask 一次问完 qs：强制调用 answer 工具，工具的输入就是答案。
+// build 按取答方式构造请求。tool 方式的请求与引入取答方式之前逐字节相同（校准档案依赖它）。
+func (b *Backend) build(prefix string, qs []judge.Question) request {
+	user := prompt.Batch(prefix, qs)
+	req := request{Model: b.model, MaxTokens: b.maxTokens, Temperature: b.temperature, System: prompt.System}
+	tool := map[string]any{"name": toolName, "description": "Record the answer to every question.", "input_schema": prompt.Schema(qs)}
+	switch b.answer {
+	case AnswerStructured:
+		req.OutputConfig = map[string]any{"format": map[string]any{"type": "json_schema", "schema": prompt.Schema(qs)}}
+	case AnswerAutoTool:
+		tool["strict"] = true
+		req.Tools, req.ToolChoice = []map[string]any{tool}, map[string]any{"type": "auto"}
+		user += "\n" + autoToolInstruction
+	default:
+		req.Tools, req.ToolChoice = []map[string]any{tool}, map[string]any{"type": "tool", "name": toolName}
+	}
+	if b.effort != "" { // structured 方式与 format 合在同一个 output_config 里
+		if req.OutputConfig == nil {
+			req.OutputConfig = map[string]any{}
+		}
+		req.OutputConfig["effort"] = b.effort
+	}
+	req.Messages = []map[string]any{{"role": "user", "content": user}}
+	return req
+}
+
+// Ask 一次问完 qs，按取答方式取答案（见包注释）。
 func (b *Backend) Ask(ctx context.Context, state map[string]any, qs []judge.Question) (judge.Response, error) {
 	key := b.getenv(b.keyEnv)
 	if key == "" {
@@ -145,13 +278,7 @@ func (b *Backend) Ask(ctx context.Context, state map[string]any, qs []judge.Ques
 	if err != nil {
 		return judge.Response{}, &judge.Error{Kind: judge.BadResponse, Err: err}
 	}
-	body, err := json.Marshal(request{
-		Model: b.model, MaxTokens: b.maxTokens, Temperature: b.temperature, System: prompt.System,
-		Messages: []map[string]any{{"role": "user", "content": prompt.Batch(prefix, qs)}},
-		Tools: []map[string]any{{"name": toolName, "description": "Record the answer to every question.",
-			"input_schema": prompt.Schema(qs)}},
-		ToolChoice: map[string]any{"type": "tool", "name": toolName},
-	})
+	body, err := json.Marshal(b.build(prefix, qs))
 	if err != nil {
 		return judge.Response{}, &judge.Error{Kind: judge.BadResponse, Err: err}
 	}
@@ -164,14 +291,44 @@ func (b *Backend) Ask(ctx context.Context, state map[string]any, qs []judge.Ques
 	if err := json.Unmarshal(data, &r); err != nil {
 		return judge.Response{}, &judge.Error{Kind: judge.BadResponse, Err: errors.New("response is not valid JSON")}
 	}
+	raw, err := b.answerOf(r)
+	if err != nil {
+		return judge.Response{}, &judge.Error{Kind: judge.BadResponse, Err: err}
+	}
+	answers, err := prompt.ParseBatch(raw, qs)
+	if err != nil {
+		return judge.Response{}, &judge.Error{Kind: judge.BadResponse, Err: err}
+	}
+	return judge.Response{Answers: answers, Model: r.Model, Usage: r.Usage}, nil
+}
+
+// answerOf 取出回复里的答案 JSON。先看 stop_reason（允许列表）：只有正常结束时内容才可信，拒答、截断、
+// 其余取值与缺失时即使看似完整也不用。错误说明都是固定文本，不含回复内容，也不回显 stop_reason。
+func (b *Backend) answerOf(r response) ([]byte, error) {
+	switch r.StopReason {
+	case "end_turn", "tool_use", "stop_sequence":
+	case "refusal":
+		return nil, errors.New("the model declined to answer (refusal)")
+	case "max_tokens":
+		return nil, errors.New("the answer was cut off at max_tokens")
+	case "": // 缺失或为 null（有的代理不转发）：无法确认答案完整
+		return nil, errors.New("the response has no stop reason")
+	default:
+		return nil, errors.New("the response stopped early")
+	}
+	if b.answer == AnswerStructured {
+		for _, c := range r.Content {
+			if c.Type == "text" {
+				return []byte(c.Text), nil
+			}
+		}
+		return nil, errors.New("the response has no text block")
+	}
+	// auto_tool 时模型没有调用同样按错误报告（eval 能显示原因），结论照样不放行
 	for _, c := range r.Content {
 		if c.Type == "tool_use" && c.Name == toolName {
-			answers, err := prompt.ParseBatch(c.Input, qs)
-			if err != nil {
-				return judge.Response{}, &judge.Error{Kind: judge.BadResponse, Err: err}
-			}
-			return judge.Response{Answers: answers, Model: r.Model, Usage: r.Usage}, nil
+			return c.Input, nil
 		}
 	}
-	return judge.Response{}, &judge.Error{Kind: judge.BadResponse, Err: errors.New("the response has no answer tool call")}
+	return nil, errors.New("the response has no answer tool call")
 }

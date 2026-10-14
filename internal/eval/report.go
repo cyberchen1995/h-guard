@@ -129,9 +129,17 @@ func Report(w io.Writer, outs []Outcome, ruleIDs []string, margins []Margin) {
 	if n := Incomplete(outs); n > 0 {
 		fmt.Fprintf(w, "\n=== Incomplete answers (%d cases) ===\n", n)
 		for _, o := range outs {
-			if o.Err == "" && o.Invalid > 0 {
-				fmt.Fprintf(w, "%s: %d questions without a valid answer\n", Mask(o.Case.Command), o.Invalid)
+			if !incomplete(o) {
+				continue
 			}
+			var why []string
+			if o.Invalid > 0 {
+				why = append(why, fmt.Sprintf("%d questions without a valid answer", o.Invalid))
+			}
+			if unasked(o) {
+				why = append(why, "questions of a kind the backend cannot answer were not asked")
+			}
+			fmt.Fprintf(w, "%s: %s\n", Mask(o.Case.Command), strings.Join(why, "; "))
 		}
 	}
 

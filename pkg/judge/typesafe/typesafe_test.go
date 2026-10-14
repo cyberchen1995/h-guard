@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -219,14 +220,18 @@ func TestNewRejectsBadOptions(t *testing.T) {
 		{BaseURL: "ftp://example.com"},
 		{BaseURL: "https://user:syntheticPassword123@example.com"},
 		{BaseURL: "not a url"},
+		{BaseURL: "https://example.com/v1?key=syntheticPassword123"},
 		{TimeoutMS: -1},
 		{Retries: &neg},
+		{APIKeyEnv: "sk-syntheticPassword123"}, // 误把 key 本身填进了 api_key_env
+		{APIKeyEnv: "MY KEY"},
 	} {
 		_, err := typesafe.New("x", o)
 		if err == nil {
 			t.Errorf("New(%+v) accepted", o)
-		} else if strings.Contains(err.Error(), "syntheticPassword123") || (o.BaseURL != "" && strings.Contains(err.Error(), o.BaseURL)) {
-			t.Errorf("error echoes the configured URL: %v", err)
+		} else if strings.Contains(err.Error(), "syntheticPassword123") || (o.BaseURL != "" && strings.Contains(err.Error(), o.BaseURL)) ||
+			(o.APIKeyEnv != "" && strings.Contains(err.Error(), o.APIKeyEnv)) {
+			t.Errorf("error echoes the configured value: %v", err)
 		}
 	}
 	b, err := typesafe.New("x", typesafe.Options{})
@@ -244,8 +249,12 @@ func TestRegistered(t *testing.T) {
 		v.(*typesafe.Options).Model = "jev-2"
 		return nil
 	})
-	if err != nil || b.Name() != "jev" || !b.Caps().Calibrated || !b.Caps().Batch {
-		t.Errorf("factory = %v, %v", b, err)
+	if err != nil || b.Name() != "jev" {
+		t.Fatalf("factory = %v, %v", b, err)
+	}
+	if c := b.Caps(); !c.Calibrated || !c.Batch || c.Mechanism != judge.MechanismNative ||
+		!slices.Equal(c.Kinds, []judge.Kind{judge.KindProbability, judge.KindScale}) {
+		t.Errorf("caps = %+v", c)
 	}
 }
 
@@ -254,6 +263,17 @@ func TestConformance(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, okBody) }))
 		t.Cleanup(srv.Close)
 		return newBackend(t, srv.URL, typesafe.Options{})
+	}, questions)
+}
+
+// TestHTTPSecurity：HTTP 后端共用的安全测试（重定向、错误响应、响应上限、Retry-After 与截止时间）。
+func TestHTTPSecurity(t *testing.T) {
+	judgetest.RunHTTP(t, func(t *testing.T, baseURL, keyEnv string) judge.Backend {
+		b, err := typesafe.New("jev", typesafe.Options{BaseURL: baseURL, APIKeyEnv: keyEnv})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return b
 	}, questions)
 }
 

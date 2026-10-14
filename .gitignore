@@ -2,5 +2,7 @@
 # 只由本机的私有仓库 .git-private 跟踪（用法见 CLAUDE.md「私有内容」）。
 /.git-private/
 /CLAUDE.md
-/docs/
+# docs/ 下只有 adr/（架构决策记录）公开。git 不能在被排除的目录里重新包含文件，所以排除的是 docs 的内容
+/docs/*
+!/docs/adr/
 /tests/

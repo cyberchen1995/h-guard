@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cyberchen1995/h-guard/internal/eval"
 	"github.com/cyberchen1995/h-guard/pkg/detect/secrets"
 	"github.com/cyberchen1995/h-guard/pkg/guard"
 	"github.com/cyberchen1995/h-guard/pkg/harness"
@@ -41,7 +42,7 @@ func runCheck(args []string, o Options) int {
 		fmt.Fprint(o.Stderr, usage)
 		return 2
 	}
-	s, err := load(o, *extra)
+	s, err := loadConfig(o, *extra, !*noJudge)
 	if err != nil {
 		// 最终输出边界：错误说明来自配置与规则，可能夹带写下的凭据，输出前遮蔽（评审 N04）
 		fmt.Fprintln(o.Stderr, "h-guard:", secrets.MaskForLog(err.Error()))
@@ -109,5 +110,25 @@ func (p *printingBackend) Ask(ctx context.Context, state map[string]any, qs []ju
 	}
 	b, _ := json.MarshalIndent(state, "", "  ")
 	fmt.Fprintf(p.w, "h-guard: sending to %s\nquestions: %s\nstate:\n%s\n", target, strings.Join(ids, ", "), b)
-	return p.Backend.Ask(ctx, state, qs)
+	resp, err := p.Backend.Ask(ctx, state, qs)
+	if err != nil {
+		p.failed(err)
+	}
+	return resp, err
+}
+
+// failed 打印调用失败的类别与说明（后端的固定写法，凭据已遮蔽），后端对这个说明有提示时（FailureHint，如 anthropic
+// tool 方式收到 HTTP 400）再打印提示：用户换了模型后先跑 check 就能知道该改什么，不必跑 eval（终审 M-2）。
+func (p *printingBackend) failed(err error) {
+	kind, detail := judge.KindOf(err), eval.ErrDetail(err)
+	if detail == "" {
+		fmt.Fprintf(p.w, "h-guard: the backend failed: %s\n", kind)
+		return
+	}
+	fmt.Fprintf(p.w, "h-guard: the backend failed: %s (%s)\n", kind, detail)
+	if h, ok := p.Backend.(interface{ FailureHint(detail string) string }); ok {
+		if hint := h.FailureHint(detail); hint != "" {
+			fmt.Fprintf(p.w, "h-guard: hint: %s\n", hint)
+		}
+	}
 }

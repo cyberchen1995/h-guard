@@ -5,11 +5,32 @@ action: {tier: 2}
 outbound: {tier: 1, judge_max_chunks: 4, judge_min_chars: 200}
 backends:
   jev: {type: typesafe, model: jev-latest, profile: jev, api_key_env: TYPESAFE_API_KEY}
+  # 推荐后端（名字稳定），都带校准档案，选用时不需要用户校准。
+  claude-haiku: {type: anthropic, model: claude-haiku-5-5, profile: claude-haiku}
+  # Sonnet 5.5 不接受强制工具调用（HTTP 400），所以用结构化输出；思考关不掉、占用 max_tokens，
+  # effort low 控制延迟与用量。
+  claude-sonnet: {type: anthropic, model: claude-sonnet-5-5, answer: structured, effort: low, max_tokens: 4096, profile: claude-sonnet}
+  gemma4-local: {type: openai, base_url: "http://localhost:11434/v1", model: "gemma4:12b-mlx", probability: logprobs, reasoning_effort: none, timeout_ms: 30000, profile: gemma4-local}
 profiles:
   # 按 M2 的措辞在 113 条语料上用 Jev 校准（2026-10-13）
   jev:
     thresholds: {hit: 0.4, veto: 0.1, requested: 0.75, radius_floor: {recursive_delete: 1.25}}
     fingerprint: {model: jev-latest, probability: native, questions: "sha256:cdd8dab0be5e906b5d5f0fda6c5c60412214db02637af427adcc8e7a9415a5ab"}
+  # 按 M3a 在 113 条语料上用 Claude 校准（2026-10-14，维护者采用 sweep 的建议）。拟合的是同一份语料：
+  # 与保守默认值相比只有 requested 由 0.9 降到 0.85，多放行的几条都是模型对授权恰好答 0.85 的语料。
+  claude-haiku:
+    thresholds: {hit: 0.3, veto: 0.05, requested: 0.85, radius_floor: {recursive_delete: 1.25}}
+    fingerprint: {model: claude-haiku-5-5, probability: verbalized, questions: "sha256:cdd8dab0be5e906b5d5f0fda6c5c60412214db02637af427adcc8e7a9415a5ab"}
+  claude-sonnet:
+    thresholds: {hit: 0.3, veto: 0.05, requested: 0.85, radius_floor: {recursive_delete: 1.25}}
+    fingerprint: {model: claude-sonnet-5-5, probability: verbalized-structured-effort-low, questions: "sha256:cdd8dab0be5e906b5d5f0fda6c5c60412214db02637af427adcc8e7a9415a5ab"}
+  # 取自 M2 验收中本地模型 gemma4:12b-mlx 的 sweep 建议（2026-10-13）。这些值拟合的是同一份 113 条语料，
+  # 与保守默认值（hit 0.3、veto 0.05、requested 0.9）相比，只有 recursive_delete 的影响范围下限不同。
+  # reasoning_effort 进入指纹，所以 probability 带 -reasoning-effort-none 后缀；发出的请求（含 reasoning_effort: none）
+  # 与 M2 校准时逐字节相同，建议值仍然适用。去掉或改动 reasoning_effort 后，这份档案不再匹配（按未校准处理）。
+  gemma4-local:
+    thresholds: {hit: 0.3, veto: 0.05, requested: 0.9, radius_floor: {recursive_delete: 1}}
+    fingerprint: {model: "gemma4:12b-mlx", probability: logprobs-reasoning-effort-none, questions: "sha256:cdd8dab0be5e906b5d5f0fda6c5c60412214db02637af427adcc8e7a9415a5ab"}
 policy:
   on_unavailable: pass
   when_ask_unsupported: deny

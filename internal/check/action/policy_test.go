@@ -179,6 +179,136 @@ func TestInvalidAnswersNeverExempt(t *testing.T) {
 	}
 }
 
+// without 返回去掉 ids 的答案副本。
+func without(m map[string]judge.Answer, ids ...string) map[string]judge.Answer {
+	out := map[string]judge.Answer{}
+	for id, a := range m {
+		if !slices.Contains(ids, id) {
+			out[id] = a
+		}
+	}
+	return out
+}
+
+// TestMissingAnswerReasons：缺答的原因码要准确，但不改结论。同样的缺答，因题型不支持、因截止时间已到、
+// 或因答案无效，分别记 judge_kind_unsupported、judge_timeout、judge_answer_invalid，三者互不混用；
+// 结论一律与无效答案相同，不产生任何豁免（spec §8.1）。
+func TestMissingAnswerReasons(t *testing.T) {
+	const (
+		kind    = FallbackKindUnsupported
+		timeout = FallbackJudgeTimeout
+		invalid = FallbackAnswerInvalid
+	)
+	tests := []struct {
+		name string
+		in   Input
+		want guard.Decision
+		fb   []string
+	}{
+		// 题型不支持：这些题没有发出，保持未答
+		{"unsupported rule question: no veto, hit stays",
+			Input{Regex: regex("publish"), Judge: JudgeAnswered, Unsupported: []string{"publish"},
+				Answers: without(answers(map[string]float64{"publish": 0}, 0, 3), "publish")},
+			guard.DecisionAsk, []string{kind}},
+		{"unsupported scale question: radius is the maximum",
+			Input{Regex: regex("recursive_delete"), Judge: JudgeAnswered, Unsupported: []string{SignalRadius},
+				Answers: without(answers(map[string]float64{"recursive_delete": 0.9}, 0, 0), SignalRadius)},
+			guard.DecisionAsk, []string{kind}},
+		{"unsupported probability questions: only the scale answer is left",
+			Input{Regex: regex("publish"), Judge: JudgeAnswered, HaveRequests: true,
+				Unsupported: []string{"guard_tampering", "recursive_delete", "publish", "no_bypass", "no_veto", SignalRequested},
+				Answers:     without(answers(nil, 1, 3), "guard_tampering", "recursive_delete", "publish", "no_bypass", "no_veto", SignalRequested)},
+			guard.DecisionAsk, []string{kind}},
+		{"unsupported kind and another answer missing: both reasons",
+			Input{Regex: regex("publish"), Judge: JudgeAnswered, Unsupported: []string{SignalRadius},
+				Answers: without(answers(map[string]float64{"publish": 0.9}, 0, 0), SignalRadius, SignalRequested)},
+			guard.DecisionAsk, []string{kind, invalid}},
+		{"the code is attached even when a confident veto still passes",
+			Input{Regex: regex("publish"), Judge: JudgeAnswered, Unsupported: []string{SignalRadius},
+				Answers: without(answers(map[string]float64{"publish": 0}, 0, 3), SignalRadius)},
+			guard.DecisionPass, []string{kind}},
+		{"unsupported kinds and an unavailable judge: both reasons",
+			Input{Regex: regex("publish"), Judge: JudgeFailed, JudgeFallback: FallbackJudgeUnavailable, Unsupported: []string{SignalRadius}},
+			guard.DecisionAsk, []string{FallbackJudgeUnavailable, kind}},
+
+		// 截止时间已到（逐题请求只回答了一部分，没有返回错误）
+		{"deadline passed, rule answer missing",
+			Input{Regex: regex("publish"), Judge: JudgeAnswered, JudgeTimedOut: true,
+				Answers: without(answers(map[string]float64{"publish": 0}, 0, 3), "publish")},
+			guard.DecisionAsk, []string{timeout}},
+		{"deadline passed, signals missing",
+			Input{Regex: regex("publish"), Judge: JudgeAnswered, JudgeTimedOut: true, HaveRequests: true,
+				Answers: without(answers(map[string]float64{"publish": 0.9}, 1, 0), SignalRequested, SignalRadius)},
+			guard.DecisionAsk, []string{timeout}},
+		{"deadline passed but every answer arrived: no reason",
+			Input{Regex: regex("publish"), Judge: JudgeAnswered, JudgeTimedOut: true,
+				Answers: answers(map[string]float64{"publish": 0.9}, 0, 3)},
+			guard.DecisionAsk, nil},
+		{"deadline passed and an unsupported kind: each missing answer gets its own reason",
+			Input{Regex: regex("publish"), Judge: JudgeAnswered, JudgeTimedOut: true, Unsupported: []string{SignalRadius},
+				Answers: without(answers(map[string]float64{"publish": 0.9}, 0, 0), SignalRadius, SignalRequested)},
+			guard.DecisionAsk, []string{kind, timeout}},
+
+		// 没有截止时间：缺答仍是 judge_answer_invalid
+		{"missing without a deadline stays invalid",
+			Input{Regex: regex("publish"), Judge: JudgeAnswered,
+				Answers: without(answers(map[string]float64{"publish": 0}, 0, 3), "publish")},
+			guard.DecisionAsk, []string{invalid}},
+		{"complete answers carry neither reason",
+			Input{Regex: regex("publish"), Judge: JudgeAnswered, Answers: answers(map[string]float64{"publish": 0.9}, 0, 3)},
+			guard.DecisionAsk, nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.in.Rules = testRules
+			tt.in.Thresholds = jev
+			got := Decide(tt.in)
+			if got.Decision != tt.want || !slices.Equal(got.Fallbacks, tt.fb) {
+				t.Errorf("Decide = %s %v, want %s %v", got.Decision, got.Fallbacks, tt.want, tt.fb)
+			}
+		})
+	}
+}
+
+// TestMissingAnswersNeverExemptWhateverTheReason：缺答的原因只改原因码。每一行里，答案齐全时某个豁免成立（否决、
+// 低影响范围）；去掉那道题的答案后，三种原因下都必须请求确认，且只有对应的那一个原因码。
+func TestMissingAnswersNeverExemptWhateverTheReason(t *testing.T) {
+	tests := []struct {
+		drop    string
+		hit     string
+		answers map[string]judge.Answer
+	}{
+		{"publish", "publish", answers(map[string]float64{"publish": 0}, 0, 3)},
+		{SignalRadius, "recursive_delete", answers(map[string]float64{"recursive_delete": 0.9}, 0, 0)},
+	}
+	reasons := []struct {
+		name string
+		set  func(in *Input, dropped string)
+		code string
+	}{
+		{"invalid", func(*Input, string) {}, FallbackAnswerInvalid},
+		{"deadline", func(in *Input, _ string) { in.JudgeTimedOut = true }, FallbackJudgeTimeout},
+		{"unsupported", func(in *Input, dropped string) { in.Unsupported = []string{dropped} }, FallbackKindUnsupported},
+	}
+	for _, tt := range tests {
+		for _, r := range reasons {
+			t.Run(tt.drop+"/"+r.name, func(t *testing.T) {
+				full := Input{Rules: testRules, Regex: regex(tt.hit), Judge: JudgeAnswered, Answers: tt.answers, Thresholds: jev}
+				if got := Decide(full); got.Decision != guard.DecisionPass {
+					t.Fatalf("with every answer: %s, want pass", got.Decision)
+				}
+				in := full
+				in.Answers = without(tt.answers, tt.drop)
+				r.set(&in, tt.drop)
+				got := Decide(in)
+				if got.Decision != guard.DecisionAsk || !slices.Equal(got.Fallbacks, []string{r.code}) {
+					t.Errorf("without %s (%s): %s %v, want ask [%s]", tt.drop, r.name, got.Decision, got.Fallbacks, r.code)
+				}
+			})
+		}
+	}
+}
+
 func TestDecideSourcesAndVetoRecord(t *testing.T) {
 	got := Decide(Input{Rules: testRules, Regex: regex("publish", "recursive_delete"), Judge: JudgeAnswered, Thresholds: jev,
 		Answers: answers(map[string]float64{"publish": 0.1, "recursive_delete": 0.8, "guard_tampering": 0.6}, 0, 2.5)})
