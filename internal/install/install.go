@@ -1,6 +1,11 @@
 package install
 
 import (
+	"bytes"
+	"errors"
+	"fmt"
+	"io/fs"
+	"os"
 	"path/filepath"
 	"time"
 
@@ -77,4 +82,32 @@ func Apply(steps []Step) error {
 		}
 	}
 	return nil
+}
+
+// ErrExists 表示要新建的文件已经存在且内容不同。
+var ErrExists = errors.New("already exists with other content")
+
+// NewFile 计划写一个新文件（如 migrate 生成的规则包）：文件不存在时新建（0o600），内容相同时不改动，已存在且内容
+// 不同时返回 ErrExists（计划与执行时都检查，执行按读改写约定加锁、比对哈希）。
+func NewFile(t Target, path string, data []byte, summary string) (Step, error) {
+	change := func(old []byte, exists bool) ([]byte, error) {
+		if exists && !bytes.Equal(old, data) {
+			return nil, fmt.Errorf("%s %w", path, ErrExists)
+		}
+		return data, nil
+	}
+	old, err := os.ReadFile(path)
+	exists := err == nil
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return Step{}, err
+	}
+	if _, err := change(old, exists); err != nil {
+		return Step{}, err
+	}
+	ed := t.editor()
+	return Step{Path: path, Summary: summary, Preview: data, changes: !exists, lockDir: ed.LockDir,
+		apply: func() error {
+			_, err := ed.editLocked(path, change)
+			return err
+		}}, nil
 }

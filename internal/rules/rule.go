@@ -515,3 +515,6 @@ func (r *Rule) CheckExamples(ctx context.Context) error {
 	}
 	return errors.Join(errs...)
 }
+
+// ParseUser 解析并校验一条用户规则（与用户规则目录里的规则相同的要求），供 migrate 检查生成的规则包。
+func ParseUser(data []byte, origin string) (*Rule, error) { return parseRule(data, origin, false) }
