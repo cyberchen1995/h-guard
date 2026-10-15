@@ -23,6 +23,15 @@ func baseline(t *testing.T) map[string]any {
 	return m
 }
 
+func decode(t *testing.T, b []byte) map[string]any {
+	t.Helper()
+	var m map[string]any
+	if err := json.Unmarshal(b, &m); err != nil {
+		t.Fatal(err)
+	}
+	return m
+}
+
 func convert(t *testing.T, m map[string]any) Result {
 	t.Helper()
 	b, _ := json.Marshal(m)
@@ -184,6 +193,33 @@ func TestOlderCopiesDisableNothing(t *testing.T) {
 	}
 	if n := notes(r); !strings.Contains(n, "guard_tampering is not in your questions.json") || !strings.Contains(n, "fork_bomb") {
 		t.Errorf("notes:\n%s", n)
+	}
+}
+
+// TestOlderFactoryFiles：Python 版发布过三个出厂版本，用户的文件可能复制自较早的版本。与任一版本相同的部分都算没改：
+// 不生成规则、不写配置，也不把旧版出厂的取值说成用户的改动；在旧版上改过的地方照常按改动处理（终审 I-1）。
+func TestOlderFactoryFiles(t *testing.T) {
+	for _, c := range []string{"e81f231", "473786b"} {
+		data, err := os.ReadFile("python_questions_" + c + ".json")
+		if err != nil {
+			t.Fatal(err)
+		}
+		r := convert(t, decode(t, data))
+		if len(r.Config) != 0 || len(r.Rules) != 0 || len(r.Skipped) != 0 {
+			t.Errorf("%s: config %v, rules %v, skipped %v", c, r.Config, slices.Sorted(maps.Keys(r.Rules)), r.Skipped)
+		}
+		for _, n := range r.Notes {
+			if !strings.Contains(n, "is not in your questions.json") {
+				t.Errorf("%s: note %q", c, n)
+			}
+		}
+		// 在旧版上只改了原因：逐项说明这一处，不覆盖
+		m := decode(t, data)
+		m["rules"].(map[string]any)["recursive_delete"].(map[string]any)["reason"] = "删除"
+		r = convert(t, m)
+		if n := notes(r); len(r.Rules) != 0 || !strings.Contains(n, "recursive_delete: reason") || strings.Contains(n, "radius_floor") {
+			t.Errorf("%s edited: rules %v, notes:\n%s", c, slices.Sorted(maps.Keys(r.Rules)), n)
+		}
 	}
 }
 

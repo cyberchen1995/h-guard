@@ -24,10 +24,19 @@ import (
 	"github.com/cyberchen1995/h-guard/internal/rules"
 )
 
-// pythonDefault 是 Python 版出厂的 questions.json（h-guard.old a9a258f，2026-09-21）。
+// pythonDefault 是 Python 版最后的出厂 questions.json（h-guard.old a9a258f，2026-09-21）。
 //
 //go:embed python_questions.json
 var pythonDefault []byte
+
+// 更早发布的出厂版本（h-guard.old e81f231、473786b，同一天）。用户的文件是从某个版本复制来的：与任一版本相同的
+// 部分都算没改，否则没改过的旧写法会被当成用户的改动迁移成规则（终审 I-1）。
+var (
+	//go:embed python_questions_473786b.json
+	python473786b []byte
+	//go:embed python_questions_e81f231.json
+	pythonE81f231 []byte
+)
 
 // Result 是迁移的结果：Config 写进 config.yaml，Rules 是规则包（文件名 → 内容，写进规则目录），Notes 是没有迁移
 // 或需要用户留意的地方，Skipped 是迁移不了的规则（可能是用户自己的 deny 规则：调用方据此拒绝写入）。
@@ -69,9 +78,26 @@ func Convert(data []byte) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
-	base, err := parse(pythonDefault)
-	if err != nil {
-		return Result{}, err
+	var bases []questions // 新的在前；bases[0] 是最后的出厂版本
+	for _, b := range [][]byte{pythonDefault, python473786b, pythonE81f231} {
+		q, err := parse(b)
+		if err != nil {
+			return Result{}, err
+		}
+		bases = append(bases, q)
+	}
+	base := bases[0]
+	factory := func(pick func(questions) (json.RawMessage, bool)) []json.RawMessage {
+		var out []json.RawMessage
+		for _, b := range bases {
+			if v, ok := pick(b); ok {
+				out = append(out, v)
+			}
+		}
+		return out
+	}
+	unchanged := func(v json.RawMessage, olds []json.RawMessage) bool {
+		return slices.ContainsFunc(olds, func(o json.RawMessage) bool { return sameJSON(o, v) })
 	}
 	r := Result{Rules: map[string][]byte{}}
 	note := func(format string, args ...any) { r.Notes = append(r.Notes, fmt.Sprintf(format, args...)) }
@@ -96,11 +122,12 @@ func Convert(data []byte) (Result, error) {
 	}
 	for _, id := range slices.Sorted(maps.Keys(userRules)) {
 		raw := userRules[id]
-		old, builtin := baseRules[id]
-		if builtin && sameJSON(old, raw) {
+		olds := factory(func(q questions) (json.RawMessage, bool) { v, ok := merged(q)[id]; return v, ok })
+		builtin := len(olds) > 0
+		if unchanged(raw, olds) {
 			continue
 		}
-		if builtin && sameDetection(old, raw) {
+		if old, ok := closestDetection(id, olds, raw); ok {
 			// 只改了不影响本地检测的字段：整条覆盖会丢掉 PowerShell 写法与 Go 版的修正，所以逐项说明
 			noteFieldChanges(id, old, raw, note)
 			continue
@@ -135,7 +162,7 @@ func Convert(data []byte) (Result, error) {
 			continue
 		}
 		v, old := user.Policy[k], base.Policy[k]
-		if sameJSON(v, old) {
+		if unchanged(v, factory(func(q questions) (json.RawMessage, bool) { v, ok := q.Policy[k]; return v, ok })) {
 			continue
 		}
 		switch k {
@@ -168,7 +195,7 @@ func Convert(data []byte) (Result, error) {
 			note("policy.%s is unknown; not migrated", k)
 		}
 	}
-	if user.Model != "" && user.Model != base.Model {
+	if user.Model != "" && !slices.ContainsFunc(bases, func(q questions) bool { return q.Model == user.Model }) {
 		set("backends.jev.type", "typesafe", "!!str")
 		set("backends.jev.model", user.Model, "!!str")
 		set("backends.jev.profile", "jev", "!!str")
@@ -176,7 +203,7 @@ func Convert(data []byte) (Result, error) {
 		note("model %s: the built-in jev profile is calibrated for %s, so conservative thresholds are used until you calibrate", user.Model, base.Model)
 	}
 	for _, id := range slices.Sorted(maps.Keys(user.Signals)) {
-		if !sameJSON(user.Signals[id], base.Signals[id]) {
+		if !unchanged(user.Signals[id], factory(func(q questions) (json.RawMessage, bool) { v, ok := q.Signals[id]; return v, ok })) {
 			note("signals.%s: the signal questions are built in and fixed (the calibration depends on their wording); not migrated", id)
 		}
 	}
@@ -184,6 +211,24 @@ func Convert(data []byte) (Result, error) {
 }
 
 // sameDetection 报告两条规则的本地检测是否相同：动作、正则、命令位置、去引号。
+// closestDetection 在出厂版本里找检测写法与 raw 相同的那一版；有几版都相同时取需要说明的字段最少的，说明只针对
+// 用户真正改过的地方（终审 I-1）。
+func closestDetection(id string, olds []json.RawMessage, raw json.RawMessage) (json.RawMessage, bool) {
+	var best json.RawMessage
+	fewest := -1
+	for _, o := range olds {
+		if !sameDetection(o, raw) {
+			continue
+		}
+		n := 0
+		noteFieldChanges(id, o, raw, func(string, ...any) { n++ })
+		if fewest < 0 || n < fewest {
+			best, fewest = o, n
+		}
+	}
+	return best, fewest >= 0
+}
+
 func sameDetection(a, b json.RawMessage) bool {
 	var x, y oldRule
 	if json.Unmarshal(a, &x) != nil || json.Unmarshal(b, &y) != nil {
