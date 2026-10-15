@@ -158,6 +158,10 @@ func TestRenderPreToolUse(t *testing.T) {
 	if b, _ := a.Render(ev, guard.Outcome{Verdict: guard.Verdict{Decision: guard.DecisionWarn}, Message: "m"}); !strings.Contains(string(b), `"systemMessage":"h-guard: m"`) {
 		t.Errorf("warn = %s", b)
 	}
+	// 原因以 h-guard 开头时不再加前缀（M3c 终审 M-3）
+	if b, _ := a.Render(ev, guard.Outcome{Verdict: guard.Verdict{Decision: guard.DecisionAsk}, Message: "h-guard hit an internal error."}); strings.Contains(string(b), "h-guard: h-guard") {
+		t.Errorf("doubled prefix: %s", b)
+	}
 }
 
 func TestRenderReplyAlwaysHasMessage(t *testing.T) {

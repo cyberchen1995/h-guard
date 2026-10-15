@@ -402,6 +402,9 @@ func (Adapter) Render(ev guard.Event, out guard.Outcome) ([]byte, int) {
 // reason 是写给 Codex 的原因：前缀表明来源，后接原因与前进路径；原因缺失时只有前缀，仍能识别。
 func reason(out guard.Outcome) string {
 	s := "h-guard: " + out.Message
+	if strings.HasPrefix(out.Message, "h-guard") { // 原因本身已表明来源（如「h-guard cannot tell…」），不重复前缀
+		s = out.Message
+	}
 	if out.Hint != "" {
 		s += " " + out.Hint
 	}

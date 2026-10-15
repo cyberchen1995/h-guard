@@ -308,6 +308,23 @@ func TestPowerShellPatches(t *testing.T) {
 	}
 }
 
+// TestReasonPrefixOnce：原因以 h-guard 开头时不再加前缀（「h-guard: h-guard cannot tell…」，M3c 终审 M-3）。
+func TestReasonPrefixOnce(t *testing.T) {
+	ev, err := a.Parse(pre("Bash", map[string]any{"command": "ls"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for msg, want := range map[string]string{
+		"h-guard cannot tell which files Bash would change.": "h-guard cannot tell which files Bash would change.",
+		"Blocked: catastrophic operation.":                   "h-guard: Blocked: catastrophic operation.",
+	} {
+		out, _ := a.Render(ev, guard.Outcome{Verdict: guard.Verdict{Decision: guard.DecisionDeny}, Message: msg})
+		if got := parseReply(t, out).HookSpecificOutput.PermissionDecisionReason; got != want {
+			t.Errorf("%q: reason %q", msg, got)
+		}
+	}
+}
+
 func TestParseRejects(t *testing.T) {
 	for name, in := range map[string][]byte{
 		"unknown event":     hook("Stop", nil),
