@@ -498,3 +498,57 @@ func TestPipelines(t *testing.T) {
 		t.Errorf("got %q", got)
 	}
 }
+
+// TestReadsFiles：命令里有一段读文件内容的命令（cat、head、grep、jq、git show、Get-Content……）时，工具输出是
+// 文件内容（outbound 第 2 档扫描它，维护者决定 2026-10-15）；跨 shell 的嵌套照样认。
+func TestReadsFiles(t *testing.T) {
+	for _, c := range []struct {
+		cmd   string
+		shell guard.Shell
+	}{
+		{"cat .env", guard.ShellPOSIX},
+		{"head -n 20 config/prod.yaml", guard.ShellPOSIX},
+		{"sudo tail -f /var/log/app.log", guard.ShellPOSIX},
+		{"cd app && sed -n '1,40p' settings.py", guard.ShellPOSIX},
+		{"rg -n API_KEY src", guard.ShellPOSIX},
+		{"jq .token ~/.config/gh/hosts.json", guard.ShellPOSIX},
+		{"git show HEAD:secrets.yaml", guard.ShellPOSIX},
+		{"/bin/cat notes.txt | wc -l", guard.ShellPOSIX},
+		{`bash -c "less README.md"`, guard.ShellPOSIX},
+		{"Get-Content .env", guard.ShellPowerShell},
+		{"gc C:\\app\\appsettings.json | Select-Object -First 5", guard.ShellPowerShell},
+		{"Select-String -Path *.cs -Pattern password", guard.ShellPowerShell},
+		{"type secrets.txt", guard.ShellPowerShell},
+		// 经 xargs、find -exec 调用的读文件命令（M4a 计划评审）
+		{"ls *.env | xargs cat", guard.ShellPOSIX},
+		{"find . -name '*.pem' -exec cat {} \\;", guard.ShellPOSIX},
+		// 带参数的选项与 --（M4a Codex 评审 M4A-04）
+		{"ls | xargs -I {} cat {}", guard.ShellPOSIX},
+		{"ls | xargs -n 1 -P 4 cat", guard.ShellPOSIX},
+		{"ls | xargs -I{} -- cat {}", guard.ShellPOSIX},
+		{"ls | xargs --max-args 2 --delimiter=, cat", guard.ShellPOSIX},
+		{"git -C /repo show HEAD:secrets.txt", guard.ShellPOSIX},
+		{"git -c core.pager=cat --git-dir /r/.git --no-pager show HEAD:a", guard.ShellPOSIX},
+		{"git --git-dir=/r/.git --work-tree /r cat-file -p HEAD:a", guard.ShellPOSIX},
+	} {
+		if !command.ReadsFiles(c.cmd, c.shell) {
+			t.Errorf("%s: not a file read", c.cmd)
+		}
+	}
+	for _, c := range []struct {
+		cmd   string
+		shell guard.Shell
+	}{
+		{"npm test", guard.ShellPOSIX},
+		{"ls -la", guard.ShellPOSIX},
+		{"git status && git log --oneline", guard.ShellPOSIX},
+		{"echo cat", guard.ShellPOSIX},
+		{"git -C /repo status", guard.ShellPOSIX},
+		{"ls | xargs -I cat echo cat", guard.ShellPOSIX},
+		{"Get-ChildItem", guard.ShellPowerShell},
+	} {
+		if command.ReadsFiles(c.cmd, c.shell) {
+			t.Errorf("%s: a file read", c.cmd)
+		}
+	}
+}

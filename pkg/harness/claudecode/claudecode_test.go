@@ -507,3 +507,25 @@ func TestNativeEvidenceMatrix(t *testing.T) {
 		}
 	}
 }
+
+// TestFileContent：读文件的工具（Read、Grep、NotebookRead）与读文件的命令（Bash、PowerShell 的 cat、Get-Content……）
+// 的结果是文件内容（outbound 第 2 档）；其余工具输出不是。
+func TestFileContent(t *testing.T) {
+	for _, c := range []struct {
+		data map[string]any
+		want bool
+	}{
+		{map[string]any{"tool": "Read", "file_path": "/w/.env"}, true},
+		{map[string]any{"tool": "Grep", "pattern": "KEY"}, true},
+		{map[string]any{"tool": "NotebookRead", "notebook_path": "/w/a.ipynb"}, true},
+		{map[string]any{"tool": "Bash", "command": "cat .env"}, true},
+		{map[string]any{"tool": "PowerShell", "command": "Get-Content .env"}, true},
+		{map[string]any{"tool": "Bash", "command": "npm test"}, false},
+		{map[string]any{"tool": "mcp__fs__search"}, false},
+	} {
+		ev, err := a.Parse(ext("tool.result", c.data, map[string]any{"text": "x"}))
+		if err != nil || ev.FileContent != c.want {
+			t.Errorf("%v: file content %v, %v", c.data, ev.FileContent, err)
+		}
+	}
+}

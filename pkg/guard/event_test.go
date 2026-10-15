@@ -112,3 +112,13 @@ func TestEventNativeNotSerialized(t *testing.T) {
 		t.Errorf("Native must not be serialized: %s", b)
 	}
 }
+
+// TestFileContentOnlyOnToolOutput：FileContent 只用于工具输出。
+func TestFileContentOnlyOnToolOutput(t *testing.T) {
+	if err := (guard.Event{Kind: guard.EventToolOutput, Harness: "h", FileContent: true}).Validate(); err != nil {
+		t.Error(err)
+	}
+	if err := (guard.Event{Kind: guard.EventPrompt, Harness: "h", FileContent: true}).Validate(); err == nil {
+		t.Error("prompt with file content accepted")
+	}
+}

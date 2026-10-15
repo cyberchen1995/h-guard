@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/cyberchen1995/h-guard/pkg/detect/command"
 	"github.com/cyberchen1995/h-guard/pkg/guard"
 	"github.com/cyberchen1995/h-guard/pkg/harness"
 	"github.com/cyberchen1995/h-guard/pkg/harness/extproto"
@@ -161,6 +162,21 @@ type promptData struct {
 type resultData struct {
 	Tool      string `json:"tool"`
 	ToolUseID string `json:"tool_use_id"`
+	Command   string `json:"command"` // Bash、PowerShell、Monitor 的命令（工具的输入随事件转交）
+}
+
+// fileTools 是输出文件内容的工具（outbound 第 2 档扫描它们的结果，spec §4）。
+var fileTools = map[string]bool{"Read": true, "Grep": true, "NotebookRead": true}
+
+// fileContent 报告这次工具结果是不是文件内容：读文件的工具，或读文件的命令。
+func fileContent(d resultData) bool {
+	switch d.Tool {
+	case "Bash", "Monitor":
+		return command.ReadsFiles(d.Command, guard.ShellPOSIX)
+	case "PowerShell":
+		return command.ReadsFiles(d.Command, guard.ShellPowerShell)
+	}
+	return fileTools[d.Tool]
 }
 
 type resultPayload struct {
@@ -200,6 +216,7 @@ func parseExt(raw []byte) (guard.Event, error) {
 			}
 		}
 		ev.Kind, ev.Tool, ev.CallID, ev.Text = guard.EventToolOutput, d.Tool, d.ToolUseID, r.Text
+		ev.FileContent = fileContent(d)
 	default:
 		// mod 不注册 tool.check（spec §7.7）；其余 hook 都不认识
 		return guard.Event{}, fmt.Errorf("claudecode: unsupported hook %q", req.Hook)
