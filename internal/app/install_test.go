@@ -129,3 +129,59 @@ func TestInstallChecksTheConfig(t *testing.T) {
 		t.Errorf("disabled hard rule: exit %d\n%s", code, out)
 	}
 }
+
+// TestInstallCodex：--write 写入 ~/.codex/hooks.json 并提醒在 Codex 里信任；--shell 写进 harnesses.codex.shell；
+// --remove 只删本项目的入口。
+func TestInstallCodex(t *testing.T) {
+	e := installEnv(t, func(name string, args ...string) ([]byte, error) { return []byte("codex-cli 0.162.1\n"), nil })
+	hooks := filepath.Join(e.home, ".codex", "hooks.json")
+	out, _, code := e.run(nil, "install", "codex")
+	if code != 0 || !strings.Contains(out, "would register h-guard") || !strings.Contains(out, "hook codex --event PreToolUse --timeout 20") {
+		t.Errorf("dry run: exit %d\n%s", code, out)
+	}
+	if _, err := os.Stat(hooks); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("dry run wrote hooks.json: %v", err)
+	}
+	out, errs, code := e.run(nil, "install", "codex", "--write", "--shell", "powershell")
+	if code != 0 || !strings.Contains(out, "/hooks") {
+		t.Fatalf("write: exit %d\n%s\n%s", code, out, errs)
+	}
+	if b, _ := os.ReadFile(hooks); !strings.Contains(string(b), "'/opt/bin/h-guard' hook codex --event UserPromptSubmit --timeout 20") {
+		t.Errorf("hooks.json =\n%s", b)
+	}
+	if b, _ := os.ReadFile(filepath.Join(e.configDir, "config.yaml")); !strings.Contains(string(b), "shell: powershell") {
+		t.Errorf("config.yaml =\n%s", b)
+	}
+	out, _, code = e.run(nil, "install", "codex", "--remove", "--write")
+	if b, _ := os.ReadFile(hooks); code != 0 || strings.Contains(string(b), "hook codex") {
+		t.Errorf("remove: exit %d\n%s\nhooks.json:\n%s", code, out, b)
+	}
+}
+
+// TestInstallCodexWindowsShell：Windows 上安装 Codex 要知道它用哪种 shell（spec §12）：终端里询问（默认
+// powershell），非交互时必须给 --shell；其他平台不问。--shell 只用于 codex。
+func TestInstallCodexWindowsShell(t *testing.T) {
+	e := installEnv(t, nil)
+	e.goos = "windows"
+	if _, errs, code := e.run(nil, "install", "codex"); code != 2 || !strings.Contains(errs, "--shell") {
+		t.Errorf("non-interactive: exit %d, %s", code, errs)
+	}
+	e.tty = true
+	out, _, code := e.run([]byte("\n"), "install", "codex")
+	if code != 0 || !strings.Contains(out, "Which shell") || !strings.Contains(out, "set harnesses.codex.shell to powershell") {
+		t.Errorf("default answer: exit %d\n%s", code, out)
+	}
+	out, _, _ = e.run([]byte("posix\n"), "install", "codex")
+	if !strings.Contains(out, "set harnesses.codex.shell to posix") {
+		t.Errorf("posix answer:\n%s", out)
+	}
+	if _, _, code := e.run([]byte("cmd\n"), "install", "codex"); code != 2 {
+		t.Errorf("unknown answer: exit %d", code)
+	}
+	if _, _, code := e.run(nil, "install", "claudecode", "--shell", "posix"); code != 2 {
+		t.Errorf("--shell with claudecode: exit %d", code)
+	}
+	if _, _, code := e.run(nil, "install", "codex", "--shell", "cmd"); code != 2 {
+		t.Errorf("--shell cmd: exit %d", code)
+	}
+}

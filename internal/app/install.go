@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"flag"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/cyberchen1995/h-guard/internal/install"
 	"github.com/cyberchen1995/h-guard/pkg/detect/secrets"
+	"github.com/cyberchen1995/h-guard/pkg/guard"
 )
 
 // runInstall 安装或移除 harness 的入口（spec §12）：默认只打印将要写入的内容；--write 时先备份、按读改写约定写入；
@@ -23,14 +25,20 @@ func runInstall(args []string, o Options) int {
 	write := fs.Bool("write", false, "write the changes (default: only print them)")
 	remove := fs.Bool("remove", false, "remove h-guard's entries instead of installing them")
 	timeout := fs.Int("timeout", 20, "hook timeout in seconds, also passed to h-guard")
+	shell := fs.String("shell", "", "codex: the shell Codex runs commands with (posix or powershell)")
 	pos, err := parseInterleaved(fs, args)
 	if err != nil || len(pos) != 1 || *timeout < 2 || *timeout > 600 {
 		fmt.Fprint(o.Stderr, usage)
 		return 2
 	}
-	if pos[0] != "claudecode" {
-		fmt.Fprintf(o.Stderr, "h-guard: cannot install into %q (known: claudecode)\n", pos[0])
+	harness := pos[0]
+	if harness != "claudecode" && harness != "codex" {
+		fmt.Fprintf(o.Stderr, "h-guard: cannot install into %q (known: claudecode, codex)\n", harness)
 		fmt.Fprint(o.Stderr, usage)
+		return 2
+	}
+	if *shell != "" && (harness != "codex" || !guard.Shell(*shell).Valid()) {
+		fmt.Fprintln(o.Stderr, "h-guard: --shell is posix or powershell, and only for codex")
 		return 2
 	}
 	if o.ConfigDir == "" || o.CacheDir == "" || o.Home == "" {
@@ -64,6 +72,9 @@ func runInstall(args []string, o Options) int {
 	}
 	t := install.Target{Home: o.Home, ConfigDir: o.ConfigDir, CacheDir: o.CacheDir, Bin: bin, Timeout: *timeout,
 		GOOS: o.GOOS, Getenv: o.Getenv, Run: o.RunHarness, Now: o.Now}
+	if harness == "codex" {
+		return installCodex(o, t, *shell, *write, *remove)
+	}
 	steps, err := install.ClaudeCode(t, *remove)
 	if err != nil {
 		fmt.Fprintln(o.Stderr, "h-guard:", err)
@@ -88,6 +99,46 @@ func runInstall(args []string, o Options) int {
 		fmt.Fprintln(o.Stdout, "restart Claude Code to load the plugin; if your organization blocks user mods or hooks, ask it to install the plugin for you")
 		return 0
 	})
+}
+
+// installCodex 注册 Codex 的原生 hook（~/.codex/hooks.json）。Codex 标不出 shell：给了 --shell 时写进
+// harnesses.codex.shell；Windows 上没有给时在终端里询问（默认 powershell），非交互时要求 --shell（spec §5.3、§12）。
+func installCodex(o Options, t install.Target, shell string, write, remove bool) int {
+	steps, err := install.Codex(t, remove)
+	if err != nil {
+		fmt.Fprintln(o.Stderr, "h-guard:", err)
+		return 1
+	}
+	if !remove && shell == "" && o.GOOS == "windows" {
+		if !o.IsTerminal() {
+			fmt.Fprintln(o.Stderr, "h-guard: on Windows, say which shell Codex runs commands with: --shell powershell or --shell posix")
+			return 2
+		}
+		fmt.Fprint(o.Stdout, "Which shell does Codex run commands with on this machine, powershell or posix (WSL, Git Bash)? [powershell] ")
+		answer, _ := bufio.NewReader(o.Stdin).ReadString('\n')
+		shell = strings.ToLower(strings.TrimSpace(answer))
+		if shell == "" {
+			shell = string(guard.ShellPowerShell)
+		}
+		if !guard.Shell(shell).Valid() {
+			fmt.Fprintln(o.Stderr, "h-guard: the shell is posix or powershell")
+			return 2
+		}
+	}
+	if shell != "" && !remove {
+		step, err := install.HarnessShell(t, "codex", shell)
+		if err != nil {
+			fmt.Fprintln(o.Stderr, "h-guard:", err)
+			return 1
+		}
+		steps = append(steps, step)
+	}
+	if !remove {
+		for _, n := range install.CodexNotes(t) {
+			fmt.Fprintln(o.Stdout, "note:", n)
+		}
+	}
+	return applySteps(o, steps, write, remove, func() int { return 0 })
 }
 
 // applySteps 打印或执行 install 的步骤。没有改动时说明已是目标状态；只打印时列出将改动的路径与新内容，

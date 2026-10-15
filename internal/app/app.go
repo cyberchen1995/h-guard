@@ -109,7 +109,7 @@ const usage = `usage:
   h-guard backend list | enable <name> | disable <name> [--config <file>]
   h-guard status [--config <file>]
   h-guard eval [--backend <name>] [--sweep] [--shell posix|powershell | --cases <file>] [--repeat <K>] [--bootstrap <N>] [--seed <n>] [--yes] [--config <file>]
-  h-guard install claudecode [--write] [--remove] [--timeout <seconds>]
+  h-guard install claudecode|codex [--write] [--remove] [--timeout <seconds>] [--shell posix|powershell]
   h-guard version
 `
 
