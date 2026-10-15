@@ -80,7 +80,9 @@ func (e Editor) editLocked(path string, change func(old []byte, exists bool) ([]
 	return true, nil
 }
 
-// backup 把 old 写成 BackupDir 下的新文件 <文件名>.<UTC 时间>.<随机串>.bak，不覆盖已有的备份。
+// backup 把 old 写成 BackupDir 下的新文件 <文件名>.<路径的短哈希>.<UTC 时间>.<随机串>.bak，不覆盖已有的备份。
+// 路径的短哈希区分不同目录里的同名文件（~/.claude 与 CLAUDE_CONFIG_DIR 下的 settings.json，M3d 终审 M-9）。
+// 备份不自动清理：它们是出错时唯一的恢复来源，在受保护的缓存目录里，权限 0600。
 func (e Editor) backup(path string, old []byte) error {
 	if err := os.MkdirAll(e.BackupDir, 0o700); err != nil {
 		return err
@@ -88,7 +90,7 @@ func (e Editor) backup(path string, old []byte) error {
 	for range 8 {
 		var r [4]byte
 		_, _ = rand.Read(r[:])
-		name := fmt.Sprintf("%s.%s.%s.bak", filepath.Base(path), e.Now().UTC().Format("20060102T150405Z"), hex.EncodeToString(r[:]))
+		name := fmt.Sprintf("%s.%s.%s.%s.bak", filepath.Base(path), store.Hash([]byte(path))[:8], e.Now().UTC().Format("20060102T150405Z"), hex.EncodeToString(r[:]))
 		f, err := os.OpenFile(filepath.Join(e.BackupDir, name), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 		if errors.Is(err, fs.ErrExist) {
 			continue

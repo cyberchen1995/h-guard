@@ -39,7 +39,7 @@ func TestEditBacksUpAndReplaces(t *testing.T) {
 		t.Errorf("mode = %v", fi.Mode().Perm())
 	}
 	backups, _ := os.ReadDir(e.BackupDir)
-	if len(backups) != 1 || !strings.HasPrefix(backups[0].Name(), "settings.json.20261014T093000Z") {
+	if len(backups) != 1 || !strings.HasPrefix(backups[0].Name(), "settings.json."+store.Hash([]byte(path))[:8]+".20261014T093000Z.") {
 		t.Fatalf("backups = %v", backups)
 	}
 	if b, _ := os.ReadFile(filepath.Join(e.BackupDir, backups[0].Name())); string(b) != "old" {
@@ -188,5 +188,30 @@ func TestBackupsDoNotCollide(t *testing.T) {
 	backups, _ := os.ReadDir(e.BackupDir)
 	if len(backups) != 2 {
 		t.Errorf("backups = %v", backups)
+	}
+}
+
+// TestBackupNamesTellFilesApart：不同目录里同名的文件（~/.claude 与 CLAUDE_CONFIG_DIR 下的 settings.json）的备份
+// 能区分：名字里带原路径的短哈希，同一个文件的备份前缀相同（M3d 终审 M-9）。
+func TestBackupNamesTellFilesApart(t *testing.T) {
+	e := editor(t)
+	a, b := filepath.Join(t.TempDir(), "settings.json"), filepath.Join(t.TempDir(), "settings.json")
+	for _, p := range []string{a, a, b} {
+		os.WriteFile(p, []byte("v1"), 0o600)
+		if _, err := e.Edit(p, func([]byte, bool) ([]byte, error) { return []byte("v2"), nil }); err != nil {
+			t.Fatal(err)
+		}
+	}
+	prefix := map[string]int{}
+	entries, _ := os.ReadDir(e.BackupDir)
+	for _, d := range entries {
+		parts := strings.Split(d.Name(), ".")
+		if len(parts) != 6 || parts[0]+"."+parts[1] != "settings.json" || parts[5] != "bak" {
+			t.Fatalf("backup name %q", d.Name())
+		}
+		prefix[parts[2]]++
+	}
+	if len(prefix) != 2 {
+		t.Errorf("backups of two files share a name prefix: %v", entries)
 	}
 }
