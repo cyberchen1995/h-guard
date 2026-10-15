@@ -52,6 +52,15 @@ func TestStatusHarnesses(t *testing.T) {
 }
 
 // TestStatusRulesAndHealth：列出不生效的规则与原因；汇总近 7 天的降级原因码；写明日志位置（spec §12）。
+// TestStatusDisabledHardRule：停用的硬规则在 status 里显著提示，与 install、config validate 一样（M3d 终审 M-10）。
+func TestStatusDisabledHardRule(t *testing.T) {
+	e := newEnv(t)
+	e.config("version: 1\nrules: {guard_tampering: {enabled: false}}\n")
+	if out, _, _ := e.run(nil, "status"); !strings.Contains(out, `warning: hard rule "guard_tampering" is disabled`) {
+		t.Errorf("status:\n%s", out)
+	}
+}
+
 func TestStatusRulesAndHealth(t *testing.T) {
 	e := newEnv(t)
 	e.config("version: 1\naction: {tier: 1}\nrules: {branch_ops: {enabled: false}}\n")

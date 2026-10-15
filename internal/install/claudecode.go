@@ -55,12 +55,8 @@ func ClaudeCode(t Target, remove bool) ([]Step, error) {
 		return nil, err
 	}
 	settings := ClaudeSettings(t)
-	same := func(a, b string) bool { return filepath.Clean(a) == filepath.Clean(b) }
-	if t.GOOS == "windows" {
-		same = func(a, b string) bool { return strings.EqualFold(filepath.Clean(a), filepath.Clean(b)) }
-	}
 	change := func(old []byte, exists bool) ([]byte, error) {
-		return pluginDirsEdit(old, exists, dir, t.listSep(), remove, same)
+		return pluginDirsEdit(old, exists, dir, t.listSep(), remove, t.samePath)
 	}
 	old, err := os.ReadFile(settings)
 	exists := err == nil
@@ -255,6 +251,14 @@ func snapshot(dir string) (map[string][]byte, error) {
 		return err
 	})
 	return files, err
+}
+
+// samePath 按目标平台比较两个路径：Windows 上不区分大小写。install 与 status 共用（M3d 终审 M-5）。
+func (t Target) samePath(a, b string) bool {
+	if t.GOOS == "windows" {
+		return strings.EqualFold(filepath.Clean(a), filepath.Clean(b))
+	}
+	return filepath.Clean(a) == filepath.Clean(b)
 }
 
 func sameFiles(a, b map[string][]byte) bool {

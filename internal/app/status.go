@@ -83,6 +83,12 @@ func statusRules(s setup, o Options) {
 	if len(off) > 0 {
 		fmt.Fprintln(o.Stdout, "rules not in effect:", strings.Join(off, ", "))
 	}
+	// 停用的硬规则显著提示，与 install、config validate 相同（M3d 终审 M-10）
+	for _, r := range s.rules.All() {
+		if r.Locked && !r.Enabled() {
+			fmt.Fprintf(o.Stdout, "warning: hard rule %q is disabled; it does not protect anything until you turn it back on\n", r.ID)
+		}
+	}
 }
 
 // statusHarnesses 报告各 harness 的入口（install.Inspect）与 Codex 的 shell 配置。
