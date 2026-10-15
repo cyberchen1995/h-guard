@@ -26,6 +26,7 @@ const (
 	FallbackWarnUndelivered   = "warn_undelivered"
 	FallbackInputTooLarge     = "input_too_large"
 	FallbackConfigInvalid     = "config_invalid"
+	FallbackTargetUnparsed    = "target_unparsed" // 文件工具的目标无法解析（spec §5.5）
 )
 
 // Engine 运行 Check 并产生 Outcome。字段在构造后只读。

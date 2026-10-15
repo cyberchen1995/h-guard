@@ -34,6 +34,7 @@ var eventKinds = map[string]guard.EventKind{
 	"PreToolUse": guard.EventAction, "tool.check": guard.EventAction,
 	"UserPromptSubmit": guard.EventPrompt, "prompt.submit": guard.EventPrompt,
 	"PostToolUse": guard.EventToolOutput, "tool.result": guard.EventToolOutput,
+	"action": guard.EventAction, "prompt": guard.EventPrompt, "tool_output": guard.EventToolOutput, // generic 契约
 }
 
 // budgets 由 --timeout 推出两个时间点：内部截止时间（经 context 传给各阶段）为 timeout 减 1 秒；
@@ -84,7 +85,20 @@ func runHook(args []string, o Options) (code int) {
 	case <-timer.C:
 		h.expire()
 	}
-	return 0
+	return h.finish()
+}
+
+// finish 返回退出码。要求始终有输出的 adapter（generic 契约，spec §7.4）在没有输出任何结论时——读不懂的输入、
+// 读 stdin 出错、没有 --event 时的输入超限或看门狗——输出它的失败说明与非零退出码，调用方不会把空输出当作放行。
+func (h *hookRun) finish() int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if fr, ok := h.adapter.(harness.ParseFailureRenderer); ok && !h.written {
+		stdout, code := fr.RenderParseFailure()
+		_, _ = h.o.Stdout.Write(stdout)
+		h.written, h.exit = true, code
+	}
+	return h.exit
 }
 
 // hookRun 是一次 hook 调用的状态。输出与兜底由 mu 串行：先写的为准，看门狗触发后不再写任何东西。
@@ -102,6 +116,7 @@ type hookRun struct {
 	best      *guard.Outcome   // 已输出的结论
 	written   bool
 	abandoned bool // 看门狗已经接手
+	exit      int  // 退出码：Render 给出的（generic 契约读不懂输入时为非零），看门狗接手后不再改变
 }
 
 // commit 同步记录 Check 的一次提交，按 guard.Run 的规则累计（spec §3.3，评审 R3-04）。由 Engine.OnCommit
@@ -120,11 +135,27 @@ func (h *hookRun) newEngine(s setup) (*engine.Engine, judgeState) {
 	return eng, st
 }
 
-func (h *hookRun) setEvent(ev guard.Event) bool {
+// setEvent 记下解析出的事件与解析它的 adapter（按配置设了 shell 的副本），之后的渲染与兜底都用它们。
+func (h *hookRun) setEvent(ev guard.Event, ad harness.Adapter) bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	h.ev = &ev
+	h.ev, h.adapter = &ev, ad
 	return !h.abandoned
+}
+
+// parseEvent 解析 hook 输入。*harness.TargetUnparsedError 不是读不懂：返回它带的事件（按动作处理）与 unparsed。
+func parseEvent(ad harness.Adapter, raw []byte) (ev guard.Event, unparsed bool, err error) {
+	ev, err = ad.Parse(raw)
+	var tu *harness.TargetUnparsedError
+	if errors.As(err, &tu) {
+		ev = tu.Event
+		ev.Kind = guard.EventAction
+		if ev.Harness == "" {
+			ev.Harness = ad.Name()
+		}
+		return ev, true, nil
+	}
+	return ev, false, err
 }
 
 func (h *hookRun) live() bool {
@@ -142,17 +173,26 @@ func (h *hookRun) run(ctx context.Context, extra string) {
 		h.oversize()
 		return
 	}
-	ev, err := h.adapter.Parse(raw)
+	// 先按默认 shell 解析并记下事件（读配置卡住时看门狗与兜底要用它）；标不出 shell 的 harness 读完配置后
+	// 再按 harnesses.<name>.shell 重新解析（spec §5.3 第 3 步）。配置非法时保留默认 shell 的解析结果。
+	ev, unparsed, err := parseEvent(h.adapter, raw)
 	if err != nil {
-		return // 读不懂的输入什么都不输出（spec §3.3）
+		// 读不懂的输入什么都不输出（spec §3.3）；要求始终有输出的 adapter（generic 契约）由 finish 输出失败说明
+		return
 	}
-	if !h.setEvent(ev) {
+	if !h.setEvent(ev, h.adapter) {
 		return
 	}
 	s, err := load(h.o, extra)
 	if err != nil {
 		h.configInvalid(s, err)
 		return
+	}
+	if sd, ok := h.adapter.(harness.ShellDefaulter); ok {
+		ad := sd.WithShell(s.cfg.ShellFor(h.adapter.Name()))
+		if ev, unparsed, err = parseEvent(ad, raw); err != nil || !h.setEvent(ev, ad) {
+			return
+		}
 	}
 	h.logs.Decisions, h.logs.RetentionDays = s.cfg.Log.Decisions, s.cfg.Log.RetentionDays
 
@@ -171,6 +211,9 @@ func (h *hookRun) run(ctx context.Context, extra string) {
 		}
 	}
 	eng, st := h.newEngine(s)
+	if unparsed {
+		eng.Checks = append(eng.Checks, unparsedCheck{tool: ev.Tool})
+	}
 	res := eng.Evaluate(ctx, ev, h.adapter.CapsFor(ev))
 	if !h.write(ev, res.Outcome) {
 		return
@@ -205,11 +248,11 @@ func (h *hookRun) writeLocked(ev guard.Event, out guard.Outcome) bool {
 		return false
 	}
 	h.best = &out
-	stdout, _ := h.adapter.Render(ev, out)
+	stdout, code := h.adapter.Render(ev, out)
 	if len(stdout) > 0 {
 		_, _ = h.o.Stdout.Write(stdout)
 	}
-	h.written = true
+	h.written, h.exit = true, code
 	return true
 }
 
@@ -275,6 +318,20 @@ func (h *hookRun) configInvalid(s setup, err error) {
 	if h.write(ev, out) {
 		h.health([]hglog.Health{{Event: string(ev.Kind), Check: "app", Code: engine.FallbackConfigInvalid}})
 	}
+}
+
+// unparsedCheck 给目标无法解析的动作事件加上「请求确认」（spec §5.5）。它作为一个 Check 与其他检查一起聚合：
+// 读得出的动作照常检查，灾难性形态的 deny 与原因保留，when_ask_unsupported: pass 也不能让它们放行；健康记录与
+// 决策日志照常写（终审 I-1）。
+type unparsedCheck struct{ tool string }
+
+func (unparsedCheck) Name() string { return "app" }
+
+func (unparsedCheck) Applies(ev guard.Event) bool { return ev.Kind == guard.EventAction }
+
+func (c unparsedCheck) Evaluate(context.Context, guard.Event, func(guard.Verdict)) (guard.Verdict, error) {
+	return fallbackOutcome(guard.EventAction, engine.FallbackTargetUnparsed, i18n.KeyErrorTargetUnparsed,
+		map[string]string{"tool": secrets.MaskForLog(c.tool)}), nil
 }
 
 // brief 返回配置或规则错误的位置（文件名与字段路径），不含说明。动态片段（后端名、规则 id、文件名）是用户写下的，

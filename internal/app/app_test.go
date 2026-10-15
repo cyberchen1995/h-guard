@@ -345,7 +345,7 @@ func TestWatchdogKeepsACommittedDeny(t *testing.T) {
 		t.Fatal(err)
 	}
 	h := &hookRun{o: o, adapter: ad, event: "PreToolUse", start: time.Now(), logs: &hglog.Writer{Dir: e.cache}}
-	h.setEvent(ev)
+	h.setEvent(ev, h.adapter)
 	eng, _ := h.newEngine(s)
 	gate := &gatedCheck{Check: eng.Checks[0], committed: make(chan struct{}), release: make(chan struct{})}
 	eng.Checks[0] = gate
@@ -418,7 +418,7 @@ func TestWatchdogAggregatesCommits(t *testing.T) {
 	}
 	h := &hookRun{o: Options{Stdout: &out, Getenv: func(string) string { return "" }}, adapter: ad, event: "PreToolUse",
 		start: time.Now(), logs: &hglog.Writer{Dir: e.cache}}
-	h.setEvent(ev)
+	h.setEvent(ev, h.adapter)
 	h.commit("action", guard.Verdict{Decision: guard.DecisionAsk, Fallbacks: []string{"judge_unavailable"}})
 	first := guard.Verdict{Decision: guard.DecisionDeny, Findings: []guard.Finding{{Rule: "first"}}, Reasons: []guard.Reason{{Code: i18n.KeyActionBlocked}}}
 	h.commit("action", first)
@@ -487,7 +487,7 @@ func TestNamePanicUsesTheActionFailureFallback(t *testing.T) {
 			t.Fatal(err)
 		}
 		h := &hookRun{o: o, adapter: ad, event: "PreToolUse", start: time.Now(), logs: &hglog.Writer{Dir: e.cache}}
-		h.setEvent(ev)
+		h.setEvent(ev, h.adapter)
 		eng, _ := h.newEngine(s)
 		eng.Checks[0] = brokenName{eng.Checks[0]}
 		res := eng.Evaluate(context.Background(), ev, ad.CapsFor(ev))

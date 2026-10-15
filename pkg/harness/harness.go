@@ -3,6 +3,22 @@ package harness
 
 import "github.com/cyberchen1995/h-guard/pkg/guard"
 
+// TargetUnparsedError 表示已知会改动文件或执行命令的工具调用，目标无法解析（如 patch 格式不认识）。Parse 以
+// *TargetUnparsedError 返回；Event 尽量填好 Harness、SessionID、Cwd、Tool 等字段，并带上能读出的动作（如命令本身；
+// 可以没有）。调用方照常检查这些动作，另外请求确认，原因写明无法解析，带 target_unparsed（spec §5.5）；两者聚合，
+// 读不懂的部分不能让读得出的命中变宽。Event 没有填也不会放行。
+type TargetUnparsedError struct {
+	Event guard.Event
+}
+
+func (*TargetUnparsedError) Error() string { return "harness: the tool's target cannot be parsed" }
+
+// ShellDefaulter 由标不出 shell 的 adapter 实现（spec §5.3 第 3 步，如 Codex）。WithShell 返回一个副本，
+// 它把解析出的 exec 动作的 shell 设为 s；调用方按配置 harnesses.<name>.shell 传入。副本同样不保存其他状态。
+type ShellDefaulter interface {
+	WithShell(s guard.Shell) Adapter
+}
+
 // EventCaps 是 harness 在某类事件上能做到的事。
 type EventCaps struct {
 	Block   bool `json:"block"`   // 能阻止执行、提交或输出进入上下文
@@ -37,4 +53,10 @@ type Adapter interface {
 // TranscriptReader 由能从 transcript 回退读取用户指令的 adapter 实现。
 type TranscriptReader interface {
 	ReadRequests(path string, limit int) ([]guard.Request, error)
+}
+
+// ParseFailureRenderer 由要求「始终有输出」的 adapter 实现（generic 契约，spec §7.4）：Parse 返回错误时，调用方
+// 输出 RenderParseFailure 的结果并以它的退出码退出，而不是什么都不输出。
+type ParseFailureRenderer interface {
+	RenderParseFailure() (stdout []byte, exitCode int)
 }

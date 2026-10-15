@@ -14,6 +14,7 @@ action.probe: "h-guard 安装探针：看到这条确认说明 hook 已经生效
 error.internal: "h-guard 内部错误，保守起见需要确认。"
 error.config_invalid: "h-guard 配置有误（{detail}），保守起见需要确认。"
 error.input_too_large: "hook 输入过大，无法检查，保守起见需要确认。"
+error.target_unparsed: "h-guard 无法确定 {tool} 会改动哪些文件，保守起见需要确认。"
 degrade.ask_unsupported: "这个 harness 不支持请求确认，h-guard 已阻止。"
 source.local: "正则"
 source.judge: "模型"
