@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -57,12 +58,74 @@ type Action struct {
 	Tier int `yaml:"tier"`
 }
 
-// Outbound 是 outbound 检查的配置（spec §6）。类别内容在 M4 解析，这里原样保留。
+// Outbound 是 outbound 检查的配置（spec §6）。
 type Outbound struct {
-	Tier           int                  `yaml:"tier"`
-	JudgeMaxChunks int                  `yaml:"judge_max_chunks"`
-	JudgeMinChars  int                  `yaml:"judge_min_chars"`
-	Categories     map[string]yaml.Node `yaml:"categories"`
+	Tier           int                       `yaml:"tier"`
+	JudgeMaxChunks int                       `yaml:"judge_max_chunks"`
+	JudgeMinChars  int                       `yaml:"judge_min_chars"`
+	Categories     map[string]CategoryConfig `yaml:"categories"`
+}
+
+// CategoryConfig 是配置里写下的一个 outbound 类别（spec §6.1）：检测规则在规则包里（规则的 category），这里只管
+// 启用、动作、忽略列表与发给模型的题目（题目由判断层使用，M4b）。各层配置按字段叠加：没写的字段保留下层的取值，
+// 所以只写了 ignore 的用户配置不会把内置的 enabled、action 清掉。取用时用 Config.Category。
+type CategoryConfig struct {
+	Enabled  *bool             `yaml:"enabled"`
+	Action   guard.Decision    `yaml:"action"`
+	Ignore   []string          `yaml:"ignore"`
+	Question *CategoryQuestion `yaml:"question"`
+}
+
+// CategoryQuestion 是发给模型的类别题（固定英文，M4b）：文本是否含有该类别的内容。
+type CategoryQuestion struct {
+	Question    string `yaml:"question"`
+	CountsAsYes string `yaml:"counts_as_yes"`
+	CountsAsNo  string `yaml:"counts_as_no"`
+}
+
+// Category 是叠加并补上默认值之后的类别：没有配置的类别（只有规则引用它）启用、deny。
+type Category struct {
+	Enabled    bool
+	Action     guard.Decision // deny 或 warn
+	Ignore     []string       // 命中值等于其中一项时不算（比较前去掉首尾空白，邮箱不区分大小写，spec §6.1）
+	Question   *CategoryQuestion
+	Configured bool // 配置里写了这个类别
+}
+
+// Category 返回类别 name 的策略。
+func (c *Config) Category(name string) Category {
+	cc, ok := c.Outbound.Categories[name]
+	out := Category{Enabled: true, Action: guard.DecisionDeny, Ignore: cc.Ignore, Question: cc.Question, Configured: ok}
+	if cc.Enabled != nil {
+		out.Enabled = *cc.Enabled
+	}
+	if cc.Action != "" {
+		out.Action = cc.Action
+	}
+	return out
+}
+
+// mergeCategories 把 next 里每个类别没写的字段用 prev 的取值补上（按字段叠加）。
+func mergeCategories(prev, next map[string]CategoryConfig) {
+	for name, n := range next {
+		p, ok := prev[name]
+		if !ok {
+			continue
+		}
+		if n.Enabled == nil {
+			n.Enabled = p.Enabled
+		}
+		if n.Action == "" {
+			n.Action = p.Action
+		}
+		if n.Ignore == nil {
+			n.Ignore = p.Ignore
+		}
+		if n.Question == nil {
+			n.Question = p.Question
+		}
+		next[name] = n
+	}
 }
 
 // RuleSwitch 按规则 id 覆盖开关（spec §5.2）。
@@ -219,9 +282,12 @@ func overlay(c *Config, b []byte) []Issue {
 	if *probe.Version != Version {
 		return []Issue{{Path: "version", Msg: fmt.Sprintf("got %d, want %d", *probe.Version, Version)}}
 	}
+	prev := c.Outbound.Categories
+	c.Outbound.Categories = maps.Clone(prev) // 解码会整条替换同名的类别；先复制，免得改到下层的 map
 	if err := strictDecode(b, c); err != nil {
 		return yamlIssues(err)
 	}
+	mergeCategories(prev, c.Outbound.Categories)
 	return nil
 }
 
@@ -369,6 +435,23 @@ func (c *Config) issues() []Issue {
 	}
 	if c.Outbound.JudgeMinChars < 0 {
 		bad("outbound.judge_min_chars", "must not be negative")
+	}
+	for _, name := range sortedKeys(c.Outbound.Categories) {
+		cc, path := c.Outbound.Categories[name], "outbound.categories."+name
+		switch {
+		case !guard.ValidName(name):
+			bad(path, "invalid category name (lowercase letters, digits, '.', '_' and '-')")
+		case cc.Action != "" && cc.Action != guard.DecisionDeny && cc.Action != guard.DecisionWarn:
+			// 提示词与工具输出上 harness 都不支持请求确认（spec §6.1）
+			bad(path+".action", "want deny or warn")
+		case cc.Question != nil && strings.TrimSpace(cc.Question.Question) == "":
+			bad(path+".question.question", "missing")
+		}
+		for i, v := range cc.Ignore {
+			if strings.TrimSpace(v) == "" {
+				bad(fmt.Sprintf("%s.ignore[%d]", path, i), "empty")
+			}
+		}
 	}
 	for _, name := range sortedKeys(c.Harnesses) {
 		if s := c.Harnesses[name].Shell; s != "" && !s.Valid() {

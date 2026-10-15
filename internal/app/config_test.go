@@ -106,3 +106,31 @@ func TestConfigInit(t *testing.T) {
 		t.Errorf("unknown subcommand: exit %d", code)
 	}
 }
+
+// TestJudgeOnlyCategory：启用的类别没有启用的本地规则、只靠题目时，模型关闭就是配置错误（spec §4）：错误指出类别
+// 与开启方法；有本地规则、或模型开着时不是错误。hook 同样读不了这份配置。
+func TestJudgeOnlyCategory(t *testing.T) {
+	e := newEnv(t)
+	e.config("version: 1\noutbound: {categories: {acme-codename: {action: warn, question: {question: 'Does the text name Project Falcon?'}}}}\n")
+	_, errs, code := e.run(nil, "config", "validate")
+	if code != 1 || !strings.Contains(errs, "outbound.categories.acme-codename") || !strings.Contains(errs, "judge.enabled") {
+		t.Errorf("judge-only category: exit %d\n%s", code, errs)
+	}
+	dir := filepath.Join(e.configDir, "rules")
+	os.MkdirAll(dir, 0o700)
+	os.WriteFile(filepath.Join(dir, "falcon.yaml"), []byte("schema: 1\nid: acme.codename\ncategory: acme-codename\non: [prompt]\n"+
+		"match: {regex: ['\\bProject Falcon\\b']}\nexamples: {hit: ['Project Falcon'], miss: [falconry]}\n"), 0o600)
+	if out, errs, code := e.run(nil, "config", "validate"); code != 0 {
+		t.Errorf("with a local rule: exit %d\n%s%s", code, out, errs)
+	}
+	// 本地规则被停用：又只剩题目
+	e.config("version: 1\nrules: {acme.codename: {enabled: false}}\noutbound: {categories: {acme-codename: {question: {question: 'Falcon?'}}}}\n")
+	if _, errs, code := e.run(nil, "config", "validate"); code != 1 || !strings.Contains(errs, "outbound.categories.acme-codename") {
+		t.Errorf("rule disabled: exit %d\n%s", code, errs)
+	}
+	// 类别停用时不是错误
+	e.config("version: 1\nrules: {acme.codename: {enabled: false}}\noutbound: {categories: {acme-codename: {enabled: false, question: {question: 'Falcon?'}}}}\n")
+	if _, errs, code := e.run(nil, "config", "validate"); code != 0 {
+		t.Errorf("category disabled: exit %d\n%s", code, errs)
+	}
+}
