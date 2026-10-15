@@ -22,6 +22,9 @@ try {
 } catch {}
 try {
   $in = [Console]::In.ReadToEnd()
+  # Windows PowerShell 5.1 把原生程序重定向的 stderr 也当作错误记录，Stop 下第一条就终止、有效的回答被换成 ask；
+  # 调用时用 Continue。找不到 h-guard 时 $LASTEXITCODE 不是 0，照样输出 ask
+  $ErrorActionPreference = 'Continue'
   $out = $in | & $bin hook claudecode --event PreToolUse --timeout $timeout 2>$null
   if ($LASTEXITCODE -eq 0) {
     [Console]::Out.Write(($out -join "`n"))
