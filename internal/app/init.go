@@ -56,6 +56,11 @@ func runInit(args []string, o Options) int {
 	if s.cfg.Judge.Enabled {
 		def = s.cfg.Judge.Backend
 	}
+	// 拒绝或不继续时什么都不改：模型原来开着就仍然开着（M3d 终审 M-7）
+	unchanged := "the judge stays off"
+	if s.cfg.Judge.Enabled {
+		unchanged = "the judge settings are unchanged"
+	}
 	in := bufio.NewReader(o.Stdin)
 	fmt.Fprintf(o.Stdout, "Backend (number or name) [%s]: ", def)
 	answer, _ := in.ReadString('\n')
@@ -76,12 +81,12 @@ func runInit(args []string, o Options) int {
 		fmt.Fprintf(o.Stdout, "Set it where the harness can see it (or in %s), then run h-guard init again. Continue anyway? [y/N] ", filepath.Join(o.ConfigDir, ".env"))
 		answer, _ = in.ReadString('\n')
 		if a := strings.ToLower(strings.TrimSpace(answer)); a != "y" && a != "yes" {
-			fmt.Fprintln(o.Stdout, "the judge stays off")
+			fmt.Fprintln(o.Stdout, unchanged)
 			return 1
 		}
 	}
 	if code := enableBackend(s, o, name, in, true); code != 0 {
-		fmt.Fprintln(o.Stdout, "the judge stays off")
+		fmt.Fprintln(o.Stdout, unchanged)
 		return code
 	}
 	// 档位的默认回答取当前配置
