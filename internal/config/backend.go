@@ -78,3 +78,13 @@ func (c *Config) NewBackend(name string) (judge.Backend, error) {
 	}
 	return f(name, bc.Decode)
 }
+
+// Option 返回后端自己的字段 key 的标量值；没有或不是标量时为空。
+func (b BackendConfig) Option(key string) string {
+	for i := 0; i+1 < len(b.options.Content); i += 2 {
+		if k, v := b.options.Content[i], b.options.Content[i+1]; k.Value == key && v.Kind == yaml.ScalarNode {
+			return v.Value
+		}
+	}
+	return ""
+}

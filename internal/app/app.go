@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"time"
 
 	"github.com/cyberchen1995/h-guard/internal/check/action"
@@ -44,6 +45,12 @@ type Options struct {
 	Home string
 	// IsTerminal 报告是否在交互终端里运行（backend enable 只在终端里确认）；默认看 stdin 是否是字符设备。
 	IsTerminal func() bool
+	// Executable 返回写进 harness 入口的 h-guard 路径（install）；默认见 stableExecutable。
+	Executable func() (string, error)
+	// RunHarness 运行 harness 的命令行（取版本、校验插件），默认在 PATH 中查找并限时 10 秒；找不到时返回错误。
+	RunHarness func(name string, args ...string) ([]byte, error)
+	// GOOS 是目标平台，默认 runtime.GOOS。
+	GOOS string
 }
 
 // under 返回 dir 下的 name；dir 为空（目录取不到）时返回空串，调用方据此跳过读写。
@@ -76,6 +83,15 @@ func (o *Options) fill() {
 	if o.CacheDir == "" {
 		o.CacheDir, _ = store.CacheDir()
 	}
+	if o.Executable == nil {
+		o.Executable = stableExecutable
+	}
+	if o.RunHarness == nil {
+		o.RunHarness = runHarness
+	}
+	if o.GOOS == "" {
+		o.GOOS = runtime.GOOS
+	}
 	if o.Home == "" {
 		o.Home, _ = os.UserHomeDir()
 	}
@@ -93,6 +109,10 @@ const usage = `usage:
   h-guard backend list | enable <name> | disable <name> [--config <file>]
   h-guard status [--config <file>]
   h-guard eval [--backend <name>] [--sweep] [--shell posix|powershell | --cases <file>] [--repeat <K>] [--bootstrap <N>] [--seed <n>] [--yes] [--config <file>]
+  h-guard init
+  h-guard install claudecode|codex [--write] [--remove] [--timeout <seconds>] [--shell posix|powershell]
+  h-guard migrate <questions.json> [--write]
+  h-guard config validate [--rules <dir>] | show | init [--config <file>]
   h-guard version
 `
 
@@ -120,6 +140,14 @@ func Main(args []string, o Options) int {
 		return runStatus(args[1:], o)
 	case "eval":
 		return runEval(args[1:], o)
+	case "install":
+		return runInstall(args[1:], o)
+	case "config":
+		return runConfig(args[1:], o)
+	case "init":
+		return runInit(args[1:], o)
+	case "migrate":
+		return runMigrate(args[1:], o)
 	case "version":
 		fmt.Fprintln(o.Stdout, "h-guard", Version)
 		return 0
@@ -220,7 +248,8 @@ func loadConfig(o Options, extra string, checkKinds bool) (setup, error) {
 func (s setup) newEngine(o Options, j action.Judge) *engine.Engine {
 	c := &action.Check{Rules: s.rules, Config: s.cfg, Catalog: s.catalog, Locale: s.locale, Judge: j,
 		Paths: paths.Env{Home: o.Home, FoldCase: paths.FoldCaseDefault, Windows: paths.WindowsDefault,
-			Vars: map[string]string{rules.VarConfig: o.ConfigDir, rules.VarCache: o.CacheDir, rules.VarExtraConfig: s.extra}}}
+			Vars: map[string]string{rules.VarConfig: o.ConfigDir, rules.VarCache: o.CacheDir, rules.VarExtraConfig: s.extra,
+				rules.VarClaudeConfig: o.Getenv("CLAUDE_CONFIG_DIR"), rules.VarCodexHome: o.Getenv("CODEX_HOME")}}}
 	return &engine.Engine{
 		Checks: []guard.Check{c}, Catalog: s.catalog, Locale: s.locale,
 		WhenAskUnsupported: guard.Decision(s.cfg.Policy.WhenAskUnsupported),

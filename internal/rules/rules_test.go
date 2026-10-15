@@ -3,6 +3,7 @@ package rules_test
 import (
 	"context"
 	"errors"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -404,6 +405,35 @@ func TestAgentCannotEnableABackend(t *testing.T) {
 	}
 }
 
+// TestAgentCannotInstallOrInit：install、init、config init、migrate 会改 harness 的 hook 配置、h-guard 的配置与同意
+// 记录，agent 在 hook 下运行时与 backend enable 一样请求确认（维护者决定，2026-10-14）；只打印不写入的用法也会问
+// （与 backend enable 相同的已知误报）。查看、校验与其他子命令不算，参数里出现这些词也不算。
+func TestAgentCannotInstallOrInit(t *testing.T) {
+	s := builtinSet(t)
+	for _, cmd := range []string{
+		"h-guard install claudecode --write", "h-guard install codex --remove --write", "h-guard install codex",
+		"h-guard init", "/usr/local/bin/h-guard init", "h-guard config init", "h-guard migrate questions.json",
+		"go run ./cmd/h-guard install codex --write", "h-guard.exe install codex --write", "& 'h-guard' install codex --write",
+		// 审查 I1：命令替换得到的路径、带引号的子命令、子命令之前的选项、go run 的模块路径、经 xargs 传入参数
+		`"$(which h-guard)" init`, "$(command -v h-guard) install codex --write", "go run example.com/h-guard@latest init",
+		`h-guard "install" codex --write`, "h-guard 'init'", "h-guard config --config=x.yaml init", "h-guard --config x.yaml migrate q.json",
+		"echo install codex --write | xargs h-guard", "Start-Process h-guard -ArgumentList 'install','codex','--write'",
+	} {
+		if !hits(t, s, cmd)["guard_tampering"] {
+			t.Errorf("%q did not match guard_tampering", cmd)
+		}
+	}
+	for _, cmd := range []string{
+		"h-guard status", "h-guard config validate", "h-guard config show", "h-guard check 'npm install'",
+		`h-guard check "git init"`, "h-guard hook codex --event PreToolUse", "npm install h-guard", "echo h-guard-init",
+		"h-guard check --request 'install it' 'make install'", "h-guard eval --cases install.jsonl",
+	} {
+		if hits(t, s, cmd)["guard_tampering"] {
+			t.Errorf("%q matched guard_tampering", cmd)
+		}
+	}
+}
+
 // TestHarmlessDdTargetsAreNotCatastrophic：只豁免去向固定、写入无害的设备。/dev/stdout、/dev/stderr、/dev/fd/N
 // 可能已被 shell 重定向到块设备（评审 M2-04），与 M1 一样拒绝——包括同一段把标准输出重定向到普通文件的
 // 写法（已知的保守误报）。dd 的输出重定向指向设备时同样拒绝。
@@ -730,6 +760,34 @@ func TestPowerShellFinalReview(t *testing.T) {
 	} {
 		if got := pwshHits(t, s, cmd); !slices.Equal(got, want) {
 			t.Errorf("%q: hits %v, want %v", cmd, got, want)
+		}
+	}
+}
+
+// TestCustomHarnessDirsAreGuarded：CLAUDE_CONFIG_DIR、CODEX_HOME 指定的 harness 配置目录同样受护栏自我保护
+// （审查 I5：install 写到那里，hook 进程的环境里能看到这两个变量）。没有设置时这些模式不匹配。
+func TestCustomHarnessDirsAreGuarded(t *testing.T) {
+	r := builtinSet(t).Get("guard_tampering")
+	with := func(extra map[string]string) paths.Env {
+		env := rules.ExampleEnv
+		env.Vars = maps.Clone(env.Vars)
+		maps.Copy(env.Vars, extra)
+		return env
+	}
+	env := with(map[string]string{rules.VarClaudeConfig: "/dot/claude", rules.VarCodexHome: "/dot/codex"})
+	for _, p := range []string{"/dot/claude/settings.json", "/dot/claude/settings.local.json", "/dot/codex/hooks.json", "/dot/codex/config.toml"} {
+		if hit, _ := r.MatchFile(paths.Resolve(p, env), env); !hit {
+			t.Errorf("%s is not guarded", p)
+		}
+	}
+	unset := with(nil)
+	if hit, _ := r.MatchFile(paths.Resolve("/dot/claude/settings.json", unset), unset); hit {
+		t.Error("an unset CLAUDE_CONFIG_DIR still guards a path")
+	}
+	s := builtinSet(t)
+	for _, cmd := range []string{`echo '{}' > "$CLAUDE_CONFIG_DIR/settings.json"`, "rm ${CODEX_HOME}/hooks.json"} {
+		if !hits(t, s, cmd)["guard_tampering"] {
+			t.Errorf("%q did not match guard_tampering", cmd)
 		}
 	}
 }
