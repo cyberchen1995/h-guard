@@ -19,6 +19,11 @@ import (
 // 卡住的健康记录允许丢失。
 func TestPluginWrapperAnswersWhenHealthLogStalls(t *testing.T) {
 	bin := buildBinary(t)
+	// 先运行一次：macOS 第一次执行新编出的程序时系统要先检查它（实测 0.4–0.9 秒），这段一次性的开销会吃掉看门狗留给
+	// harness 的 0.5 秒余量，让本测试时而超时（第一个子测试总是第一次执行）。要验证的是 h-guard 自己的计时，不含它。
+	if out, err := exec.Command(bin, "version").CombinedOutput(); err != nil {
+		t.Fatalf("warm-up: %v\n%s", err, out)
+	}
 	script, _ := filepath.Abs(filepath.Join("..", "..", "extensions", "claudecode", "hooks", "pretooluse.sh"))
 	const timeout = 2 * time.Second
 	for _, tt := range []struct {
