@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/cyberchen1995/h-guard/pkg/detect/encoded"
 	"io"
 	"path/filepath"
 	"regexp"
@@ -97,6 +98,9 @@ type ExecMatch struct {
 	// 「命令词 文件描述符运算符目标词」，如 "dd 2>/dev/sda"。重定向由词法分析给出，注释与引号里的字符不会被当作
 	// 重定向；目标是完整的词，白名单可以用 $ 锚定（评审 R3-01）。
 	Redirects []string `yaml:"redirects"`
+	// Encoded 另用 detect/encoded 识别把编码内容交给解释器执行的写法（不解码，只看有没有；规则 obfuscated_exec）。
+	// 有它时可以不写正则。
+	Encoded bool `yaml:"encoded"`
 }
 
 // Question 是规则的判断题（发给模型，固定英文）。
@@ -137,6 +141,7 @@ type compiledExec struct {
 	redirects              []*regexp2.Regexp
 	commandPosition        bool
 	stripQuotes            bool
+	encoded                bool
 }
 
 // Enabled 报告规则在配置覆盖之后是否启用。
@@ -354,7 +359,7 @@ func isFile(k guard.ActionKind) bool {
 func (r *Rule) appliesToFiles() bool { return slices.ContainsFunc(r.On, isFile) }
 
 func compileExec(m *ExecMatch) (*compiledExec, error) {
-	c := &compiledExec{commandPosition: m.CommandPosition, stripQuotes: m.StripQuotes}
+	c := &compiledExec{commandPosition: m.CommandPosition, stripQuotes: m.StripQuotes, encoded: m.Encoded}
 	groups := []struct {
 		name string
 		src  []string
@@ -375,7 +380,7 @@ func compileExec(m *ExecMatch) (*compiledExec, error) {
 			total++
 		}
 	}
-	if total == 0 {
+	if total == 0 && !m.Encoded {
 		return nil, fieldErr("match.exec", "no patterns")
 	}
 	return c, nil
@@ -400,6 +405,9 @@ func (r *Rule) MatchExec(ctx context.Context, e command.Expansion) (Result, erro
 	for _, u := range e.Units {
 		if err := ctx.Err(); err != nil {
 			return res, err
+		}
+		if r.exec.encoded && (u.Encoded || slices.ContainsFunc(u.FullTexts(), func(t string) bool { return encoded.Find(t, u.Shell) })) {
+			return Result{Hit: true}, nil
 		}
 		patterns := r.exec.any
 		switch u.Shell {

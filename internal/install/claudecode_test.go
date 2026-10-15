@@ -242,6 +242,13 @@ func TestPowerShellWrapper(t *testing.T) {
 	if !strings.Contains(string(sh), ask) {
 		t.Error("the sh wrapper's ask differs")
 	}
+	// 调用 h-guard 时不能是 ErrorActionPreference = 'Stop'：5.1 里原生程序重定向的 stderr 也会变成错误记录，Stop 下
+	// 第一条就终止，有效的回答（含 deny）被换成兜底的 ask（M3d 终审 M-4）
+	call := strings.Index(ps, "& $bin hook claudecode")
+	cont := strings.LastIndex(ps[:max(call, 0)], "$ErrorActionPreference = 'Continue'")
+	if call < 0 || cont < 0 || strings.Contains(ps[cont:call], "$ErrorActionPreference = 'Stop'") {
+		t.Error("pretooluse.ps1 must call h-guard with $ErrorActionPreference = 'Continue'")
+	}
 	for _, ps7 := range []string{"??", "&&", "||", "?."} {
 		if strings.Contains(ps, ps7) {
 			t.Errorf("pretooluse.ps1 uses %q, which Windows PowerShell 5.1 lacks", ps7)

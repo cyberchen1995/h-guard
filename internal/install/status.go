@@ -63,7 +63,7 @@ func inspectClaudeCode(t Target) []string {
 			var s string
 			if raw, ok := env.get(pluginDirsVar); ok && json.Unmarshal(raw, &s) == nil {
 				registered = slices.ContainsFunc(strings.Split(s, t.listSep()), func(d string) bool {
-					return strings.TrimSpace(d) != "" && filepath.Clean(strings.TrimSpace(d)) == filepath.Clean(dir)
+					return strings.TrimSpace(d) != "" && t.samePath(strings.TrimSpace(d), dir)
 				})
 			}
 		}
@@ -124,7 +124,8 @@ func inspectCodex(t Target) []string {
 	path := CodexHooks(t)
 	var file struct {
 		Hooks map[string][]struct {
-			Hooks []struct {
+			Matcher json.RawMessage `json:"matcher"`
+			Hooks   []struct {
 				Command string `json:"command"`
 				Timeout int    `json:"timeout"`
 			} `json:"hooks"`
@@ -146,6 +147,10 @@ func inspectCodex(t Target) []string {
 					continue
 				}
 				n++
+				if m := strings.TrimSpace(string(g.Matcher)); m != "" && m != "null" {
+					// 本项目的入口不写 matcher；加了就只对匹配的工具生效（M3d 终审 M-6）
+					problems = append(problems, fmt.Sprintf("problem: the h-guard hook for %s only runs for tools matching %s; run h-guard install codex --write", ev, m))
+				}
 				if m := commandTimeout.FindStringSubmatch(h.Command); m != nil {
 					if given, _ := strconv.Atoi(m[1]); h.Timeout != given {
 						problems = append(problems, fmt.Sprintf("problem: %s waits %ds but h-guard is given %ds; run h-guard install codex --write", ev, h.Timeout, given))

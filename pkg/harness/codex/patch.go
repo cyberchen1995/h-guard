@@ -115,7 +115,7 @@ func embeddedPatches(cmd string) ([]guard.Action, error) {
 		if strings.Contains(cmd, beginPatch) && (dynamic || !lexed) {
 			return nil, errUnparsed
 		}
-		return dataPatches(cmd), nil
+		return dataPatches(cmd)
 	}
 	dir, patch, ok := shellPatch(cmd, 0)
 	if !ok {
@@ -136,21 +136,25 @@ func embeddedPatches(cmd string) ([]guard.Action, error) {
 	return acts, nil
 }
 
-// dataPatches 读出没有交给 apply_patch 的补丁（如写进文件）里的文件动作；读不出的当作数据。
-func dataPatches(cmd string) []guard.Action {
+// dataPatches 读出没有交给 apply_patch 的补丁（如写进文件）里的文件动作。读不出的补丁（缺结尾、格式不对，如用
+// printf 写成一行的）返回 errUnparsed：工具名可以经 sed、xargs 之类拼出而不带任何展开，看不出这份补丁是否被
+// 执行，就不能当作数据丢掉（M3c 终审 M-1）。
+func dataPatches(cmd string) ([]guard.Action, error) {
 	var out []guard.Action
 	for rest := cmd; ; {
 		i := strings.Index(rest, beginPatch)
 		if i < 0 {
-			return out
+			return out, nil
 		}
 		j := strings.Index(rest[i:], endPatch)
 		if j < 0 {
-			return out
+			return nil, errUnparsed
 		}
-		if acts, err := patchActions(rest[i : i+j+len(endPatch)]); err == nil {
-			out = append(out, acts...)
+		acts, err := patchActions(rest[i : i+j+len(endPatch)])
+		if err != nil {
+			return nil, errUnparsed
 		}
+		out = append(out, acts...)
 		rest = rest[i+j+len(endPatch):]
 	}
 }

@@ -7,6 +7,7 @@
 package secrets
 
 import (
+	"math"
 	"regexp"
 	"sort"
 	"strconv"
@@ -232,4 +233,58 @@ func shape(v string) (string, int) {
 		return 'x'
 	}, v)
 	return out, replaced
+}
+
+// HighEntropy 报告 v 是否像一段编码或随机生成的内容：至少 minLen 个字符；字符集是 base64 一类（base64、base64url
+// 或字母数字），且大写、小写、数字都有（只有 / 的路径不算，fixes 终审 C1）；每字符的香农熵至少 minHighEntropy 比特。只看形状：单词、路径、
+// UUID、hex（git 哈希）、重复字符都不算。detect/encoded 用它判断交给解释器的内容是否经过编码；M4 的 outbound
+// 高熵凭据检测复用它。
+func HighEntropy(v string, minLen int) bool {
+	if len(v) < minLen {
+		return false
+	}
+	switch charset(v) {
+	case "base64", "base64url", "alnum":
+	default:
+		return false
+	}
+	var upper, lower, digit bool
+	for _, r := range v {
+		switch {
+		case r >= 'A' && r <= 'Z':
+			upper = true
+		case r >= 'a' && r <= 'z':
+			lower = true
+		case r >= '0' && r <= '9':
+			digit = true
+		}
+	}
+	if !(upper && lower && digit) {
+		return false
+	}
+	return Entropy(v) >= minHighEntropy
+}
+
+// minHighEntropy 是 HighEntropy 要求的每字符熵（比特）。英文单词拼成的标识符约 3.5–4.2，base64 编码的命令约 4.0
+// 以上，PowerShell 的 UTF-16LE base64 约 3.9–4.1；长度下限与「大小写数字混合」排除了大部分标识符。
+const minHighEntropy = 3.5
+
+// Entropy 返回 v 的每字符香农熵（比特，按字节计）。
+func Entropy(v string) float64 {
+	if v == "" {
+		return 0
+	}
+	var counts [256]int
+	for i := 0; i < len(v); i++ {
+		counts[v[i]]++
+	}
+	n := float64(len(v))
+	h := 0.0
+	for _, c := range counts {
+		if c > 0 {
+			p := float64(c) / n
+			h -= p * math.Log2(p)
+		}
+	}
+	return h
 }

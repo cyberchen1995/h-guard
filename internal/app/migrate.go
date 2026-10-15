@@ -11,10 +11,8 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/cyberchen1995/h-guard/internal/config"
 	"github.com/cyberchen1995/h-guard/internal/install"
 	"github.com/cyberchen1995/h-guard/internal/migrate"
-	"github.com/cyberchen1995/h-guard/internal/rules"
 	"github.com/cyberchen1995/h-guard/pkg/detect/secrets"
 )
 
@@ -145,12 +143,8 @@ func checkMigrated(o Options, steps []install.Step, dir string, generated map[st
 			data = s.Preview
 		}
 	}
-	candidate := filepath.Join(tmp, "config.yaml")
-	if err := os.WriteFile(candidate, data, 0o600); err != nil {
-		return err
-	}
 	if len(data) > 0 {
-		if _, err := config.Load(candidate); err != nil {
+		if err := os.WriteFile(filepath.Join(tmp, "config.yaml"), data, 0o600); err != nil {
 			return err
 		}
 	}
@@ -166,7 +160,8 @@ func checkMigrated(o Options, steps []install.Step, dir string, generated map[st
 			return err
 		}
 	}
-	_, err = rules.Load(rulesDir)
+	// 与 hook 相同地加载（含题型校验与配置里按 id 的规则开关，M3d 终审 M-2）
+	_, err = loadConfig(Options{ConfigDir: tmp, Getenv: o.Getenv}, "", true)
 	return err
 }
 

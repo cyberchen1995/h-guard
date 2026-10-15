@@ -42,6 +42,19 @@ func TestInitTurnsOnTheJudge(t *testing.T) {
 }
 
 // TestInitDeclined：不同意时不记录同意、不开启模型（backlog §3.4）。
+// TestInitDeclinedKeepsAnEnabledJudge：模型已经开着时在 init 里拒绝，配置与已有的同意都不变，提示不能说模型保持
+// 关闭（M3d 终审 M-7）。
+func TestInitDeclinedKeepsAnEnabledJudge(t *testing.T) {
+	e, _ := initEnv(t)
+	e.tty = true
+	b, _ := os.ReadFile(filepath.Join(e.configDir, "config.yaml"))
+	e.config(string(b) + "judge: {enabled: true, backend: jev}\n")
+	out, _, code := e.run([]byte("jev\nn\n"), "init")
+	if code != 1 || strings.Contains(out, "the judge stays off") || !strings.Contains(out, "the judge settings are unchanged") {
+		t.Errorf("exit %d\n%s", code, out)
+	}
+}
+
 func TestInitDeclined(t *testing.T) {
 	e, srv := initEnv(t)
 	e.tty = true

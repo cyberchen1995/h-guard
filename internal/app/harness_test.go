@@ -37,6 +37,8 @@ func (a shellAdapter) Parse(raw []byte) (guard.Event, error) {
 		Cmd   string `json:"cmd"`
 		Patch bool   `json:"patch"`
 		Bare  bool   `json:"bare"`
+		// PSFail：按 powershell 重新解析时出错（一个 adapter 只在某种 shell 下读不懂的情形）
+		PSFail bool `json:"psfail"`
 	}
 	if err := json.Unmarshal(raw, &in); err != nil {
 		return guard.Event{}, err
@@ -51,6 +53,9 @@ func (a shellAdapter) Parse(raw []byte) (guard.Event, error) {
 	shell := a.shell
 	if shell == "" {
 		shell = guard.ShellPOSIX
+	}
+	if in.PSFail && shell == guard.ShellPowerShell {
+		return guard.Event{}, fmt.Errorf("cannot read this as powershell")
 	}
 	ev.Actions = []guard.Action{{Kind: guard.ActionExec, Exec: &guard.ExecAction{Command: in.Cmd, Shell: shell}}}
 	return ev, nil
@@ -71,6 +76,21 @@ func TestHarnessShellComesFromTheConfig(t *testing.T) {
 	e.config("version: 1\nharnesses:\n  shelltest: {shell: powershell}\n")
 	if out, _, _ := e.run(in, "hook", "shelltest", "--event", "PreToolUse"); !strings.HasPrefix(out, "deny|") {
 		t.Errorf("configured powershell: %q", out)
+	}
+}
+
+// TestReparseErrorKeepsTheEvent：按配置的 shell 重新解析出错时，不能什么都不输出：第一次解析出的动作照常检查，
+// 另外请求确认（M3c 终审 M-2）。
+func TestReparseErrorKeepsTheEvent(t *testing.T) {
+	e := newEnv(t)
+	e.config("version: 1\nharnesses:\n  shelltest: {shell: powershell}\n")
+	out, _, _ := e.run([]byte(`{"cmd": "rm -rf /", "psfail": true}`), "hook", "shelltest", "--event", "PreToolUse")
+	if !strings.HasPrefix(out, "deny|") {
+		t.Errorf("catastrophic command: %q", out)
+	}
+	out, _, _ = e.run([]byte(`{"cmd": "ls", "psfail": true}`), "hook", "shelltest", "--event", "PreToolUse")
+	if !strings.HasPrefix(out, "ask|") || !strings.Contains(out, "target_unparsed") {
+		t.Errorf("plain command: %q", out)
 	}
 }
 

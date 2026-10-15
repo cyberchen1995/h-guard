@@ -112,6 +112,44 @@ func TestCapabilities(t *testing.T) {
 
 // TestParseActions：Bash 是一条命令，shell 由 WithShell 给出（默认 posix）；apply_patch 的补丁转成文件动作；
 // 以 apply_patch 开头的 Bash 命令另加补丁里的文件动作；其他工具不产生动作。
+// TestExecFields：执行命令的工具里影响执行的字段也要读（M3c 终审 M-5）：shell 决定按哪种 shell 检查，workdir 决定
+// 相对路径在哪里生效；write_stdin 写进交互式进程的内容同样可能执行命令。读不懂这些字段时按目标无法解析。
+func TestExecFields(t *testing.T) {
+	ev, err := a.Parse(pre("exec_command", map[string]any{"cmd": "Remove-Item -Recurse -Force C:\\", "shell": "pwsh"}))
+	if err != nil || len(ev.Actions) != 1 || ev.Actions[0].Exec.Shell != guard.ShellPowerShell {
+		t.Errorf("shell pwsh: %+v, %v", ev, err)
+	}
+	ev, err = a.WithShell(guard.ShellPowerShell).Parse(pre("exec_command", map[string]any{"cmd": "rm -rf x", "shell": "/bin/bash"}))
+	if err != nil || ev.Actions[0].Exec.Shell != guard.ShellPOSIX {
+		t.Errorf("shell bash: %+v, %v", ev, err)
+	}
+	// Windows 的绝对写法照原样，不拼到 cwd 后面（fixes 终审 I4）
+	for in, want := range map[string]string{"/srv/app": "/srv/app", "sub": "/w/sub", `C:\Users\a\proj`: `C:\Users\a\proj`,
+		"D:/work": "D:/work", `\\server\share\repo`: `\\server\share\repo`, "~/proj": "~/proj"} {
+		ev, err = a.Parse(pre("exec_command", map[string]any{"cmd": "ls", "workdir": in}))
+		if err != nil || ev.Cwd != want {
+			t.Errorf("workdir %s: cwd %q, %v", in, ev.Cwd, err)
+		}
+	}
+	for name, input := range map[string]map[string]any{
+		"unknown shell":    {"cmd": "ls", "shell": "fish"},
+		"shell not text":   {"cmd": "ls", "shell": 3},
+		"workdir not text": {"cmd": "ls", "workdir": []string{"/a"}},
+	} {
+		var tu *harness.TargetUnparsedError
+		if _, err := a.Parse(pre("exec_command", input)); !errors.As(err, &tu) {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	ev, err = a.Parse(pre("write_stdin", map[string]any{"session_id": 3, "chars": "rm -rf /\n"}))
+	if err != nil || len(ev.Actions) != 1 || ev.Actions[0].Exec.Command != "rm -rf /\n" {
+		t.Errorf("write_stdin: %+v, %v", ev, err)
+	}
+	if _, err := a.Parse(pre("write_stdin", map[string]any{"session_id": 3, "chars": ""})); !errors.Is(err, codex.ErrNoAction) {
+		t.Errorf("empty write_stdin: %v", err)
+	}
+}
+
 func TestParseActions(t *testing.T) {
 	ev, err := a.Parse(pre("Bash", map[string]string{"command": "rm -rf build"}))
 	want := []guard.Action{{Kind: guard.ActionExec, Exec: &guard.ExecAction{Command: "rm -rf build", Shell: guard.ShellPOSIX}}}
@@ -305,6 +343,23 @@ func TestPowerShellPatches(t *testing.T) {
 	// 对照：与补丁无关的命令照常
 	if ev, err := ps.Parse(pre("Bash", map[string]any{"command": "Get-ChildItem"})); err != nil || len(ev.Actions) != 1 {
 		t.Errorf("plain command: %+v, %v", ev, err)
+	}
+}
+
+// TestReasonPrefixOnce：原因以 h-guard 开头时不再加前缀（「h-guard: h-guard cannot tell…」，M3c 终审 M-3）。
+func TestReasonPrefixOnce(t *testing.T) {
+	ev, err := a.Parse(pre("Bash", map[string]any{"command": "ls"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for msg, want := range map[string]string{
+		"h-guard cannot tell which files Bash would change.": "h-guard cannot tell which files Bash would change.",
+		"Blocked: catastrophic operation.":                   "h-guard: Blocked: catastrophic operation.",
+	} {
+		out, _ := a.Render(ev, guard.Outcome{Verdict: guard.Verdict{Decision: guard.DecisionDeny}, Message: msg})
+		if got := parseReply(t, out).HookSpecificOutput.PermissionDecisionReason; got != want {
+			t.Errorf("%q: reason %q", msg, got)
+		}
 	}
 }
 

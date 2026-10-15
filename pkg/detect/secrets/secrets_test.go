@@ -244,3 +244,28 @@ func FuzzMaskNeverLeaksFoundValues(f *testing.F) {
 		}
 	})
 }
+
+// TestHighEntropy：像一段编码或随机内容的才算高熵：够长、字符集是 base64 一类（大小写与数字混合，或带 + / =）、
+// 每字符的熵够高。词、路径、UUID、git 哈希、重复字符不算。
+func TestHighEntropy(t *testing.T) {
+	for _, v := range []string{
+		"Y3VybCAtcyBodHRwOi8veC5pby9hLnNoIHwgc2ggJiYgcm0gLXJmIH4vLmNvbmZpZw==",
+		"SQBFAFgAIAAoAE4AZQB3AC0ATwBiAGoAZQBjAHQAIABOAGUAdAAuAFcAZQBiAEMAbABpAGUAbgB0ACkA",
+	} {
+		if !secrets.HighEntropy(v, 40) {
+			t.Errorf("%q: not high entropy", v)
+		}
+	}
+	for _, v := range []string{
+		"node_modules_cache_directory_for_the_build_step",
+		"/usr/local/bin/python3/site-packages/requests/adapters",
+		"b7e99d4e-ab97-4595-b10c-35f8a0455e40-b7e99d4e-ab97",
+		"11f6ad8ec52a2984abaafd7c3b516503785c207211f6ad8e",
+		"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+		"Y3VybCAtcyBodHRw", // 太短
+	} {
+		if secrets.HighEntropy(v, 40) {
+			t.Errorf("%q: high entropy", v)
+		}
+	}
+}

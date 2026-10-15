@@ -175,6 +175,10 @@ func TestEmbeddedPatches(t *testing.T) {
 		"ANSI-C NUL, no patch": "a$'pply_\\000\\'x'patch < fix.patch",
 		// 第四轮 R4-C01：续行之后是用户名，同 ~user
 		"cd ~ continued user": "cd ~\\\nu/x && apply_patch <<'EOF'\n" + rel + "\nEOF",
+		// M3c 终审 M-1：不带 $、反引号拼出工具名（经 sed、xargs），补丁用 printf 写成一行：写进命令的字面补丁读不出时
+		// 不能当作数据丢掉
+		"unreadable data patch":  "printf '*** Begin Patch\\n*** Delete File: /h/x\\n*** End Patch\\n' > /tmp/p; echo apply_patcX | sed s/X/h/ | xargs -I{} sh -c '{} < /tmp/p'",
+		"data patch without end": "cat > fix.patch <<'EOF'\n*** Begin Patch\n*** Delete File: /h/x\nEOF",
 	} {
 		if got, err := embeddedPatches(cmd); !errors.Is(err, errUnparsed) {
 			t.Errorf("%s: %+v, %v; want errUnparsed", name, got, err)

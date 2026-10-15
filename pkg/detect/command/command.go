@@ -20,10 +20,12 @@ const MaxDepth = 3
 
 // Unit 是一段要按命令检查的文本。
 type Unit struct {
-	Text   string      // 剥离数据 heredoc 后的全文；超过深度的单元为原文
-	Depth  int         // 0 为原命令
-	Shell  guard.Shell // 该单元所用的 shell
-	joined string      // 去掉续行后的全文（没有续行时为空）
+	Text  string      // 剥离数据 heredoc 后的全文；超过深度的单元为原文
+	Depth int         // 0 为原命令
+	Shell guard.Shell // 该单元所用的 shell
+	// Encoded 为真表示单元来自 -EncodedCommand 解码出的内容（含其中再展开的单元），规则 obfuscated_exec 据此识别
+	Encoded bool
+	joined  string // 去掉续行后的全文（没有续行时为空）
 }
 
 // FullTexts 返回全文匹配用的文本：原文，以及去掉续行后的版本（rm -r\ 换行 f 与 rm -rf 等价）。
@@ -123,7 +125,14 @@ func (e *Expansion) expand(ctx context.Context, text string, shell guard.Shell, 
 		if n.block {
 			d, b = depth, blocks+1
 		}
-		if err := e.expand(ctx, n.text, n.shell, d, b); err != nil {
+		start := len(e.Units)
+		err := e.expand(ctx, n.text, n.shell, d, b)
+		if n.encoded {
+			for i := start; i < len(e.Units); i++ {
+				e.Units[i].Encoded = true
+			}
+		}
+		if err != nil {
 			return err
 		}
 	}

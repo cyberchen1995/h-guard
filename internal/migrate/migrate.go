@@ -196,10 +196,11 @@ func Convert(data []byte) (Result, error) {
 		}
 	}
 	if user.Model != "" && !slices.ContainsFunc(bases, func(q questions) bool { return q.Model == user.Model }) {
-		set("backends.jev.type", "typesafe", "!!str")
+		// 只有 model 来自旧配置；其余字段让 jev 后端完整（配置按后端名整条合并），用户已经写下的保留（M3d 终审 M-3）
 		set("backends.jev.model", user.Model, "!!str")
-		set("backends.jev.profile", "jev", "!!str")
-		set("backends.jev.api_key_env", "TYPESAFE_API_KEY", "!!str")
+		for _, kv := range [][2]string{{"type", "typesafe"}, {"profile", "jev"}, {"api_key_env", "TYPESAFE_API_KEY"}} {
+			r.Config = append(r.Config, install.Value{Path: []string{"backends", "jev", kv[0]}, Value: kv[1], Tag: "!!str", KeepExisting: true})
+		}
 		note("model %s: the built-in jev profile is calibrated for %s, so conservative thresholds are used until you calibrate", user.Model, base.Model)
 	}
 	for _, id := range slices.Sorted(maps.Keys(user.Signals)) {
