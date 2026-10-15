@@ -190,7 +190,12 @@ func (h *hookRun) run(ctx context.Context, extra string) {
 	}
 	if sd, ok := h.adapter.(harness.ShellDefaulter); ok {
 		ad := sd.WithShell(s.cfg.ShellFor(h.adapter.Name()))
-		if ev, unparsed, err = parseEvent(ad, raw); err != nil || !h.setEvent(ev, ad) {
+		rev, runparsed, rerr := parseEvent(ad, raw)
+		if rerr != nil {
+			// 按配置的 shell 读不懂：沿用默认 shell 的解析结果照常检查，另外请求确认，不能什么都不输出（M3c 终审 M-2）
+			rev, runparsed = ev, true
+		}
+		if ev, unparsed = rev, runparsed; !h.setEvent(ev, ad) {
 			return
 		}
 	}
