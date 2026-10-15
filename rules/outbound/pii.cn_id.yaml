@@ -1,0 +1,13 @@
+schema: 1
+id: pii.cn_id
+# 中国居民身份证号（校验省级代码、出生日期与校验位）
+category: pii
+on: [prompt, tool_output]
+match:
+  detector: pii.cn_id
+examples:
+  hit:
+    - "身份证 11010519491231002X"
+  miss:
+    - "110105194912310021"
+    - "990105194912310025"
