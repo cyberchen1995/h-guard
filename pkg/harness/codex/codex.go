@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path"
 	"strings"
 
 	"github.com/cyberchen1995/h-guard/pkg/guard"
@@ -88,7 +89,14 @@ func (a Adapter) Parse(raw []byte) (guard.Event, error) {
 			// 不能当作用户本人的授权；指令只来自会话的缓存（与父会话同一个 session_id）
 			ev.TranscriptPath = ""
 		}
-		acts, err := a.actions(in.ToolName, in.ToolInput)
+		acts, workdir, err := a.actions(in.ToolName, in.ToolInput)
+		if workdir != "" {
+			// workdir 是这条命令实际的工作目录（相对的按 hook 的 cwd 解析）：相对路径在那里生效（M3c 终审 M-5）
+			if !path.IsAbs(workdir) && !strings.HasPrefix(workdir, "~") && ev.Cwd != "" {
+				workdir = path.Join(ev.Cwd, workdir)
+			}
+			ev.Cwd = workdir
+		}
 		if errors.Is(err, errUnparsed) {
 			// 能读出的动作（命令本身、别的命令里的补丁）照常检查（终审 I-1）
 			ev.Actions = acts
@@ -117,7 +125,7 @@ func (a Adapter) Parse(raw []byte) (guard.Event, error) {
 
 // shellTools 是执行命令的工具名：Codex 0.162.1 在 hook 里一律报告 Bash（M0 核实），其余是它内部的工具名，
 // 以后直接出现在 hook 里时同样按命令检查（只会更严）。
-var shellTools = map[string]bool{"Bash": true, "shell": true, "exec_command": true, "local_shell": true}
+var shellTools = map[string]bool{"Bash": true, "shell": true, "exec_command": true, "local_shell": true, "write_stdin": true}
 
 // actions 按 spec §5.5 把工具调用映射为动作：
 //   - 执行命令的工具：每条命令一个 exec 动作；命令里的补丁（经 shell 调用的 apply_patch）另按 embeddedPatches 读出文件动作；
@@ -126,72 +134,81 @@ var shellTools = map[string]bool{"Bash": true, "shell": true, "exec_command": tr
 //
 // 会执行命令或改文件的工具，参数读不懂（缺字段、类型不对、补丁读不懂）时返回 errUnparsed，调用方请求确认；
 // 只有明确给出的空命令才是 ErrNoAction。
-func (a Adapter) actions(tool string, raw json.RawMessage) ([]guard.Action, error) {
+func (a Adapter) actions(tool string, raw json.RawMessage) (acts []guard.Action, workdir string, err error) {
 	switch {
 	case shellTools[tool]:
-		cmds, err := commands(raw)
+		cmds, opt, err := commands(raw)
 		if err != nil {
-			return nil, err
+			return nil, "", err
 		}
 		shell := a.shell
 		if shell == "" {
 			shell = guard.ShellPOSIX
 		}
-		var acts, files []guard.Action
-		unparsed := false
-		for _, c := range cmds {
-			if strings.TrimSpace(c.text) == "" {
-				continue
-			}
-			acts = append(acts, guard.Action{Kind: guard.ActionExec, Exec: &guard.ExecAction{Command: c.text, Shell: shell}})
-			var f []guard.Action
-			var err error
-			if shell == guard.ShellPowerShell && c.patch == "" {
-				// 补丁解析器只懂 POSIX 的引号与展开；PowerShell 的弯引号、字符串拼接、调用运算符都不同，提到补丁的
-				// 命令一律读不懂（终审 I-2）。argv 形式的补丁不经 shell，照常读
-				if powerShellPatch(c.text) {
-					err = errUnparsed
-				}
-			} else {
-				f, err = embeddedPatches(c.text)
-				if c.patch != "" && err == nil { // argv ["apply_patch", 补丁]：补丁原样，不经引号拼接
-					f, err = patchActions(c.patch)
-				}
-			}
-			if errors.Is(err, errUnparsed) {
-				unparsed = true
-				continue
-			}
-			if err != nil {
-				return nil, err
-			}
-			files = append(files, f...)
+		if opt.shell != "" {
+			shell = opt.shell
 		}
-		if len(acts) == 0 {
-			return nil, ErrNoAction
-		}
-		acts = append(acts, files...)
-		if unparsed {
-			// 读得出的动作随 errUnparsed 一起返回，调用方照常检查它们（终审 I-1）
-			return acts, errUnparsed
-		}
-		return acts, nil
+		acts, err := a.execActions(cmds, shell)
+		return acts, opt.workdir, err
 	case tool == "apply_patch":
 		patches, err := patchTexts(raw)
 		if err != nil {
-			return nil, err
+			return nil, "", err
 		}
 		var acts []guard.Action
 		for _, p := range patches {
 			f, err := patchActions(p)
 			if err != nil {
-				return nil, err
+				return nil, "", err
 			}
 			acts = append(acts, f...)
 		}
-		return acts, nil
+		return acts, "", nil
 	}
-	return nil, ErrNoAction
+	return nil, "", ErrNoAction
+}
+
+// execActions 把命令转成 exec 动作，命令里的补丁另外读出文件动作。
+func (a Adapter) execActions(cmds []shellCommand, shell guard.Shell) ([]guard.Action, error) {
+	var acts, files []guard.Action
+	unparsed := false
+	for _, c := range cmds {
+		if strings.TrimSpace(c.text) == "" {
+			continue
+		}
+		acts = append(acts, guard.Action{Kind: guard.ActionExec, Exec: &guard.ExecAction{Command: c.text, Shell: shell}})
+		var f []guard.Action
+		var err error
+		if shell == guard.ShellPowerShell && c.patch == "" {
+			// 补丁解析器只懂 POSIX 的引号与展开；PowerShell 的弯引号、字符串拼接、调用运算符都不同，提到补丁的
+			// 命令一律读不懂（终审 I-2）。argv 形式的补丁不经 shell，照常读
+			if powerShellPatch(c.text) {
+				err = errUnparsed
+			}
+		} else {
+			f, err = embeddedPatches(c.text)
+			if c.patch != "" && err == nil { // argv ["apply_patch", 补丁]：补丁原样，不经引号拼接
+				f, err = patchActions(c.patch)
+			}
+		}
+		if errors.Is(err, errUnparsed) {
+			unparsed = true
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		files = append(files, f...)
+	}
+	if len(acts) == 0 {
+		return nil, ErrNoAction
+	}
+	acts = append(acts, files...)
+	if unparsed {
+		// 读得出的动作随 errUnparsed 一起返回，调用方照常检查它们（终审 I-1）
+		return acts, errUnparsed
+	}
+	return acts, nil
 }
 
 // powerShellPatch 报告 PowerShell 命令是否可能交给 apply_patch 一份补丁：不分大小写，去掉引号（含弯引号）、反引号、
@@ -210,36 +227,63 @@ func powerShellPatch(s string) bool {
 // shellCommand 是一条要检查的命令：text 是命令文本；argv 是 apply_patch 加补丁时，patch 是补丁原文。
 type shellCommand struct{ text, patch string }
 
+// execOptions 是执行命令的工具里影响执行的字段（M3c 终审 M-5）：shell 为空时按配置，workdir 为空时是 hook 的 cwd。
+type execOptions struct {
+	shell   guard.Shell
+	workdir string
+}
+
 // commands 读出执行命令的工具的命令：tool_input 是字符串（就是命令），或对象里的 command、cmd（字符串或字符串
-// 数组，两个都有时都检查）。缺字段、null、类型不对都返回 errUnparsed。
-func commands(raw json.RawMessage) ([]shellCommand, error) {
+// 数组，两个都有时都检查），write_stdin 的 chars（写进交互式进程的内容，同样可能执行命令）；另读 shell 与 workdir。
+// 缺字段、null、类型不对、认不出的 shell 都返回 errUnparsed。
+func commands(raw json.RawMessage) ([]shellCommand, execOptions, error) {
 	var s string
+	var opt execOptions
 	if isNull(raw) {
-		return nil, errUnparsed
+		return nil, opt, errUnparsed
 	}
 	if json.Unmarshal(raw, &s) == nil {
-		return []shellCommand{{text: s}}, nil
+		return []shellCommand{{text: s}}, opt, nil
 	}
 	var in map[string]json.RawMessage
 	if json.Unmarshal(raw, &in) != nil {
-		return nil, errUnparsed
+		return nil, opt, errUnparsed
+	}
+	if v, ok := in["shell"]; ok && !isNull(v) {
+		var sh string
+		if json.Unmarshal(v, &sh) != nil {
+			return nil, opt, errUnparsed
+		}
+		switch strings.TrimSuffix(strings.ToLower(path.Base(strings.ReplaceAll(sh, `\`, "/"))), ".exe") {
+		case "pwsh", "powershell":
+			opt.shell = guard.ShellPowerShell
+		case "bash", "sh", "zsh":
+			opt.shell = guard.ShellPOSIX
+		default:
+			return nil, opt, errUnparsed
+		}
+	}
+	if v, ok := in["workdir"]; ok && !isNull(v) {
+		if json.Unmarshal(v, &opt.workdir) != nil {
+			return nil, opt, errUnparsed
+		}
 	}
 	var out []shellCommand
-	for _, key := range []string{"command", "cmd"} {
+	for _, key := range []string{"command", "cmd", "chars"} {
 		v, ok := in[key]
 		if !ok {
 			continue
 		}
 		c, err := commandText(v)
 		if err != nil {
-			return nil, err
+			return nil, opt, err
 		}
 		out = append(out, c)
 	}
 	if len(out) == 0 {
-		return nil, errUnparsed
+		return nil, opt, errUnparsed
 	}
-	return out, nil
+	return out, opt, nil
 }
 
 // commandText 返回一条命令：字符串原样；字符串数组（旧版 Codex 的 argv，如 ["bash", "-lc", "…"]）按 POSIX 的写法
