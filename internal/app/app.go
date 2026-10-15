@@ -110,6 +110,7 @@ const usage = `usage:
   h-guard status [--config <file>]
   h-guard eval [--backend <name>] [--sweep] [--shell posix|powershell | --cases <file>] [--repeat <K>] [--bootstrap <N>] [--seed <n>] [--yes] [--config <file>]
   h-guard install claudecode|codex [--write] [--remove] [--timeout <seconds>] [--shell posix|powershell]
+  h-guard config validate [--rules <dir>] | show | init [--config <file>]
   h-guard version
 `
 
@@ -139,6 +140,8 @@ func Main(args []string, o Options) int {
 		return runEval(args[1:], o)
 	case "install":
 		return runInstall(args[1:], o)
+	case "config":
+		return runConfig(args[1:], o)
 	case "version":
 		fmt.Fprintln(o.Stdout, "h-guard", Version)
 		return 0
