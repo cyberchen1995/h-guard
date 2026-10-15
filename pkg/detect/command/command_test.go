@@ -2,6 +2,7 @@ package command_test
 
 import (
 	"context"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -487,4 +488,13 @@ func FuzzExpand(f *testing.F) {
 			_ = u.Unquoted()
 		}
 	})
+}
+
+// TestPipelines：管道按 | 相连的各段给出，; && 换行另起一条；词是取值（去引号），前缀词与重定向不算。
+func TestPipelines(t *testing.T) {
+	got := command.Pipelines(`echo 'a b' | sudo base64 -d 2>/dev/null | sh; ls -la && FOO=1 env bash -s`)
+	want := [][][]string{{{"echo", "a b"}, {"base64", "-d"}, {"sh"}}, {{"ls", "-la"}}, {{"bash", "-s"}}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("got %q", got)
+	}
 }

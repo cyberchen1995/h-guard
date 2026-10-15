@@ -406,7 +406,7 @@ func (r *Rule) MatchExec(ctx context.Context, e command.Expansion) (Result, erro
 		if err := ctx.Err(); err != nil {
 			return res, err
 		}
-		if r.exec.encoded && slices.ContainsFunc(u.FullTexts(), func(t string) bool { return encoded.Find(t, u.Shell) }) {
+		if r.exec.encoded && (u.Encoded || slices.ContainsFunc(u.FullTexts(), func(t string) bool { return encoded.Find(t, u.Shell) })) {
 			return Result{Hit: true}, nil
 		}
 		patterns := r.exec.any

@@ -92,8 +92,9 @@ func (a Adapter) Parse(raw []byte) (guard.Event, error) {
 		acts, workdir, err := a.actions(in.ToolName, in.ToolInput)
 		if workdir != "" {
 			// workdir 是这条命令实际的工作目录（相对的按 hook 的 cwd 解析）：相对路径在那里生效（M3c 终审 M-5）
-			if !path.IsAbs(workdir) && !strings.HasPrefix(workdir, "~") && ev.Cwd != "" {
-				workdir = path.Join(ev.Cwd, workdir)
+			// 绝对写法（/、~、盘符、\\ 开头，见 relative）照原样；Windows 的 C:\… 不能拼到 cwd 后面（fixes 终审 I4）
+			if relative(workdir) && ev.Cwd != "" {
+				workdir = under(ev.Cwd, workdir)
 			}
 			ev.Cwd = workdir
 		}

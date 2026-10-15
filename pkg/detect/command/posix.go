@@ -194,6 +194,46 @@ func CommandPositions(cmd string) []string {
 	return out
 }
 
+// Pipelines 返回 POSIX 命令里的各条管道：每条是用 | 或 |& 依次相连的各段，每段是命令位置起的词的取值（去掉引号
+// 与转义，不做展开；跳过 sudo、env 这类前缀词与变量赋值；重定向与它的目标不算）。给需要「上一段的输出交给下一段」
+// 这种结构的检测用（detect/encoded）。
+func Pipelines(cmd string) [][][]string {
+	lx := lex(cmd)
+	var out [][][]string
+	var pipe [][]string
+	cur := segment{start: -1}
+	flush := func(end int, op string) {
+		if len(cur.tokens) > 0 {
+			cur.end = end
+			words, k := commandStart(lx, cur)
+			var vals []string
+			for _, w := range words[k:] {
+				vals = append(vals, w.value)
+			}
+			if len(vals) > 0 {
+				pipe = append(pipe, vals)
+			}
+		}
+		cur = segment{start: -1}
+		if op != "|" && op != "|&" && len(pipe) > 0 {
+			out = append(out, pipe)
+			pipe = nil
+		}
+	}
+	for _, t := range lx.tokens {
+		if t.kind == tokSep {
+			flush(t.start, t.op)
+			continue
+		}
+		if cur.start < 0 {
+			cur.start = t.start
+		}
+		cur.tokens = append(cur.tokens, t)
+	}
+	flush(len(lx.src), "")
+	return out
+}
+
 // NormalizedPositions 返回各段命令位置的规范写法，给 deny 级规则在原文之外再匹配一次：词按 shell 规则取值
 // （去掉引号与转义，不做展开），命令词取路径的最后一段（/bin/rm → rm），${HOME} 写作 $HOME，词末的 / 去掉
 // （单独的 / 保留），以单个空格连接；重定向的目标不算。含空白的词保留原文写法，不拼出新的词。
@@ -333,8 +373,9 @@ func nestedScripts(cmd string) []nested {
 				out = append(out, nested{text: s, shell: guard.ShellPOSIX})
 			}
 		case name == "pwsh" || name == "powershell":
-			for _, s := range pwshScripts(words[1:]) {
-				out = append(out, nested{text: s, shell: guard.ShellPowerShell})
+			scripts, enc := pwshScripts(words[1:])
+			for _, s := range scripts {
+				out = append(out, nested{text: s, shell: guard.ShellPowerShell, encoded: enc})
 			}
 		}
 	}

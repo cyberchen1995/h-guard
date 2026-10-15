@@ -27,6 +27,8 @@ type nested struct {
 	// block 为真表示同一脚本里的代码（PowerShell 的脚本块、括号与子表达式），不是交给解释器的嵌套调用：
 	// 不消耗展开深度，只受 maxBlocks 约束（与 POSIX 的 if、{ } 不占深度一致）
 	block bool
+	// encoded 为真表示正文由 -EncodedCommand 解码而来（Unit.Encoded）
+	encoded bool
 }
 
 // pwshExpand 处理一个 PowerShell 单元（spec §5.3）：返回剥离数据 here-string 后的全文，以及要再检查的内层命令：
@@ -79,8 +81,9 @@ func pwshExpand(text string) (string, []nested) {
 				}
 			}
 		case name == "pwsh" || name == "powershell":
-			for _, s := range pwshScripts(values(args)) {
-				inner = append(inner, nested{text: s, shell: guard.ShellPowerShell})
+			scripts, enc := pwshScripts(values(args))
+			for _, s := range scripts {
+				inner = append(inner, nested{text: s, shell: guard.ShellPowerShell, encoded: enc})
 			}
 		case shells[name]:
 			for _, s := range shellScripts(values(args)) {
@@ -235,8 +238,9 @@ func startProcess(lx pwLexed, args []pwToken) []nested {
 	var out []nested
 	switch name := commandName(file); {
 	case name == "pwsh" || name == "powershell":
-		for _, s := range pwshScripts(argv) {
-			out = append(out, nested{text: s, shell: guard.ShellPowerShell})
+		scripts, enc := pwshScripts(argv)
+		for _, s := range scripts {
+			out = append(out, nested{text: s, shell: guard.ShellPowerShell, encoded: enc})
 		}
 	case shells[name]:
 		for _, s := range shellScripts(argv) {
@@ -370,11 +374,13 @@ var pwshValueOptions = map[string]bool{
 // pwshScripts 返回 pwsh、powershell 参数里会被执行的命令：-Command（及其前缀写法 -c、-co…）之后的全部参数，
 // -EncodedCommand（-e、-ec、-en…）的解码结果，没有选项时按位置给出的参数（powershell.exe 把它当命令，
 // pwsh 当脚本文件：一律按命令检查，只会更严）。-File 的脚本不检查。选项可以用 -、-- 或 / 开头。
-func pwshScripts(args []string) []string {
+//
+// encoded 报告返回的命令是否由 -EncodedCommand 解码而来（规则 obfuscated_exec 据此识别，与解码共用一处判断）。
+func pwshScripts(args []string) (scripts []string, encoded bool) {
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		if !strings.HasPrefix(a, "-") && !strings.HasPrefix(a, "/") {
-			return []string{strings.Join(args[i:], " ")}
+			return []string{strings.Join(args[i:], " ")}, false
 		}
 		name := strings.ToLower(strings.TrimLeft(a, "-/"))
 		switch {
@@ -382,23 +388,23 @@ func pwshScripts(args []string) []string {
 			continue // - 从标准输入读命令
 		case strings.HasPrefix("command", name):
 			if i+1 < len(args) {
-				return []string{strings.Join(args[i+1:], " ")}
+				return []string{strings.Join(args[i+1:], " ")}, false
 			}
-			return nil
+			return nil, false
 		case name == "e" || name == "ec" || (len(name) >= 2 && strings.HasPrefix("encodedcommand", name)):
 			if i+1 < len(args) {
 				if s, ok := decodeCommand(args[i+1]); ok {
-					return []string{s}
+					return []string{s}, true
 				}
 			}
-			return nil
+			return nil, false
 		case name == "f" || (len(name) >= 2 && strings.HasPrefix("file", name)):
-			return nil
+			return nil, false
 		case pwshValueOptions[name]:
 			i++
 		}
 	}
-	return nil
+	return nil, false
 }
 
 // decodeCommand 解码 -EncodedCommand 的参数：Base64（可以不带填充）的 UTF-16LE。与 .NET 一样忽略空白、

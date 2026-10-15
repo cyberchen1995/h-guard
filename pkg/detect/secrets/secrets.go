@@ -236,7 +236,7 @@ func shape(v string) (string, int) {
 }
 
 // HighEntropy 报告 v 是否像一段编码或随机生成的内容：至少 minLen 个字符；字符集是 base64 一类（base64、base64url
-// 或字母数字，且大写、小写、数字都有，或带 + / =）；每字符的香农熵至少 minHighEntropy 比特。只看形状：单词、路径、
+// 或字母数字），且大写、小写、数字都有（只有 / 的路径不算，fixes 终审 C1）；每字符的香农熵至少 minHighEntropy 比特。只看形状：单词、路径、
 // UUID、hex（git 哈希）、重复字符都不算。detect/encoded 用它判断交给解释器的内容是否经过编码；M4 的 outbound
 // 高熵凭据检测复用它。
 func HighEntropy(v string, minLen int) bool {
@@ -259,7 +259,7 @@ func HighEntropy(v string, minLen int) bool {
 			digit = true
 		}
 	}
-	if !(upper && lower && digit) && !strings.ContainsAny(v, "+/=") {
+	if !(upper && lower && digit) {
 		return false
 	}
 	return Entropy(v) >= minHighEntropy

@@ -396,8 +396,10 @@ func (c *Check) render(res Result, in Input) guard.Verdict {
 	rulesText := c.describe(res.Dangerous)
 	// 超时的命中与不可豁免的规则一样不能被豁免（决定前进路径）；只有确定命中了不可豁免的规则才说「修改护栏本身」，
 	// 超时的命中不能确定（原因里另有正则超时的说明，评审 M1 终审）
-	guardSelf := slices.ContainsFunc(res.Dangerous, func(h Hit) bool { return !in.Rules[h.Rule].Bypassable && !h.TimedOut })
-	unbypassable := guardSelf || slices.ContainsFunc(res.Dangerous, func(h Hit) bool { return h.TimedOut })
+	// 「修改护栏本身」只说护栏自我保护；别的不可豁免规则（obfuscated_exec）用通用的原因，前进路径同样是手动执行
+	// （fixes 终审 I2）
+	guardSelf := slices.ContainsFunc(res.Dangerous, func(h Hit) bool { return h.Rule == guardTamperingID && !h.TimedOut })
+	unbypassable := slices.ContainsFunc(res.Dangerous, func(h Hit) bool { return !in.Rules[h.Rule].Bypassable || h.TimedOut })
 	add := func(code string, params map[string]string) {
 		v.Reasons = append(v.Reasons, guard.Reason{Code: code, Params: params})
 	}
@@ -471,3 +473,6 @@ func round(v float64, digits int) float64 {
 	f, _ := strconv.ParseFloat(strconv.FormatFloat(v, 'f', digits, 64), 64)
 	return f
 }
+
+// guardTamperingID 是护栏自我保护的规则 id：它的原因写明改动的是护栏本身。
+const guardTamperingID = "guard_tampering"

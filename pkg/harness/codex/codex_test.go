@@ -123,7 +123,9 @@ func TestExecFields(t *testing.T) {
 	if err != nil || ev.Actions[0].Exec.Shell != guard.ShellPOSIX {
 		t.Errorf("shell bash: %+v, %v", ev, err)
 	}
-	for in, want := range map[string]string{"/srv/app": "/srv/app", "sub": "/w/sub"} {
+	// Windows 的绝对写法照原样，不拼到 cwd 后面（fixes 终审 I4）
+	for in, want := range map[string]string{"/srv/app": "/srv/app", "sub": "/w/sub", `C:\Users\a\proj`: `C:\Users\a\proj`,
+		"D:/work": "D:/work", `\\server\share\repo`: `\\server\share\repo`, "~/proj": "~/proj"} {
 		ev, err = a.Parse(pre("exec_command", map[string]any{"cmd": "ls", "workdir": in}))
 		if err != nil || ev.Cwd != want {
 			t.Errorf("workdir %s: cwd %q, %v", in, ev.Cwd, err)

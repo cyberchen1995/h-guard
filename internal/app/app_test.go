@@ -1792,7 +1792,8 @@ func TestObfuscatedExecAsks(t *testing.T) {
 	in := pre("Bash", map[string]any{"command": cmd}, "")
 	e := newEnv(t)
 	out, _, _ := e.run(in, "hook", "claudecode", "--event", "PreToolUse")
-	if d, reason := decisionOf(t, out); d != "ask" || !strings.Contains(reason, "encoded content") {
+	// 原因是规则自己的说明，不是「改动护栏本身」（fixes 终审 I2）
+	if d, reason := decisionOf(t, out); d != "ask" || !strings.Contains(reason, "Runs encoded content") || strings.Contains(reason, "safety guard itself") {
 		t.Errorf("judge off: %s %q", d, reason)
 	}
 	srv := newJevServer(t, 0.9)

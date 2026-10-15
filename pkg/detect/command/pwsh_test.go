@@ -339,3 +339,35 @@ func TestPowerShellBlocksKeepDepth(t *testing.T) {
 		t.Errorf("%q: %s not in a command position", cmd, MARK)
 	}
 }
+
+// TestEncodedUnits：-EncodedCommand 解码出的单元标为 Encoded，选项的各种写法（-enc、/enc、--enc、Unicode 破折号）
+// 与 Start-Process 的参数列表、POSIX 里的调用都一样；-Command 里的 -Enc（cmdlet 的 -Encoding）不算。
+func TestEncodedUnits(t *testing.T) {
+	enc := "UgBlAG0AbwB2AGUALQBJAHQAZQBtACAAeAA=" // Remove-Item x
+	encoded := func(cmd string, sh guard.Shell) bool {
+		e, err := command.Expand(context.Background(), cmd, sh)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, u := range e.Units {
+			if u.Encoded {
+				return true
+			}
+		}
+		return false
+	}
+	for _, cmd := range []string{"powershell -EncodedCommand " + enc, "pwsh -enc " + enc, "powershell /enc " + enc, "pwsh --enc " + enc,
+		"pwsh –enc " + enc, "Start-Process pwsh -ArgumentList '-EncodedCommand', '" + enc + "'"} {
+		if !encoded(cmd, guard.ShellPowerShell) {
+			t.Errorf("not encoded: %s", cmd)
+		}
+	}
+	if !encoded(`bash -c "pwsh -e `+enc+`"`, guard.ShellPOSIX) {
+		t.Error("nested in POSIX: not encoded")
+	}
+	for _, cmd := range []string{`pwsh -c "Get-Content x.txt -Enc UTF8"`, "pwsh -File build.ps1", "Get-ChildItem"} {
+		if encoded(cmd, guard.ShellPowerShell) {
+			t.Errorf("encoded: %s", cmd)
+		}
+	}
+}
