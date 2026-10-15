@@ -4,8 +4,9 @@ package harness
 import "github.com/cyberchen1995/h-guard/pkg/guard"
 
 // TargetUnparsedError 表示已知会改动文件或执行命令的工具调用，目标无法解析（如 patch 格式不认识）。Parse 以
-// *TargetUnparsedError 返回；Event 尽量填好 Harness、SessionID、Cwd、Tool 等字段（没有动作）。调用方一律按动作
-// 请求确认，原因写明无法解析，带 target_unparsed（spec §5.5）；Event 没有填也不会放行。
+// *TargetUnparsedError 返回；Event 尽量填好 Harness、SessionID、Cwd、Tool 等字段，并带上能读出的动作（如命令本身；
+// 可以没有）。调用方照常检查这些动作，另外请求确认，原因写明无法解析，带 target_unparsed（spec §5.5）；两者聚合，
+// 读不懂的部分不能让读得出的命中变宽。Event 没有填也不会放行。
 type TargetUnparsedError struct {
 	Event guard.Event
 }

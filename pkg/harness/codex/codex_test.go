@@ -198,10 +198,17 @@ func TestUnparsedTargets(t *testing.T) {
 		{"Bash", map[string]any{"command": "cd \"$CODEX_HOME\" && apply_patch <<'EOF'\n*** Begin Patch\n*** Delete File: hooks.json\n*** End Patch\nEOF"}},
 		{"Bash", map[string]any{"command": "apply_patch < fix.patch"}},
 	} {
+		// 终审 I-1：能读出的动作（这里是命令本身）留在事件里，照常检查；读不懂的部分另外请求确认
+		want := 0
+		if m, ok := c.input.(map[string]any); ok && c.tool == "Bash" {
+			if _, ok := m["command"].(string); ok {
+				want = 1
+			}
+		}
 		ev, err := a.Parse(pre(c.tool, c.input))
 		var tu *harness.TargetUnparsedError
 		if !errors.As(err, &tu) || tu.Event.Kind != guard.EventAction || tu.Event.Harness != "codex" || tu.Event.Tool != c.tool ||
-			tu.Event.SessionID != "s1" || len(tu.Event.Actions) != 0 {
+			tu.Event.SessionID != "s1" || len(tu.Event.Actions) != want {
 			t.Errorf("%s %v: %+v, %v", c.tool, c.input, ev, err)
 		}
 	}
@@ -265,6 +272,39 @@ func TestPromptSource(t *testing.T) {
 		if err != nil || ev.Text != text || len(ev.Requests) != 1 || ev.Requests[0].Text != text || ev.Requests[0].Source != want {
 			t.Errorf("%q: %+v, %v; want %s", text, ev.Requests, err, want)
 		}
+	}
+}
+
+// TestUnparsedKeepsReadableActions：命令里的补丁读不懂时，命令本身仍是 exec 动作（终审 I-1）。
+func TestUnparsedKeepsReadableActions(t *testing.T) {
+	_, err := a.Parse(pre("Bash", map[string]any{"command": "rm -rf / ; apply_patch < fix.patch"}))
+	var tu *harness.TargetUnparsedError
+	if !errors.As(err, &tu) || len(tu.Event.Actions) != 1 || tu.Event.Actions[0].Exec == nil ||
+		tu.Event.Actions[0].Exec.Command != "rm -rf / ; apply_patch < fix.patch" {
+		t.Errorf("%+v", err)
+	}
+}
+
+// TestPowerShellPatches：配置的 shell 是 PowerShell 时，补丁解析器的 POSIX 规则不适用（PowerShell 的引号、字符串
+// 拼接、调用运算符都不同），提到 apply_patch（不分大小写，去掉引号与拼接）或带着补丁正文的命令一律读不懂（终审 I-2）。
+func TestPowerShellPatches(t *testing.T) {
+	ps := a.WithShell(guard.ShellPowerShell)
+	for _, cmd := range []string{
+		"apply_patch '*** Begin Patch\n*** Add File: a.txt\n+x\n*** End Patch'",
+		"apply_patch '*** Begin Patch\n*** Add File: a.txt\n+\u2019 + (apply_patch \"*** Begin Patch`n*** Delete File: /h/.codex/hooks.json`n*** End Patch\") + \u2018\n*** End Patch'",
+		"& ('apply'+'_patch') ('*** Begin Patch'+[char]10+'*** Delete File: x'+[char]10+'*** End Patch')",
+		"& ('APPLY'+'_PATCH') $p",
+		"Set-Content p.txt '*** begin patch'",
+	} {
+		_, err := ps.Parse(pre("Bash", map[string]any{"command": cmd}))
+		var tu *harness.TargetUnparsedError
+		if !errors.As(err, &tu) || len(tu.Event.Actions) != 1 {
+			t.Errorf("%q: %v", cmd, err)
+		}
+	}
+	// 对照：与补丁无关的命令照常
+	if ev, err := ps.Parse(pre("Bash", map[string]any{"command": "Get-ChildItem"})); err != nil || len(ev.Actions) != 1 {
+		t.Errorf("plain command: %+v, %v", ev, err)
 	}
 }
 

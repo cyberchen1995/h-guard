@@ -149,7 +149,7 @@ func parseEvent(ad harness.Adapter, raw []byte) (ev guard.Event, unparsed bool, 
 	var tu *harness.TargetUnparsedError
 	if errors.As(err, &tu) {
 		ev = tu.Event
-		ev.Kind, ev.Actions = guard.EventAction, nil
+		ev.Kind = guard.EventAction
 		if ev.Harness == "" {
 			ev.Harness = ad.Name()
 		}
@@ -194,10 +194,6 @@ func (h *hookRun) run(ctx context.Context, extra string) {
 			return
 		}
 	}
-	if unparsed {
-		h.targetUnparsed(s, ev)
-		return
-	}
 	h.logs.Decisions, h.logs.RetentionDays = s.cfg.Log.Decisions, s.cfg.Log.RetentionDays
 
 	prompts := &cache.Prompts{Dir: under(h.o.CacheDir, "prompts"), Now: h.o.Now}
@@ -215,6 +211,9 @@ func (h *hookRun) run(ctx context.Context, extra string) {
 		}
 	}
 	eng, st := h.newEngine(s)
+	if unparsed {
+		eng.Checks = append(eng.Checks, unparsedCheck{tool: ev.Tool})
+	}
 	res := eng.Evaluate(ctx, ev, h.adapter.CapsFor(ev))
 	if !h.write(ev, res.Outcome) {
 		return
@@ -321,14 +320,18 @@ func (h *hookRun) configInvalid(s setup, err error) {
 	}
 }
 
-// targetUnparsed：已知会改动文件的工具，目标无法解析时请求确认（spec §5.5），按配置的 when_ask_unsupported 降级。
-func (h *hookRun) targetUnparsed(s setup, ev guard.Event) {
-	eng := &engine.Engine{Catalog: s.catalog, Locale: s.locale, WhenAskUnsupported: guard.Decision(s.cfg.Policy.WhenAskUnsupported)}
-	out := eng.Finish(ev, h.adapter.CapsFor(ev),
-		fallbackOutcome(ev.Kind, engine.FallbackTargetUnparsed, i18n.KeyErrorTargetUnparsed, map[string]string{"tool": secrets.MaskForLog(ev.Tool)}))
-	if h.write(ev, out) {
-		h.health([]hglog.Health{{Event: string(ev.Kind), Check: "app", Code: engine.FallbackTargetUnparsed}})
-	}
+// unparsedCheck 给目标无法解析的动作事件加上「请求确认」（spec §5.5）。它作为一个 Check 与其他检查一起聚合：
+// 读得出的动作照常检查，灾难性形态的 deny 与原因保留，when_ask_unsupported: pass 也不能让它们放行；健康记录与
+// 决策日志照常写（终审 I-1）。
+type unparsedCheck struct{ tool string }
+
+func (unparsedCheck) Name() string { return "app" }
+
+func (unparsedCheck) Applies(ev guard.Event) bool { return ev.Kind == guard.EventAction }
+
+func (c unparsedCheck) Evaluate(context.Context, guard.Event, func(guard.Verdict)) (guard.Verdict, error) {
+	return fallbackOutcome(guard.EventAction, engine.FallbackTargetUnparsed, i18n.KeyErrorTargetUnparsed,
+		map[string]string{"tool": secrets.MaskForLog(c.tool)}), nil
 }
 
 // brief 返回配置或规则错误的位置（文件名与字段路径），不含说明。动态片段（后端名、规则 id、文件名）是用户写下的，

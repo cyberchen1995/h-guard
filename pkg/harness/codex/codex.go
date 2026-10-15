@@ -90,6 +90,8 @@ func (a Adapter) Parse(raw []byte) (guard.Event, error) {
 		}
 		acts, err := a.actions(in.ToolName, in.ToolInput)
 		if errors.Is(err, errUnparsed) {
+			// 能读出的动作（命令本身、别的命令里的补丁）照常检查（终审 I-1）
+			ev.Actions = acts
 			return guard.Event{}, &harness.TargetUnparsedError{Event: ev}
 		}
 		if err != nil {
@@ -136,14 +138,29 @@ func (a Adapter) actions(tool string, raw json.RawMessage) ([]guard.Action, erro
 			shell = guard.ShellPOSIX
 		}
 		var acts, files []guard.Action
+		unparsed := false
 		for _, c := range cmds {
 			if strings.TrimSpace(c.text) == "" {
 				continue
 			}
 			acts = append(acts, guard.Action{Kind: guard.ActionExec, Exec: &guard.ExecAction{Command: c.text, Shell: shell}})
-			f, err := embeddedPatches(c.text)
-			if c.patch != "" && err == nil { // argv ["apply_patch", 补丁]：补丁原样，不经引号拼接
-				f, err = patchActions(c.patch)
+			var f []guard.Action
+			var err error
+			if shell == guard.ShellPowerShell && c.patch == "" {
+				// 补丁解析器只懂 POSIX 的引号与展开；PowerShell 的弯引号、字符串拼接、调用运算符都不同，提到补丁的
+				// 命令一律读不懂（终审 I-2）。argv 形式的补丁不经 shell，照常读
+				if powerShellPatch(c.text) {
+					err = errUnparsed
+				}
+			} else {
+				f, err = embeddedPatches(c.text)
+				if c.patch != "" && err == nil { // argv ["apply_patch", 补丁]：补丁原样，不经引号拼接
+					f, err = patchActions(c.patch)
+				}
+			}
+			if errors.Is(err, errUnparsed) {
+				unparsed = true
+				continue
 			}
 			if err != nil {
 				return nil, err
@@ -153,7 +170,12 @@ func (a Adapter) actions(tool string, raw json.RawMessage) ([]guard.Action, erro
 		if len(acts) == 0 {
 			return nil, ErrNoAction
 		}
-		return append(acts, files...), nil
+		acts = append(acts, files...)
+		if unparsed {
+			// 读得出的动作随 errUnparsed 一起返回，调用方照常检查它们（终审 I-1）
+			return acts, errUnparsed
+		}
+		return acts, nil
 	case tool == "apply_patch":
 		patches, err := patchTexts(raw)
 		if err != nil {
@@ -170,6 +192,19 @@ func (a Adapter) actions(tool string, raw json.RawMessage) ([]guard.Action, erro
 		return acts, nil
 	}
 	return nil, ErrNoAction
+}
+
+// powerShellPatch 报告 PowerShell 命令是否可能交给 apply_patch 一份补丁：不分大小写，去掉引号（含弯引号）、反引号、
+// 空白与 + 拼接后，提到 apply_patch / applypatch，或带着补丁的开头。只用于收紧（终审 I-2）。
+func powerShellPatch(s string) bool {
+	var b strings.Builder
+	for _, r := range strings.ToLower(s) {
+		if r >= 'a' && r <= 'z' || r == '_' || r == '*' {
+			b.WriteRune(r)
+		}
+	}
+	k := b.String()
+	return strings.Contains(k, "apply_patch") || strings.Contains(k, "applypatch") || strings.Contains(k, "***beginpatch")
 }
 
 // shellCommand 是一条要检查的命令：text 是命令文本；argv 是 apply_patch 加补丁时，patch 是补丁原文。

@@ -63,6 +63,42 @@ func TestCodexShellFromConfig(t *testing.T) {
 	}
 }
 
+// TestCodexUnparsedKeepsTheCheck：补丁读不懂时命令本身照常检查，灾难性形态的 deny 与原因保留；
+// when_ask_unsupported: pass 也不能让它放行（终审 I-1）。
+func TestCodexUnparsedKeepsTheCheck(t *testing.T) {
+	e := newEnv(t)
+	e.config("version: 1\npolicy:\n  when_ask_unsupported: pass\n")
+	in := codexPre("Bash", map[string]any{"command": "rm -rf / ; apply_patch < fix.patch"})
+	out, _, code := e.run(in, "hook", "codex", "--event", "PreToolUse")
+	if d, reason := codexDecision(t, out); d != "deny" || code != 0 || !strings.Contains(reason, "Catastrophic") {
+		t.Errorf("%s/%d %q", d, code, reason)
+	}
+	if h := e.files("health"); !strings.Contains(h, `"code":"target_unparsed"`) {
+		t.Errorf("health = %s", h)
+	}
+	// 默认配置：目标无法解析照旧请求确认（Codex 上 deny）
+	e.config("version: 1\n")
+	if out, _, _ := e.run(codexPre("Bash", map[string]any{"command": "ls; apply_patch < fix.patch"}), "hook", "codex", "--event", "PreToolUse"); out == "" {
+		t.Error("unparsed patch: pass")
+	}
+}
+
+// TestCodexPowerShellPatch：配置 PowerShell 时，借 PowerShell 引号规则藏起来的补丁不能被当作无害（终审 I-2）。
+func TestCodexPowerShellPatch(t *testing.T) {
+	e := newEnv(t)
+	e.config("version: 1\nharnesses:\n  codex: {shell: powershell}\n")
+	hooks := filepath.Join(e.home, ".codex", "hooks.json")
+	for _, cmd := range []string{
+		"apply_patch '*** Begin Patch\n*** Add File: a.txt\n+\u2019 + (apply_patch \"*** Begin Patch`n*** Delete File: " + hooks + "`n*** End Patch\") + \u2018\n*** End Patch'",
+		"& ('apply'+'_patch') ('*** Begin Patch'+[char]10+'*** Delete File: " + hooks + "'+[char]10+'*** End Patch')",
+	} {
+		out, _, _ := e.run(codexPre("Bash", map[string]any{"command": cmd}), "hook", "codex", "--event", "PreToolUse")
+		if d, _ := codexDecision(t, out); d != "deny" {
+			t.Errorf("%q: %s", cmd, d)
+		}
+	}
+}
+
 // TestCodexApplyPatch：apply_patch 的文件按路径规则检查（护栏自我保护的文件），读不懂的补丁请求确认，
 // Codex 上降级为 deny（spec §5.5）。
 func TestCodexApplyPatch(t *testing.T) {
