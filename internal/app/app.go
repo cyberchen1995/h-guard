@@ -220,7 +220,8 @@ func loadConfig(o Options, extra string, checkKinds bool) (setup, error) {
 func (s setup) newEngine(o Options, j action.Judge) *engine.Engine {
 	c := &action.Check{Rules: s.rules, Config: s.cfg, Catalog: s.catalog, Locale: s.locale, Judge: j,
 		Paths: paths.Env{Home: o.Home, FoldCase: paths.FoldCaseDefault, Windows: paths.WindowsDefault,
-			Vars: map[string]string{rules.VarConfig: o.ConfigDir, rules.VarCache: o.CacheDir, rules.VarExtraConfig: s.extra}}}
+			Vars: map[string]string{rules.VarConfig: o.ConfigDir, rules.VarCache: o.CacheDir, rules.VarExtraConfig: s.extra,
+				rules.VarClaudeConfig: o.Getenv("CLAUDE_CONFIG_DIR"), rules.VarCodexHome: o.Getenv("CODEX_HOME")}}}
 	return &engine.Engine{
 		Checks: []guard.Check{c}, Catalog: s.catalog, Locale: s.locale,
 		WhenAskUnsupported: guard.Decision(s.cfg.Policy.WhenAskUnsupported),

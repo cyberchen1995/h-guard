@@ -80,6 +80,10 @@ const (
 	VarConfig      = "config"
 	VarCache       = "cache"
 	VarExtraConfig = "extra_config"
+	// VarClaudeConfig、VarCodexHome 是环境变量 CLAUDE_CONFIG_DIR、CODEX_HOME 指定的 harness 配置目录（没有设置时为空，
+	// 模式不匹配）。
+	VarClaudeConfig = "claude_config"
+	VarCodexHome    = "codex_home"
 )
 
 // ExecMatch 是命令正则，按 shell 分组（spec §5.3）：any 用于所有 shell。
@@ -317,7 +321,7 @@ func (r *Rule) validate() error {
 				if err := paths.ValidPattern(p); err != nil {
 					return fieldErr(path, "%v", err)
 				}
-				if name, ok := paths.Placeholder(p); ok && name != VarConfig && name != VarCache && name != VarExtraConfig {
+				if name, ok := paths.Placeholder(p); ok && name != VarConfig && name != VarCache && name != VarExtraConfig && name != VarClaudeConfig && name != VarCodexHome {
 					return fieldErr(path, "unknown placeholder (want {config}, {cache} or {extra_config})")
 				}
 			}

@@ -35,6 +35,16 @@ match:
       # agent 运行 backend enable 会替用户记下同意（用 script 等伪终端可以绕过终端检查），在 hook 下一律请求确认；
       # 用户在自己的终端里运行不经过 hook
       - '(?<![\w.-])h-guard\b[^\n;&|]*\bbackend\s+enable\b'
+      # install、init、config init、migrate 改 harness 的 hook 配置、h-guard 的配置与同意记录（M3d，维护者决定）：
+      # 子命令是 h-guard 之后的第一个词才算（允许 $(which h-guard)、go run …/h-guard@v、带引号的子命令与它之前的
+      # --config 选项），参数里的 install、init（h-guard check 'npm install'）不算；子命令看不到时（经 xargs 传入、
+      # Start-Process 的参数列表）同样请求确认。只打印不写入的用法也会请求确认（与 backend enable 相同的已知误报）
+      - '(?<![\w.-])h-guard(?:@\S*)?(?:\.exe)?[''")]*(?:\s+--?(?:config(?:=|\s+)\S+|[\w-]+=\S+))*\s+[''"]?(?:install|init|migrate|config[''"]?(?:\s+--?(?:config(?:=|\s+)\S+|[\w-]+=\S+))*\s+[''"]?init)\b'
+      - '\bxargs\b[^\n;&|]*(?<![\w.-])h-guard\b'
+      - '(?i)\b(?:start-process|saps)\s[^\n;&|]*(?<![\w.-])h-guard\b[^\n;&|]*\b(?:install|init|migrate)\b'
+      # CLAUDE_CONFIG_DIR、CODEX_HOME 指定的 harness 配置目录（审查 I5）
+      - '(?<![\w.])(?<![^\w]-)(?<!^-)[a-z]?(?:rm|unlink|mv|cp|install|ln|truncate|tee|chmod|chown|shred|sed\s+-i|perl\s+-[a-z]*i|python[0-9.]*\s+-c|node\s+-e|jq\b[^\n;&|]*>)\b[^\n;&|]*\$\{?(?:CLAUDE_CONFIG_DIR|CODEX_HOME)\}?[/\\](?:settings(?:\.local)?\.json|hooks\.json|config\.toml)'
+      - '>>?\s*[^\n;&|]*\$\{?(?:CLAUDE_CONFIG_DIR|CODEX_HOME)\}?[/\\](?:settings(?:\.local)?\.json|hooks\.json|config\.toml)'
     # PowerShell（M3b）：写入、删除、移动、复制到受保护路径的 cmdlet 及其别名，.NET 的文件写入，重定向；
     # 路径可用 \ 或 /，也可拆在 Join-Path 的几个参数里；另覆盖 Windows 的配置与缓存目录（$env:APPDATA、${env:APPDATA}、
     # %LOCALAPPDATA% 下的 h-guard）与 macOS 上 PowerShell 用的 ~/Library 目录。
@@ -58,6 +68,12 @@ match:
       # hook 用 --config 加载的配置文件（评审 R3-03）：它同样控制护栏的行为
       - '{extra_config}'
       - '{cache}/**'
+      # CLAUDE_CONFIG_DIR、CODEX_HOME 指定的 harness 配置目录（install 写到那里；hook 进程的环境里能看到这两个变量，
+      # 没有设置时这些模式不匹配，审查 I5）
+      - '{claude_config}/settings.json'
+      - '{claude_config}/settings.local.json'
+      - '{codex_home}/hooks.json'
+      - '{codex_home}/config.toml'
       - '~/.config/h-guard/**'
       - '~/.cache/h-guard/**'
       - '~/Library/Application Support/h-guard/**'
@@ -109,6 +125,11 @@ examples:
     - {shell: posix, command: "uu-rm ~/.codex/config.toml"}
     - {shell: posix, command: "h-guard backend enable local"}
     - {shell: posix, command: "printf 'y\\n' | script -q /dev/null h-guard backend enable local"}
+    - {shell: posix, command: "h-guard install codex --write"}
+    - {shell: posix, command: "h-guard init"}
+    - {shell: posix, command: "\"$(which h-guard)\" install codex --write"}
+    - {shell: posix, command: "rm \"$CODEX_HOME/hooks.json\""}
+    - {shell: powershell, command: "& 'h-guard.exe' install claudecode --write"}
     - {action: file_write, path: "~/.claude/settings.json"}
     - {action: file_write, path: ".claude/settings.local.json"}
     - {action: file_write, path: "/xdg/config/h-guard/config.yaml"}
@@ -125,6 +146,8 @@ examples:
     - {shell: posix, command: "h-guard check 'git push'"}
     - {shell: posix, command: "h-guard backend list"}
     - {shell: posix, command: "h-guard backend disable local"}
+    - {shell: posix, command: "h-guard config validate"}
+    - {shell: posix, command: "h-guard check 'npm install'"}
     - {shell: posix, command: "grep -n hooks ~/.claude/settings.json"}
     - {shell: posix, command: "grep confirm ~/.claude/settings.json"}
     - {shell: posix, command: "stat --format=%a ~/.codex/hooks.json"}
