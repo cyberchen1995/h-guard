@@ -7,12 +7,14 @@ import (
 	"fmt"
 	"io"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/cyberchen1995/h-guard/internal/cache"
 	"github.com/cyberchen1995/h-guard/internal/check/action"
+	"github.com/cyberchen1995/h-guard/internal/check/outbound"
 	"github.com/cyberchen1995/h-guard/internal/config"
 	"github.com/cyberchen1995/h-guard/internal/engine"
 	"github.com/cyberchen1995/h-guard/internal/i18n"
@@ -117,6 +119,8 @@ type hookRun struct {
 	written   bool
 	abandoned bool // 看门狗已经接手
 	exit      int  // 退出码：Render 给出的（generic 契约读不懂输入时为非零），看门狗接手后不再改变
+	// scan 是 outbound 检查这一次扫出的用户正则区间（决策日志遮蔽摘录用，M4b）；outbound 没有运行时为 nil
+	scan *outbound.Scan
 }
 
 // commit 同步记录 Check 的一次提交，按 guard.Run 的规则累计（spec §3.3，评审 R3-04）。由 Engine.OnCommit
@@ -132,6 +136,15 @@ func (h *hookRun) newEngine(s setup) (*engine.Engine, judgeState) {
 	j, st := s.actionJudge(h.o)
 	eng := s.newEngine(h.o, j)
 	eng.OnCommit = h.commit
+	for _, c := range eng.Checks {
+		if oc, ok := c.(*outbound.Check); ok {
+			oc.Scanned = func(sc outbound.Scan) {
+				h.mu.Lock()
+				defer h.mu.Unlock()
+				h.scan = &sc
+			}
+		}
+	}
 	return eng, st
 }
 
@@ -202,18 +215,8 @@ func (h *hookRun) run(ctx context.Context, extra string) {
 	h.logs.Decisions, h.logs.RetentionDays = s.cfg.Log.Decisions, s.cfg.Log.RetentionDays
 
 	prompts := &cache.Prompts{Dir: under(h.o.CacheDir, "prompts"), Now: h.o.Now}
-	switch ev.Kind {
-	case guard.EventPrompt:
-		// M1 没有 outbound 检查，提示词不会被拦截，全部写入指令缓存（spec §5.4）
-		for _, r := range ev.Requests {
-			if h.live() {
-				_ = prompts.Add(ev.Harness, ev.SessionID, r)
-			}
-		}
-	case guard.EventAction:
-		if len(ev.Requests) == 0 {
-			ev.Requests = h.requests(prompts, ev)
-		}
+	if ev.Kind == guard.EventAction && len(ev.Requests) == 0 {
+		ev.Requests = h.requests(prompts, ev)
 	}
 	eng, st := h.newEngine(s)
 	if unparsed {
@@ -223,8 +226,28 @@ func (h *hookRun) run(ctx context.Context, extra string) {
 	if !h.write(ev, res.Outcome) {
 		return
 	}
+	if ev.Kind == guard.EventPrompt {
+		h.remember(prompts, ev, res.Outcome.Verdict.Decision)
+	}
 	h.health(healthOf(ev, res))
 	h.decision(s, st, ev, res.Outcome)
+}
+
+// remember 在提示词的结论输出之后写指令缓存（spec §5.4）：被拦下的提示词（deny）不写入，只记指纹，transcript
+// 回退时据此跳过它；其余（含 warn）照常写入。看门狗接手之后什么都不写。
+func (h *hookRun) remember(p *cache.Prompts, ev guard.Event, d guard.Decision) {
+	if !h.live() {
+		return
+	}
+	if d == guard.DecisionDeny {
+		_ = p.Block(ev.Harness, ev.SessionID, ev.Text)
+		return
+	}
+	for _, r := range ev.Requests {
+		if h.live() {
+			_ = p.Add(ev.Harness, ev.SessionID, r)
+		}
+	}
 }
 
 // requests 补全用户指令：指令缓存优先，没有时读 transcript（spec §3.3 第 3 步）。
@@ -235,7 +258,10 @@ func (h *hookRun) requests(p *cache.Prompts, ev guard.Event) []guard.Request {
 	if tr, ok := h.adapter.(harness.TranscriptReader); ok && ev.TranscriptPath != "" {
 		got, err := tr.ReadRequests(ev.TranscriptPath, requestScan)
 		if err == nil {
-			return got
+			// 跳过被 outbound 拦下的提示词（指纹）与 h-guard 自己的拦截说明：它们不能重新成为授权依据（spec §5.4）
+			return slices.DeleteFunc(got, func(r guard.Request) bool {
+				return p.Blocked(ev.Harness, ev.SessionID, r.Text) || strings.HasPrefix(strings.TrimSpace(r.Text), "h-guard: ")
+			})
 		}
 	}
 	return nil
@@ -435,8 +461,46 @@ func (h *hookRun) stamp(recs []hglog.Health) []hglog.Health {
 	return recs
 }
 
-// decision 写决策日志。动作事件记动作与参与判断的用户指令；提示词与工具输出只记长度，
-// 不记正文（spec §10.3：outbound 只记长度、命中与摘录，M1 没有 outbound 命中）。
+// excerptContext 是摘录里命中行前后各带的行数（spec §10.3）。
+const excerptContext = 2
+
+// excerpts 返回 outbound 命中行前后各 n 行的摘录，相邻或重叠的合并成一段；没有带位置的命中时为空。
+func excerpts(text string, findings []guard.Finding, n int) []hglog.Excerpt {
+	var hitLines []int
+	for _, f := range findings {
+		for _, l := range f.Locations {
+			if l.Line > 0 {
+				hitLines = append(hitLines, l.Line)
+			}
+		}
+	}
+	if len(hitLines) == 0 {
+		return nil
+	}
+	slices.Sort(hitLines)
+	lines := strings.Split(text, "\n")
+	var out []hglog.Excerpt
+	from, to := -1, -1 // 当前一段的首尾行号（从 1 开始，含）
+	flush := func() {
+		if from > 0 {
+			out = append(out, hglog.Excerpt{Line: from, Text: strings.Join(lines[from-1:to], "\n")})
+		}
+	}
+	for _, l := range hitLines {
+		lo, hi := max(1, l-n), min(len(lines), l+n)
+		if from > 0 && lo <= to+1 {
+			to = max(to, hi)
+			continue
+		}
+		flush()
+		from, to = lo, hi
+	}
+	flush()
+	return out
+}
+
+// decision 写决策日志。动作事件记动作与参与判断的用户指令；提示词与工具输出只记长度、命中与命中行前后各 2 行的
+// 摘录，不记整段正文（spec §10.3）。
 func (h *hookRun) decision(s setup, st judgeState, ev guard.Event, out guard.Outcome) {
 	d := hglog.Decision{
 		Version: Version, Harness: ev.Harness, SessionID: ev.SessionID, CallID: ev.CallID, Cwd: ev.Cwd,
@@ -447,6 +511,17 @@ func (h *hookRun) decision(s setup, st judgeState, ev guard.Event, out guard.Out
 	}
 	if ev.Kind == guard.EventAction {
 		d.Actions, d.Requests = ev.Actions, ev.Requests
+	} else {
+		// 先遮蔽再按行截取（保持行数）：摘录只切到私钥的一部分时日志层认不出它（M4a 计划评审 C1）；用户正则认出的
+		// 凭据与私钥一起遮蔽（Codex 评审 M4A-02），区间取自 outbound 这一次的扫描（M4b，不再重扫）。扫描不完整
+		// （正则超时、截止时间已过，Codex 第二轮 R2-01）或没有扫描时不记摘录。决策日志关闭或没有命中时摘录本来就
+		// 用不上，不做全文遮蔽（M4a 终审 I-2：大段工具输出每次多出数秒）
+		h.mu.Lock()
+		scan := h.scan
+		h.mu.Unlock()
+		if scan != nil && scan.Complete && s.cfg.Log.Decisions && len(out.Verdict.Findings) > 0 {
+			d.Excerpts = excerpts(secrets.MaskKeepLines(ev.Text, scan.Secret...), out.Verdict.Findings, excerptContext)
+		}
 	}
 	if s.cfg.Judge.Enabled {
 		d.Backend = s.cfg.Judge.Backend

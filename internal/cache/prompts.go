@@ -147,3 +147,31 @@ func randomHex(n int) string {
 	_, _ = rand.Read(b)
 	return hex.EncodeToString(b)
 }
+
+// blockedDir 是会话里被拦截提示词的指纹目录（文件名是指纹，内容为空）。
+func (p *Prompts) blockedDir(harness, session string) string {
+	return filepath.Join(p.sessionDir(harness, session), "blocked")
+}
+
+// fingerprint 是提示词的指纹：空白归一（连续空白合成一个空格，去掉首尾）后的 SHA-256，会话记录里换行写法不同
+// 也认得出（M4a 计划评审）。只存指纹，不存原文（spec §5.4）。
+func fingerprint(text string) string {
+	return store.Hash([]byte(strings.Join(strings.Fields(text), " ")))
+}
+
+// Block 记下一条被 outbound 拦截的提示词的指纹：它不写入缓存，transcript 回退时用 Blocked 跳过它（spec §5.4）。
+func (p *Prompts) Block(harness, session, text string) error {
+	if p.Dir == "" || session == "" || strings.TrimSpace(text) == "" {
+		return nil
+	}
+	return store.WriteAtomic(filepath.Join(p.blockedDir(harness, session), fingerprint(text)), nil, 0o600)
+}
+
+// Blocked 报告 text 是不是这个会话里被拦截过的提示词（7 天内）。
+func (p *Prompts) Blocked(harness, session, text string) bool {
+	if p.Dir == "" || session == "" {
+		return false
+	}
+	fi, err := os.Stat(filepath.Join(p.blockedDir(harness, session), fingerprint(text)))
+	return err == nil && fi.ModTime().After(p.now().Add(-TTL))
+}

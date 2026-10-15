@@ -93,8 +93,15 @@ type Decision struct {
 	Actions     []guard.Action  `json:"actions,omitempty"`
 	Requests    []guard.Request `json:"requests,omitempty"`
 	TextBytes   int             `json:"text_bytes,omitempty"` // 提示词或工具输出的长度；正文不记录
+	Excerpts    []Excerpt       `json:"excerpts,omitempty"`   // outbound 命中行前后各 2 行（凭据遮蔽，spec §10.3）
 	Truncated   bool            `json:"truncated,omitempty"`
 	Note        string          `json:"note,omitempty"` // 超过上限被截断时的标注
+}
+
+// Excerpt 是正文的一段连续的行：Line 是第一行的行号（从 1 开始）。
+type Excerpt struct {
+	Line int    `json:"line"`
+	Text string `json:"text"`
 }
 
 // Latency 是总耗时与判断层耗时。
@@ -149,6 +156,12 @@ func mask(d Decision) Decision {
 		reqs[i] = r
 	}
 	d.Requests = reqs
+	exs := make([]Excerpt, len(d.Excerpts))
+	for i, e := range d.Excerpts {
+		e.Text = secrets.MaskForLog(e.Text)
+		exs[i] = e
+	}
+	d.Excerpts = exs
 	return d
 }
 
@@ -183,6 +196,9 @@ func longest(d *Decision) *string {
 	}
 	for i := range d.Requests {
 		consider(&d.Requests[i].Text)
+	}
+	for i := range d.Excerpts {
+		consider(&d.Excerpts[i].Text)
 	}
 	return best
 }
