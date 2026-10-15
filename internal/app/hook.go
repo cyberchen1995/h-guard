@@ -34,6 +34,7 @@ var eventKinds = map[string]guard.EventKind{
 	"PreToolUse": guard.EventAction, "tool.check": guard.EventAction,
 	"UserPromptSubmit": guard.EventPrompt, "prompt.submit": guard.EventPrompt,
 	"PostToolUse": guard.EventToolOutput, "tool.result": guard.EventToolOutput,
+	"action": guard.EventAction, "prompt": guard.EventPrompt, "tool_output": guard.EventToolOutput, // generic 契约
 }
 
 // budgets 由 --timeout 推出两个时间点：内部截止时间（经 context 传给各阶段）为 timeout 减 1 秒；
@@ -84,7 +85,20 @@ func runHook(args []string, o Options) (code int) {
 	case <-timer.C:
 		h.expire()
 	}
-	return 0
+	return h.finish()
+}
+
+// finish 返回退出码。要求始终有输出的 adapter（generic 契约，spec §7.4）在没有输出任何结论时——读不懂的输入、
+// 读 stdin 出错、没有 --event 时的输入超限或看门狗——输出它的失败说明与非零退出码，调用方不会把空输出当作放行。
+func (h *hookRun) finish() int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if fr, ok := h.adapter.(harness.ParseFailureRenderer); ok && !h.written {
+		stdout, code := fr.RenderParseFailure()
+		_, _ = h.o.Stdout.Write(stdout)
+		h.written, h.exit = true, code
+	}
+	return h.exit
 }
 
 // hookRun 是一次 hook 调用的状态。输出与兜底由 mu 串行：先写的为准，看门狗触发后不再写任何东西。
@@ -102,6 +116,7 @@ type hookRun struct {
 	best      *guard.Outcome   // 已输出的结论
 	written   bool
 	abandoned bool // 看门狗已经接手
+	exit      int  // 退出码：Render 给出的（generic 契约读不懂输入时为非零），看门狗接手后不再改变
 }
 
 // commit 同步记录 Check 的一次提交，按 guard.Run 的规则累计（spec §3.3，评审 R3-04）。由 Engine.OnCommit
@@ -162,7 +177,8 @@ func (h *hookRun) run(ctx context.Context, extra string) {
 	// 再按 harnesses.<name>.shell 重新解析（spec §5.3 第 3 步）。配置非法时保留默认 shell 的解析结果。
 	ev, unparsed, err := parseEvent(h.adapter, raw)
 	if err != nil {
-		return // 读不懂的输入什么都不输出（spec §3.3）
+		// 读不懂的输入什么都不输出（spec §3.3）；要求始终有输出的 adapter（generic 契约）由 finish 输出失败说明
+		return
 	}
 	if !h.setEvent(ev, h.adapter) {
 		return
@@ -233,11 +249,11 @@ func (h *hookRun) writeLocked(ev guard.Event, out guard.Outcome) bool {
 		return false
 	}
 	h.best = &out
-	stdout, _ := h.adapter.Render(ev, out)
+	stdout, code := h.adapter.Render(ev, out)
 	if len(stdout) > 0 {
 		_, _ = h.o.Stdout.Write(stdout)
 	}
-	h.written = true
+	h.written, h.exit = true, code
 	return true
 }
 

@@ -19,7 +19,9 @@ import (
 	"github.com/cyberchen1995/h-guard/pkg/guard"
 
 	_ "github.com/cyberchen1995/h-guard/pkg/harness/claudecode" // 内置 adapter
-	_ "github.com/cyberchen1995/h-guard/pkg/judge/anthropic"    // 内置判断后端
+	_ "github.com/cyberchen1995/h-guard/pkg/harness/codex"
+	_ "github.com/cyberchen1995/h-guard/pkg/harness/generic"
+	_ "github.com/cyberchen1995/h-guard/pkg/judge/anthropic" // 内置判断后端
 	_ "github.com/cyberchen1995/h-guard/pkg/judge/exec"
 	_ "github.com/cyberchen1995/h-guard/pkg/judge/openai"
 	_ "github.com/cyberchen1995/h-guard/pkg/judge/typesafe"
