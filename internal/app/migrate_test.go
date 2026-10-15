@@ -131,4 +131,15 @@ func TestMigrateValidatesTheResult(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(e.configDir, "rules", "wipe.yaml")); err == nil {
 		t.Error("a colliding rule was written")
 	}
+	// 写入前的校验与 hook 的加载相同（M3d 终审 M-2）：配置里按 id 停用的规则在合并后的规则里不存在时，hook 读不了，
+	// 迁移同样拒绝写入
+	e2 := newEnv(t)
+	e2.config("version: 1\nrules: {wipe: {enabled: false}}\n")
+	os.WriteFile(q, []byte(`{"version":1,"policy":{"request_window":5}}`), 0o600)
+	if _, errs, code := e2.run(nil, "migrate", q, "--write"); code != 1 || !strings.Contains(errs, "wipe") {
+		t.Errorf("unknown override: exit %d\n%s", code, errs)
+	}
+	if b, _ := os.ReadFile(filepath.Join(e2.configDir, "config.yaml")); strings.Contains(string(b), "request_window") {
+		t.Errorf("written although the hook cannot load it:\n%s", b)
+	}
 }
