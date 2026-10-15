@@ -17,6 +17,7 @@ const (
 	KeyErrorInternal           = "error.internal"            //
 	KeyErrorConfigInvalid      = "error.config_invalid"      // {detail}
 	KeyErrorInputTooLarge      = "error.input_too_large"     //
+	KeyErrorTargetUnparsed     = "error.target_unparsed"     // {tool}
 	KeyDegradeAskUnsupported   = "degrade.ask_unsupported"   //
 	KeySourceLocal             = "source.local"              //
 	KeySourceJudge             = "source.judge"              //
@@ -34,7 +35,7 @@ const (
 var AllKeys = []string{
 	KeyActionBlocked, KeyActionDangerous, KeyActionRadius, KeyActionNotRequested, KeyActionGuardSelf, KeyActionGuardSelfFile,
 	KeyActionFileRule, KeyActionJudgeUnavailable, KeyActionEvidenceTruncated, KeyActionRegexTimeout, KeyActionBudgetExceeded,
-	KeyActionProbe, KeyErrorInternal, KeyErrorConfigInvalid, KeyErrorInputTooLarge, KeyDegradeAskUnsupported,
+	KeyActionProbe, KeyErrorInternal, KeyErrorConfigInvalid, KeyErrorInputTooLarge, KeyErrorTargetUnparsed, KeyDegradeAskUnsupported,
 	KeySourceLocal, KeySourceJudge, KeySourceBoth, KeyHintManual, KeyHintConsent, KeyHintJudgeUnavailable,
 	KeyHintSplit, KeyHintNarrow, KeyHintRequest, KeyListSeparator,
 }

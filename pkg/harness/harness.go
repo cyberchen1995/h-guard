@@ -3,6 +3,21 @@ package harness
 
 import "github.com/cyberchen1995/h-guard/pkg/guard"
 
+// TargetUnparsedError 表示已知会改动文件或执行命令的工具调用，目标无法解析（如 patch 格式不认识）。Parse 以
+// *TargetUnparsedError 返回；Event 尽量填好 Harness、SessionID、Cwd、Tool 等字段（没有动作）。调用方一律按动作
+// 请求确认，原因写明无法解析，带 target_unparsed（spec §5.5）；Event 没有填也不会放行。
+type TargetUnparsedError struct {
+	Event guard.Event
+}
+
+func (*TargetUnparsedError) Error() string { return "harness: the tool's target cannot be parsed" }
+
+// ShellDefaulter 由标不出 shell 的 adapter 实现（spec §5.3 第 3 步，如 Codex）。WithShell 返回一个副本，
+// 它把解析出的 exec 动作的 shell 设为 s；调用方按配置 harnesses.<name>.shell 传入。副本同样不保存其他状态。
+type ShellDefaulter interface {
+	WithShell(s guard.Shell) Adapter
+}
+
 // EventCaps 是 harness 在某类事件上能做到的事。
 type EventCaps struct {
 	Block   bool `json:"block"`   // 能阻止执行、提交或输出进入上下文

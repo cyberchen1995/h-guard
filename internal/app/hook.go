@@ -120,11 +120,27 @@ func (h *hookRun) newEngine(s setup) (*engine.Engine, judgeState) {
 	return eng, st
 }
 
-func (h *hookRun) setEvent(ev guard.Event) bool {
+// setEvent 记下解析出的事件与解析它的 adapter（按配置设了 shell 的副本），之后的渲染与兜底都用它们。
+func (h *hookRun) setEvent(ev guard.Event, ad harness.Adapter) bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	h.ev = &ev
+	h.ev, h.adapter = &ev, ad
 	return !h.abandoned
+}
+
+// parseEvent 解析 hook 输入。*harness.TargetUnparsedError 不是读不懂：返回它带的事件（按动作处理）与 unparsed。
+func parseEvent(ad harness.Adapter, raw []byte) (ev guard.Event, unparsed bool, err error) {
+	ev, err = ad.Parse(raw)
+	var tu *harness.TargetUnparsedError
+	if errors.As(err, &tu) {
+		ev = tu.Event
+		ev.Kind, ev.Actions = guard.EventAction, nil
+		if ev.Harness == "" {
+			ev.Harness = ad.Name()
+		}
+		return ev, true, nil
+	}
+	return ev, false, err
 }
 
 func (h *hookRun) live() bool {
@@ -142,16 +158,28 @@ func (h *hookRun) run(ctx context.Context, extra string) {
 		h.oversize()
 		return
 	}
-	ev, err := h.adapter.Parse(raw)
+	// 先按默认 shell 解析并记下事件（读配置卡住时看门狗与兜底要用它）；标不出 shell 的 harness 读完配置后
+	// 再按 harnesses.<name>.shell 重新解析（spec §5.3 第 3 步）。配置非法时保留默认 shell 的解析结果。
+	ev, unparsed, err := parseEvent(h.adapter, raw)
 	if err != nil {
 		return // 读不懂的输入什么都不输出（spec §3.3）
 	}
-	if !h.setEvent(ev) {
+	if !h.setEvent(ev, h.adapter) {
 		return
 	}
 	s, err := load(h.o, extra)
 	if err != nil {
 		h.configInvalid(s, err)
+		return
+	}
+	if sd, ok := h.adapter.(harness.ShellDefaulter); ok {
+		ad := sd.WithShell(s.cfg.ShellFor(h.adapter.Name()))
+		if ev, unparsed, err = parseEvent(ad, raw); err != nil || !h.setEvent(ev, ad) {
+			return
+		}
+	}
+	if unparsed {
+		h.targetUnparsed(s, ev)
 		return
 	}
 	h.logs.Decisions, h.logs.RetentionDays = s.cfg.Log.Decisions, s.cfg.Log.RetentionDays
@@ -274,6 +302,16 @@ func (h *hookRun) configInvalid(s setup, err error) {
 		fallbackOutcome(ev.Kind, engine.FallbackConfigInvalid, i18n.KeyErrorConfigInvalid, map[string]string{"detail": brief(err)}))
 	if h.write(ev, out) {
 		h.health([]hglog.Health{{Event: string(ev.Kind), Check: "app", Code: engine.FallbackConfigInvalid}})
+	}
+}
+
+// targetUnparsed：已知会改动文件的工具，目标无法解析时请求确认（spec §5.5），按配置的 when_ask_unsupported 降级。
+func (h *hookRun) targetUnparsed(s setup, ev guard.Event) {
+	eng := &engine.Engine{Catalog: s.catalog, Locale: s.locale, WhenAskUnsupported: guard.Decision(s.cfg.Policy.WhenAskUnsupported)}
+	out := eng.Finish(ev, h.adapter.CapsFor(ev),
+		fallbackOutcome(ev.Kind, engine.FallbackTargetUnparsed, i18n.KeyErrorTargetUnparsed, map[string]string{"tool": secrets.MaskForLog(ev.Tool)}))
+	if h.write(ev, out) {
+		h.health([]hglog.Health{{Event: string(ev.Kind), Check: "app", Code: engine.FallbackTargetUnparsed}})
 	}
 }
 
