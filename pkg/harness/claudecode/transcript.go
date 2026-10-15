@@ -1,15 +1,12 @@
 package claudecode
 
 import (
-	"bufio"
-	"bytes"
 	"encoding/json"
-	"io"
-	"os"
 	"strings"
 	"time"
 
 	"github.com/cyberchen1995/h-guard/pkg/guard"
+	"github.com/cyberchen1995/h-guard/pkg/harness/internal/jsonl"
 )
 
 // transcriptTail 是从 transcript 末尾读取的字节数上限：只需要最近几条指令。
@@ -41,39 +38,18 @@ func (Adapter) ReadRequests(path string, limit int) ([]guard.Request, error) {
 	if path == "" || limit <= 0 {
 		return nil, nil
 	}
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-	info, err := f.Stat()
-	if err != nil {
-		return nil, err
-	}
-	start := max(0, info.Size()-transcriptTail)
-	if _, err := f.Seek(start, io.SeekStart); err != nil {
-		return nil, err
-	}
-	data, err := io.ReadAll(f)
-	if err != nil {
-		return nil, err
-	}
-	if start > 0 { // 第一行可能不完整
-		if i := bytes.IndexByte(data, '\n'); i >= 0 {
-			data = data[i+1:]
-		}
-	}
 	var all []guard.Request
-	sc := bufio.NewScanner(bytes.NewReader(data))
-	sc.Buffer(make([]byte, 0, 64<<10), transcriptTail)
-	for sc.Scan() {
+	err := jsonl.Tail(path, transcriptTail, func(line []byte) {
 		var rec transcriptRecord
-		if json.Unmarshal(sc.Bytes(), &rec) != nil {
-			continue
+		if json.Unmarshal(line, &rec) != nil {
+			return
 		}
 		if req, ok := requestOf(rec); ok {
 			all = append(all, req)
 		}
+	})
+	if err != nil {
+		return nil, err
 	}
 	if len(all) > limit {
 		all = all[len(all)-limit:]
