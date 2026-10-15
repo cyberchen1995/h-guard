@@ -53,3 +53,9 @@ type Adapter interface {
 type TranscriptReader interface {
 	ReadRequests(path string, limit int) ([]guard.Request, error)
 }
+
+// ParseFailureRenderer 由要求「始终有输出」的 adapter 实现（generic 契约，spec §7.4）：Parse 返回错误时，调用方
+// 输出 RenderParseFailure 的结果并以它的退出码退出，而不是什么都不输出。
+type ParseFailureRenderer interface {
+	RenderParseFailure() (stdout []byte, exitCode int)
+}
