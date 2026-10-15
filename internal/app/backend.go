@@ -60,7 +60,7 @@ func runBackend(args []string, o Options) int {
 		}
 		return 0
 	case pos[0] == "enable" && len(pos) == 2:
-		return enableBackend(s, o, pos[1])
+		return enableBackend(s, o, pos[1], bufio.NewReader(o.Stdin), false)
 	}
 	fmt.Fprint(o.Stderr, usage)
 	return 2
@@ -85,7 +85,10 @@ func disableBackend(o Options, name string) int {
 	return 0
 }
 
-func enableBackend(s setup, o Options, name string) int {
+// enableBackend 在终端里说明将发送的数据与目标，经用户确认后记录 action 范围的同意（spec §8.5）。
+// in 读用户的回答（init 与它共用同一个 reader，避免缓冲吞掉后面的回答）；fromInit 时不提示「还要在配置里开启」
+// （init 接着就开启）。
+func enableBackend(s setup, o Options, name string, in *bufio.Reader, fromInit bool) int {
 	if _, ok := s.cfg.Backends[name]; !ok {
 		fmt.Fprintf(o.Stderr, "h-guard: no backend named %q in the config\n", shown(name))
 		return 1
@@ -115,7 +118,7 @@ func enableBackend(s setup, o Options, name string) int {
 		fmt.Fprintf(o.Stdout, "Warning: %s.\n", plaintextWarning)
 	}
 	fmt.Fprintf(o.Stdout, "Changing the destination, the program or its arguments withdraws this consent.\nAllow? [y/N] ")
-	answer, _ := bufio.NewReader(o.Stdin).ReadString('\n')
+	answer, _ := in.ReadString('\n')
 	if a := strings.ToLower(strings.TrimSpace(answer)); a != "y" && a != "yes" {
 		fmt.Fprintln(o.Stdout, "not enabled")
 		return 1
@@ -125,7 +128,7 @@ func enableBackend(s setup, o Options, name string) int {
 		return 1
 	}
 	fmt.Fprintf(o.Stdout, "consent recorded for %s\n", name)
-	if !s.cfg.Judge.Enabled || s.cfg.Judge.Backend != name {
+	if !fromInit && (!s.cfg.Judge.Enabled || s.cfg.Judge.Backend != name) {
 		fmt.Fprintf(o.Stdout, "note: the judge uses it only with judge: {enabled: true, backend: %s} in the config\n", name)
 	}
 	return 0
