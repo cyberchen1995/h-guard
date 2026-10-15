@@ -52,9 +52,11 @@ func (e Editor) editLocked(path string, change func(old []byte, exists bool) ([]
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return false, err
 	}
-	hash, err := store.FileHash(path)
-	if err != nil {
-		return false, err
+	// 比对的基准就是 change 拿到的这份内容（文件不存在时为空串），不再打开文件另读一次：两次读之间被别的程序
+	// 替换时，基于旧内容的改写会配上新版本的哈希，写回时比对通过、覆盖别人的改动（计划评审第四轮 R4-D01）
+	hash := ""
+	if exists {
+		hash = store.Hash(old)
 	}
 	data, err := change(old, exists)
 	if err != nil {

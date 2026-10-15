@@ -124,8 +124,14 @@ func FileHash(path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	return Hash(b), nil
+}
+
+// Hash 返回 b 的 SHA-256（十六进制），与 FileHash 对同样内容的结果相同。已经读入内容的读改写用它取基准，
+// 不再打开文件另读一次（两次读之间文件可能被替换）。
+func Hash(b []byte) string {
 	sum := sha256.Sum256(b)
-	return hex.EncodeToString(sum[:]), nil
+	return hex.EncodeToString(sum[:])
 }
 
 // ReplaceIfUnchanged 在目标文件的当前哈希仍等于 want（读入时的哈希，文件当时不存在则为空串）时

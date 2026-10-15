@@ -99,6 +99,37 @@ func TestEditConflict(t *testing.T) {
 	}
 }
 
+// TestEditBaselineFromWhatWasRead：比对的基准来自读到的内容，「不存在」与「空文件」是不同的基准：空文件照常改写；
+// 读时不存在、写回前被别人建出来，或读时为空、写回前被别人写入，都报冲突、保留别人的版本（R4-D01 的对照）。
+func TestEditBaselineFromWhatWasRead(t *testing.T) {
+	e := editor(t)
+	dir := t.TempDir()
+	empty := filepath.Join(dir, "empty.json")
+	os.WriteFile(empty, nil, 0o600)
+	if changed, err := e.Edit(empty, func(old []byte, exists bool) ([]byte, error) {
+		if !exists || len(old) != 0 {
+			t.Errorf("old = %q, exists %v", old, exists)
+		}
+		return []byte("{}"), nil
+	}); err != nil || !changed {
+		t.Errorf("empty file: %v, %v", changed, err)
+	}
+	for name, prepare := range map[string]func(string){
+		"created meanwhile":   func(string) {},
+		"empty, then written": func(p string) { os.WriteFile(p, nil, 0o600) },
+	} {
+		path := filepath.Join(dir, strings.ReplaceAll(name, " ", "-"))
+		prepare(path)
+		_, err := e.Edit(path, func([]byte, bool) ([]byte, error) {
+			os.WriteFile(path, []byte("someone else"), 0o600)
+			return []byte("mine"), nil
+		})
+		if b, _ := os.ReadFile(path); !errors.Is(err, store.ErrConflict) || string(b) != "someone else" {
+			t.Errorf("%s: err %v, content %q", name, err, b)
+		}
+	}
+}
+
 // TestEditLocked：另一个 install 正持有锁时不等待，直接报错。
 func TestEditLocked(t *testing.T) {
 	e := editor(t)
