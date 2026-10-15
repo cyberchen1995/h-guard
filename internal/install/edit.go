@@ -60,7 +60,7 @@ func (e Editor) editLocked(path string, change func(old []byte, exists bool) ([]
 	if err != nil {
 		return false, err
 	}
-	if exists && bytes.Equal(data, old) {
+	if (exists && bytes.Equal(data, old)) || (!exists && data == nil) {
 		return false, nil
 	}
 	perm := fs.FileMode(0o600)

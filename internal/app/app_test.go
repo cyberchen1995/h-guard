@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -35,6 +36,8 @@ type env struct {
 	configDir, cache, home string
 	vars                   map[string]string
 	tty                    bool // backend enable 是否像在终端里运行
+	bin, goos              string
+	harnessRun             func(name string, args ...string) ([]byte, error)
 }
 
 func newEnv(t *testing.T) *env {
@@ -54,6 +57,13 @@ func (e *env) run(stdin []byte, args ...string) (stdout, stderr string, code int
 		Stdin: bytes.NewReader(stdin), Stdout: &out, Stderr: &errb,
 		Getenv: func(k string) string { return e.vars[k] }, ConfigDir: e.configDir, CacheDir: e.cache,
 		Home: e.home, IsTerminal: func() bool { return e.tty },
+		Executable: func() (string, error) { return e.bin, nil }, GOOS: e.goos,
+		RunHarness: func(name string, args ...string) ([]byte, error) {
+			if e.harnessRun == nil {
+				return nil, errors.New("not found")
+			}
+			return e.harnessRun(name, args...)
+		},
 	})
 	return out.String(), errb.String(), code
 }
