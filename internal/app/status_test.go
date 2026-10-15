@@ -81,3 +81,16 @@ func TestStatusRulesAndHealth(t *testing.T) {
 		t.Errorf("an old record was counted:\n%s", out)
 	}
 }
+
+// TestStatusOutbound：status 报告 outbound 的档位与各类别（启用、动作），不生效的 outbound 规则及原因。
+func TestStatusOutbound(t *testing.T) {
+	e := newEnv(t)
+	e.config("version: 1\noutbound: {categories: {credentials: {action: warn}}}\nrules: {credentials.bearer: {enabled: false}}\n")
+	out, _, _ := e.run(nil, "status")
+	for _, want := range []string{"outbound: tier 1 (prompts)", "categories: credentials warn, pii off, private_key deny",
+		"credentials.bearer (disabled)", "pii.email (category disabled)"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("status lacks %q:\n%s", want, out)
+		}
+	}
+}

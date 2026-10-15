@@ -235,3 +235,56 @@ func (r *OutboundRule) validate() error {
 	}
 	return nil
 }
+
+// InactiveCategory 表示 outbound 规则所属的类别停用了（spec §4：类别与规则的 enabled 同时为真才启用）。
+const InactiveCategory = "category_disabled"
+
+// OutboundTierCovers 报告 outbound 档位是否扫描该类事件（spec §4）：提示词任何档位都扫；工具输出从第 2 档起
+// （第 2 档只扫文件内容，第 3 档扫全部）。
+func OutboundTierCovers(tier int, kind guard.EventKind) bool {
+	switch kind {
+	case guard.EventPrompt:
+		return tier >= 1
+	case guard.EventToolOutput:
+		return tier >= 2
+	}
+	return false
+}
+
+// OutboundStateOf 计算 outbound 规则的状态：规则停用、类别停用、档位不覆盖它扫描的任何一类事件时不生效。
+func OutboundStateOf(r *OutboundRule, tier int, categoryEnabled bool) State {
+	st := State{Enabled: r.enabled && categoryEnabled}
+	switch {
+	case !r.enabled:
+		st.Inactive = InactiveDisabled
+	case !categoryEnabled:
+		st.Inactive = InactiveCategory
+	case !slices.ContainsFunc(r.On, func(k guard.EventKind) bool { return OutboundTierCovers(tier, k) }):
+		st.Inactive = InactiveTier
+	default:
+		st.Effective = true
+	}
+	return st
+}
+
+// CheckExamples 运行样例：hit 必须命中，miss 必须不命中；超时算失败。
+func (r *OutboundRule) CheckExamples(ctx context.Context) error {
+	var errs []error
+	for _, set := range []struct {
+		want bool
+		list []string
+	}{{true, r.Examples.Hit}, {false, r.Examples.Miss}} {
+		for _, text := range set.list {
+			locs, timedOut, err := r.Find(ctx, text)
+			switch {
+			case err != nil:
+				return err
+			case timedOut:
+				errs = append(errs, fmt.Errorf("rule %q: example %q timed out", r.ID, text))
+			case (len(locs) > 0) != set.want:
+				errs = append(errs, fmt.Errorf("rule %q: example %q: hit = %v, want %v", r.ID, text, len(locs) > 0, set.want))
+			}
+		}
+	}
+	return errors.Join(errs...)
+}

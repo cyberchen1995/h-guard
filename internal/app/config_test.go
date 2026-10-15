@@ -134,3 +134,20 @@ func TestJudgeOnlyCategory(t *testing.T) {
 		t.Errorf("category disabled: exit %d\n%s", code, errs)
 	}
 }
+
+// TestValidateOutboundExamples：config validate 同样运行用户 outbound 规则的样例，计入「你自己的规则」。
+func TestValidateOutboundExamples(t *testing.T) {
+	e := newEnv(t)
+	dir := filepath.Join(e.configDir, "rules")
+	os.MkdirAll(dir, 0o700)
+	os.WriteFile(filepath.Join(dir, "falcon.yaml"), []byte("schema: 1\nid: acme.codename\ncategory: acme\non: [prompt]\n"+
+		"match: {regex: ['\\bProject Falcon\\b']}\nexamples: {hit: ['Project Falcon'], miss: [falconry]}\n"), 0o600)
+	if out, errs, code := e.run(nil, "config", "validate"); code != 0 || !strings.Contains(out, "1 rule of your own, examples pass") {
+		t.Errorf("good: exit %d\n%s%s", code, out, errs)
+	}
+	os.WriteFile(filepath.Join(dir, "falcon.yaml"), []byte("schema: 1\nid: acme.codename\ncategory: acme\non: [prompt]\n"+
+		"match: {regex: ['\\bProject Falcon\\b']}\nexamples: {hit: ['Project Eagle']}\n"), 0o600)
+	if _, errs, code := e.run(nil, "config", "validate"); code != 1 || !strings.Contains(errs, "acme.codename") {
+		t.Errorf("failing example: exit %d\n%s", code, errs)
+	}
+}

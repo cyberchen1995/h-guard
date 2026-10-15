@@ -104,6 +104,17 @@ func checkExamples(o Options, set *rules.Set, pick func(*rules.Rule) bool) (int,
 			failed = true
 		}
 	}
+	// outbound 规则（M4）：用户自己的规则同样运行样例
+	for _, r := range set.Outbound() {
+		if r.Builtin {
+			continue
+		}
+		n++
+		if err := r.CheckExamples(context.Background()); err != nil {
+			fmt.Fprintln(o.Stderr, "h-guard:", secrets.MaskForLog(err.Error()))
+			failed = true
+		}
+	}
 	if failed {
 		return n, 1
 	}

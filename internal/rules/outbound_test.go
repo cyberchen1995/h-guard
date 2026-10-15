@@ -219,3 +219,38 @@ func TestOutboundIDsShareTheNamespace(t *testing.T) {
 		t.Errorf("err = %v", err)
 	}
 }
+
+// TestOutboundState：outbound 规则的状态（spec §4）：规则停用、类别停用、档位不覆盖（只扫工具输出的规则在第 1 档）
+// 都不生效；扫提示词的规则在任何档位都生效。
+func TestOutboundState(t *testing.T) {
+	r := builtinSet(t).GetOutbound("pii.email")
+	if st := rules.OutboundStateOf(r, 1, true); !st.Effective {
+		t.Errorf("enabled: %+v", st)
+	}
+	if st := rules.OutboundStateOf(r, 1, false); st.Effective || st.Inactive != rules.InactiveCategory {
+		t.Errorf("category off: %+v", st)
+	}
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "r.yaml"), []byte("schema: 1\nid: x.out\ncategory: x\non: [tool_output]\nmatch: {regex: [a]}\n"), 0o600)
+	s, err := rules.Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := s.GetOutbound("x.out")
+	if st := rules.OutboundStateOf(out, 1, true); st.Effective || st.Inactive != rules.InactiveTier {
+		t.Errorf("tool output at tier 1: %+v", st)
+	}
+	if st := rules.OutboundStateOf(out, 2, true); !st.Effective {
+		t.Errorf("tier 2: %+v", st)
+	}
+	s.Apply(rules.Overrides{"x.out": false})
+	if st := rules.OutboundStateOf(out, 3, true); st.Effective || st.Inactive != rules.InactiveDisabled {
+		t.Errorf("disabled: %+v", st)
+	}
+	// 样例：hit 必须命中、miss 必须不命中
+	os.WriteFile(filepath.Join(dir, "r.yaml"), []byte("schema: 1\nid: x.out\ncategory: x\non: [prompt]\nmatch: {regex: [falcon]}\nexamples: {hit: [Falcon], miss: [falcon]}\n"), 0o600)
+	s, _ = rules.Load(dir)
+	if err := s.GetOutbound("x.out").CheckExamples(context.Background()); err == nil || !strings.Contains(err.Error(), `"x.out"`) {
+		t.Errorf("CheckExamples = %v", err)
+	}
+}
