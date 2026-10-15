@@ -17,6 +17,8 @@ type Value struct {
 	Path  []string
 	Value string
 	Tag   string
+	// KeepExisting：键已有取值时保留用户的取值，只在没有时写入（migrate 补全后端的字段，M3d 终审 M-3）
+	KeepExisting bool
 }
 
 // ConfigValues 计划把 vals 写进 h-guard 的配置文件（<config_dir>/config.yaml）：文件不存在时新建（version: 1）；
@@ -71,7 +73,7 @@ func setValues(old []byte, exists bool, vals []Value) ([]byte, error) {
 		for i, key := range val.Path {
 			child := setKey(node, key)
 			if i == len(val.Path)-1 {
-				if child.Kind == yaml.ScalarNode && child.Value == val.Value {
+				if child.Kind == yaml.ScalarNode && (child.Value == val.Value || val.KeepExisting && child.Tag != "!!null") {
 					break
 				}
 				if child.Kind != 0 && child.Kind != yaml.ScalarNode {

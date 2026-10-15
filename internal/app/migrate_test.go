@@ -105,6 +105,22 @@ func TestMigrateRefusesSkippedRules(t *testing.T) {
 
 // TestMigrateValidatesTheResult：写入之前按 hook 的要求校验合并后的配置与规则目录；校验不通过时什么都不写
 // （计划评审 M3D-05：此前写出 request_window: 0，之后 config validate 失败）。
+// TestMigrateKeepsTheBackendSettings：迁移 model 时只改 jev 后端的 model；用户已经写下的 api_key_env、type、profile
+// 保留（覆盖 api_key_env 会让每次判断都因为找不到 key 而失败，M3d 终审 M-3）。
+func TestMigrateKeepsTheBackendSettings(t *testing.T) {
+	e := newEnv(t)
+	e.config("version: 1\nbackends:\n  jev: {type: typesafe, model: jev-latest, profile: jev, api_key_env: MY_JEV_KEY}\n")
+	q := filepath.Join(t.TempDir(), "q.json")
+	os.WriteFile(q, []byte(`{"version":1,"model":"jev-2"}`), 0o600)
+	if _, errs, code := e.run(nil, "migrate", q, "--write"); code != 0 {
+		t.Fatalf("exit %d\n%s", code, errs)
+	}
+	b, _ := os.ReadFile(filepath.Join(e.configDir, "config.yaml"))
+	if !strings.Contains(string(b), "MY_JEV_KEY") || strings.Contains(string(b), "TYPESAFE_API_KEY") || !strings.Contains(string(b), "jev-2") {
+		t.Errorf("config.yaml =\n%s", b)
+	}
+}
+
 func TestMigrateValidatesTheResult(t *testing.T) {
 	e := newEnv(t)
 	q := filepath.Join(t.TempDir(), "q.json")
