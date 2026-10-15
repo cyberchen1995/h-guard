@@ -14,6 +14,10 @@ const (
 	KeyActionRegexTimeout      = "action.regex_timeout"      //
 	KeyActionBudgetExceeded    = "action.budget_exceeded"    //
 	KeyActionProbe             = "action.probe"              //
+	KeyOutboundCredentials     = "outbound.credentials"      // {count} {lines}
+	KeyOutboundPrivateKey      = "outbound.private_key"      // {count} {lines}
+	KeyOutboundPII             = "outbound.pii"              // {count} {lines}
+	KeyOutboundCustom          = "outbound.custom"           // {category} {count} {lines}
 	KeyErrorInternal           = "error.internal"            //
 	KeyErrorConfigInvalid      = "error.config_invalid"      // {detail}
 	KeyErrorInputTooLarge      = "error.input_too_large"     //
@@ -28,6 +32,7 @@ const (
 	KeyHintSplit               = "hint.split"                //
 	KeyHintNarrow              = "hint.narrow"               //
 	KeyHintRequest             = "hint.request"              //
+	KeyHintOutbound            = "hint.outbound"             //
 	KeyListSeparator           = "list.separator"            // 列表项之间的分隔符
 )
 
@@ -35,7 +40,7 @@ const (
 var AllKeys = []string{
 	KeyActionBlocked, KeyActionDangerous, KeyActionRadius, KeyActionNotRequested, KeyActionGuardSelf, KeyActionGuardSelfFile,
 	KeyActionFileRule, KeyActionJudgeUnavailable, KeyActionEvidenceTruncated, KeyActionRegexTimeout, KeyActionBudgetExceeded,
-	KeyActionProbe, KeyErrorInternal, KeyErrorConfigInvalid, KeyErrorInputTooLarge, KeyErrorTargetUnparsed, KeyDegradeAskUnsupported,
+	KeyActionProbe, KeyOutboundCredentials, KeyOutboundPrivateKey, KeyOutboundPII, KeyOutboundCustom, KeyErrorInternal, KeyErrorConfigInvalid, KeyErrorInputTooLarge, KeyErrorTargetUnparsed, KeyDegradeAskUnsupported,
 	KeySourceLocal, KeySourceJudge, KeySourceBoth, KeyHintManual, KeyHintConsent, KeyHintJudgeUnavailable,
-	KeyHintSplit, KeyHintNarrow, KeyHintRequest, KeyListSeparator,
+	KeyHintSplit, KeyHintNarrow, KeyHintRequest, KeyHintOutbound, KeyListSeparator,
 }
