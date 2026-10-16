@@ -100,6 +100,9 @@ func statusOutbound(s setup, o Options) {
 		parts = append(parts, name+" "+state)
 	}
 	fmt.Fprintln(o.Stdout, "categories:", strings.Join(parts, ", "))
+	for _, n := range outboundNotes(s, false) {
+		fmt.Fprintln(o.Stdout, "note:", n)
+	}
 }
 
 // statusRules 列出不生效的规则与原因（spec §4 规则状态）。

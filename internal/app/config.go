@@ -68,6 +68,9 @@ func validateConfig(o Options, extra string) int {
 			fmt.Fprintf(o.Stdout, "warning: hard rule %q is disabled\n", r.ID)
 		}
 	}
+	for _, n := range outboundNotes(s, true) {
+		fmt.Fprintln(o.Stdout, "note:", n)
+	}
 	fmt.Fprintf(o.Stdout, "config ok: %s of your own, examples pass\n", plural(own, "rule"))
 	return 0
 }
