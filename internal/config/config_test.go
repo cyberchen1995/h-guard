@@ -417,6 +417,103 @@ func TestProfileNeedsAMatchingFingerprint(t *testing.T) {
 	}
 }
 
+// TestOutboundThreshold：outbound 的阈值单独写在档案的 thresholds.outbound，指纹另记 outbound 题集的指纹
+// （fingerprint.outbound_questions），不动 action 的题集指纹；任一不一致时用默认值并说明原因（M4b 已定决策 4）。
+func TestOutboundThreshold(t *testing.T) {
+	c := Defaults()
+	digestB := QuestionsDigest([]judge.Question{{ID: "b", Kind: judge.KindProbability, Instructions: judge.Instructions{Question: "B?"}}})
+	jev := c.Profiles["jev"]
+	jev.Fingerprint = &Fingerprint{Model: "jev-latest", Probability: "native", Questions: digestA}
+	c.Profiles["jev"] = jev
+	// 档案在、只是没写 outbound 门槛：原因写明是没有 outbound 门槛，不是档案不存在（M4b 终审 M-5）
+	if th, cal := c.OutboundThresholdFor("jev", described{jevInfo}, digestB); th != DefaultOutboundThreshold || cal.Reason != UncalibratedNoOutbound {
+		t.Errorf("no outbound threshold: %v (%+v)", th, cal)
+	}
+	if _, cal := c.OutboundThresholdFor("missing", described{jevInfo}, digestB); cal.Reason != UncalibratedNoProfile {
+		t.Errorf("no profile: %+v", cal)
+	}
+	v := 0.35
+	jev.Thresholds.Outbound = &v
+	c.Profiles["jev"] = jev
+	if th, cal := c.OutboundThresholdFor("jev", described{jevInfo}, digestB); th != DefaultOutboundThreshold || cal.Reason != UncalibratedNoFingerprint {
+		t.Errorf("no outbound fingerprint: %v (%+v)", th, cal)
+	}
+	jev.Fingerprint.OutboundQuestions = digestB
+	if th, cal := c.OutboundThresholdFor("jev", described{jevInfo}, digestB); th != 0.35 || !cal.Calibrated() {
+		t.Errorf("calibrated: %v (%+v)", th, cal)
+	}
+	// action 的阈值与指纹不受影响
+	if _, cal := c.ThresholdsFor("jev", described{jevInfo}, digestA); !cal.Calibrated() {
+		t.Errorf("action: %+v", cal)
+	}
+	other := jevInfo
+	other.Model = "jev-2"
+	for want, got := range map[string]Calibration{
+		UncalibratedQuestions:   func() Calibration { _, c := c.OutboundThresholdFor("jev", described{jevInfo}, digestA); return c }(),
+		UncalibratedModel:       func() Calibration { _, c := c.OutboundThresholdFor("jev", described{other}, digestB); return c }(),
+		UncalibratedUndescribed: func() Calibration { _, c := c.OutboundThresholdFor("jev", undescribed{}, digestB); return c }(),
+	} {
+		if got.Reason != want {
+			t.Errorf("%s: %+v", want, got)
+		}
+	}
+}
+
+// TestOutboundProfileValidation：thresholds.outbound 在 0..1；fingerprint.outbound_questions 写了就要是 sha256 指纹；
+// judge_chunk_chars 至少 500。
+func TestOutboundProfileValidation(t *testing.T) {
+	for name, body := range map[string]string{
+		"threshold":   "profiles: {p: {thresholds: {hit: 0.3, veto: 0.05, requested: 0.9, outbound: 1.5}}}\n",
+		"fingerprint": "profiles: {p: {thresholds: {hit: 0.3, veto: 0.05, requested: 0.9}, fingerprint: {model: m, probability: native, questions: " + digestA + ", outbound_questions: abc}}}\n",
+		"chunk":       "outbound: {judge_chunk_chars: 100}\n",
+	} {
+		p := filepath.Join(t.TempDir(), "config.yaml")
+		os.WriteFile(p, []byte("version: 1\n"+body), 0o600)
+		if _, err := Load(p); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+	if d := Defaults(); d.Outbound.JudgeChunkChars != 4000 {
+		t.Errorf("judge_chunk_chars default = %d", d.Outbound.JudgeChunkChars)
+	}
+}
+
+// TestOutboundJudgeSwitch：outbound.judge 默认开启，可以单独关掉（只用 action 判断，不把提示词与工具输出发给后端，
+// M4b 计划评审 I-4）；按字段叠加。
+func TestOutboundJudgeSwitch(t *testing.T) {
+	if !Defaults().OutboundJudge() {
+		t.Error("outbound.judge should default to true")
+	}
+	p := filepath.Join(t.TempDir(), "config.yaml")
+	os.WriteFile(p, []byte("version: 1\noutbound: {judge: false}\n"), 0o600)
+	c, err := Load(p)
+	if err != nil || c.OutboundJudge() || c.Outbound.Tier != 1 {
+		t.Errorf("judge: false: %+v %v", c.Outbound, err)
+	}
+}
+
+// TestOutboundOnlyProfile：只校准了 outbound 的档案合法（action 的三个阈值都不写、指纹只写 outbound_questions），
+// action 按未校准处理；只写了一部分 action 阈值仍是错误（M4b 计划评审 M-3：eval --outbound --sweep 的建议能直接写进配置）。
+func TestOutboundOnlyProfile(t *testing.T) {
+	digestB := QuestionsDigest([]judge.Question{{ID: "b", Kind: judge.KindProbability, Instructions: judge.Instructions{Question: "B?"}}})
+	p := filepath.Join(t.TempDir(), "config.yaml")
+	os.WriteFile(p, []byte("version: 1\nbackends: {jev: {type: typesafe, model: jev-latest, profile: ob, api_key_env: TYPESAFE_API_KEY}}\nprofiles: {ob: {thresholds: {outbound: 0.4}, fingerprint: {model: jev-latest, probability: native, outbound_questions: '"+digestB+"'}}}\n"), 0o600)
+	c, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if th, cal := c.OutboundThresholdFor("jev", described{jevInfo}, digestB); th != 0.4 || !cal.Calibrated() {
+		t.Errorf("outbound: %v %+v", th, cal)
+	}
+	if _, cal := c.ThresholdsFor("jev", described{jevInfo}, digestA); cal.Reason != UncalibratedNoProfile {
+		t.Errorf("action: %+v", cal)
+	}
+	os.WriteFile(p, []byte("version: 1\nprofiles: {ob: {thresholds: {hit: 0.3, outbound: 0.4}}}\n"), 0o600)
+	if _, err := Load(p); err == nil {
+		t.Error("partial action thresholds accepted")
+	}
+}
+
 func TestQuestionsDigest(t *testing.T) {
 	a := judge.Question{ID: "a", Kind: judge.KindProbability, Instructions: judge.Instructions{Question: "A?"}}
 	b := judge.Question{ID: "b", Kind: judge.KindScale, Instructions: judge.Instructions{Question: "B?"}, Levels: []string{"x", "y"}}

@@ -6,6 +6,7 @@ outbound:
   tier: 1
   judge_max_chunks: 4
   judge_min_chars: 200
+  judge_chunk_chars: 4000
   # 检测规则在规则包里（rules/outbound），类别只管策略（spec §6.1）。PII 默认关闭：开发场景里邮箱、公网 IP 常见。
   categories:
     credentials: {enabled: true, action: deny}
