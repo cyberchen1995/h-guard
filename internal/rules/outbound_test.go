@@ -254,3 +254,26 @@ func TestOutboundState(t *testing.T) {
 		t.Errorf("CheckExamples = %v", err)
 	}
 }
+
+// TestRuneCursorMatchesRegexp2：用户正则的命中位置从字符换成字节偏移，与 regexp2 按字符计的位置一致：多字节文字、
+// 无效的 UTF-8 字节（各算一个字符）、同一个正则的多处命中（M4a 终审 M-6 改为边走边换算）。
+func TestRuneCursorMatchesRegexp2(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "k.yaml"), []byte("schema: 1\nid: acme.k\ncategory: acme\non: [prompt]\nmatch: {regex: ['K-[0-9]{3}', '代号']}\n"), 0o600)
+	s, err := rules.Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := "前缀 K-101 中间\xff\xfe K-202 代号 尾 K-303 代号"
+	locs, _, err := s.GetOutbound("acme.k").Find(context.Background(), text)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, l := range locs {
+		got = append(got, text[l[0]:l[1]])
+	}
+	if !reflect.DeepEqual(got, []string{"K-101", "K-202", "代号", "K-303", "代号"}) {
+		t.Errorf("matches = %q", got)
+	}
+}
