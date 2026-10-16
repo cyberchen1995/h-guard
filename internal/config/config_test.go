@@ -529,3 +529,52 @@ func TestOptionalParametersFromYAML(t *testing.T) {
 		}
 	}
 }
+
+// TestOutboundCategories：内置三个类别（spec §6.1）：credentials、private_key 默认启用、deny，pii 默认关闭；用户配置
+// 按字段叠加——只写 ignore 不会把内置的 enabled、action 清掉；自定义类别没写的字段取默认（启用、deny）。
+func TestOutboundCategories(t *testing.T) {
+	d := Defaults()
+	for name, want := range map[string]Category{
+		"credentials": {Enabled: true, Action: guard.DecisionDeny},
+		"private_key": {Enabled: true, Action: guard.DecisionDeny},
+		"pii":         {Enabled: false, Action: guard.DecisionDeny},
+	} {
+		if got := d.Category(name); got.Enabled != want.Enabled || got.Action != want.Action {
+			t.Errorf("default %s = %+v", name, got)
+		}
+	}
+	dir := t.TempDir()
+	user := write(t, dir, "config.yaml", "version: 1\noutbound:\n  categories:\n    pii: {ignore: ['Me@My-Company.com']}\n"+
+		"    credentials: {action: warn}\n    acme-codename: {question: {question: 'Does the text name Project Falcon?'}}\n")
+	extra := write(t, dir, "extra.yaml", "version: 1\noutbound: {categories: {pii: {enabled: true}}}\n")
+	c, err := Load(user, extra)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pii := c.Category("pii"); !pii.Enabled || pii.Action != guard.DecisionDeny || !slices.Equal(pii.Ignore, []string{"Me@My-Company.com"}) {
+		t.Errorf("pii = %+v", pii)
+	}
+	if cr := c.Category("credentials"); !cr.Enabled || cr.Action != guard.DecisionWarn {
+		t.Errorf("credentials = %+v", cr)
+	}
+	acme := c.Category("acme-codename")
+	if !acme.Enabled || acme.Action != guard.DecisionDeny || acme.Question == nil || acme.Question.Question == "" || !acme.Configured {
+		t.Errorf("acme = %+v", acme)
+	}
+	// 没有配置的类别（只有规则引用它）：启用、deny
+	if x := c.Category("from-a-rule"); !x.Enabled || x.Action != guard.DecisionDeny || x.Configured {
+		t.Errorf("unconfigured = %+v", x)
+	}
+	// outbound 不能请求确认（spec §6.1）；名字、题目与忽略值都要合法；未知字段是错误
+	for name, body := range map[string]string{
+		"ask":           "version: 1\noutbound: {categories: {pii: {action: ask}}}\n",
+		"bad name":      "version: 1\noutbound: {categories: {'Bad Name': {action: deny}}}\n",
+		"empty ignore":  "version: 1\noutbound: {categories: {pii: {ignore: ['  ']}}}\n",
+		"no question":   "version: 1\noutbound: {categories: {x: {question: {counts_as_yes: y}}}}\n",
+		"unknown field": "version: 1\noutbound: {categories: {pii: {colour: red}}}\n",
+	} {
+		if _, err := Load(write(t, t.TempDir(), "c.yaml", body)); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+}

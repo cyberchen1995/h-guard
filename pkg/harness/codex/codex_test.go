@@ -419,3 +419,25 @@ func TestRecordedFixtures(t *testing.T) {
 		t.Errorf("parsed %d fixtures (want 45), compared %d replies (want 7)", n, replies)
 	}
 }
+
+// TestFileContent：Codex 只有 shell 工具，按命令认读文件的命令（outbound 第 2 档，维护者决定 2026-10-15）。
+func TestFileContent(t *testing.T) {
+	read := func(ad codex.Adapter, cmd string) bool {
+		t.Helper()
+		ev, err := ad.Parse(hook("PostToolUse", map[string]any{"tool_name": "Bash", "tool_input": map[string]any{"command": cmd},
+			"tool_response": "x", "tool_use_id": "exec-1"}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return ev.FileContent
+	}
+	if !read(a, "cat .env") || read(a, "npm test") {
+		t.Error("posix")
+	}
+	if !read(a.WithShell(guard.ShellPowerShell).(codex.Adapter), "Get-Content .env") {
+		t.Error("powershell")
+	}
+	if ev, err := a.Parse(post("mcp__fs__read", "x")); err != nil || ev.FileContent {
+		t.Errorf("mcp: %+v %v", ev, err)
+	}
+}

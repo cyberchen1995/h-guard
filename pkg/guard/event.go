@@ -81,6 +81,9 @@ type Event struct {
 	Text           string    `json:"text,omitempty"`    // Prompt 原文；ToolOutput 中抽取的文本（内容块按顺序以换行连接），行号以它为准
 	Requests       []Request `json:"requests,omitempty"`
 	TranscriptPath string    `json:"transcript_path,omitempty"`
+	// FileContent（只用于 ToolOutput）表示工具输出的是文件内容：读文件的工具，或读文件的命令（cat、Get-Content……）。
+	// outbound 第 2 档扫描它，第 3 档扫描全部工具输出（spec §4，M4）。由 adapter 按工具与它的输入判断。
+	FileContent bool `json:"file_content,omitempty"`
 	// Native 是 adapter 保存的原始载荷，只供本 adapter 渲染使用（如按原形状替换工具输出）。
 	// 它可能含完整的工具输出，不参与 JSON 编码，也不得写入日志。
 	Native json.RawMessage `json:"-"`
@@ -132,6 +135,9 @@ func (e Event) Validate() error {
 		}
 	} else if len(e.Actions) > 0 {
 		return fmt.Errorf("guard: %s event must not carry actions", e.Kind)
+	}
+	if e.FileContent && e.Kind != EventToolOutput {
+		return fmt.Errorf("guard: file_content is only for tool_output events, not %s", e.Kind)
 	}
 	for i, r := range e.Requests {
 		if !r.Source.Valid() {

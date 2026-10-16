@@ -1,0 +1,14 @@
+schema: 1
+id: pii.phone_cn
+# 中国大陆手机号
+category: pii
+on: [prompt, tool_output]
+match:
+  detector: pii.phone_cn
+examples:
+  hit:
+    - "call 13800138000"
+    - "+86 139-1234-5678"
+  miss:
+    - "order 913800138000"
+    - "12345678901"

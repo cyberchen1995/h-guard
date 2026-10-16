@@ -1,0 +1,13 @@
+schema: 1
+id: pii.phone_intl
+# 带 + 的国际号码
+category: pii
+on: [prompt, tool_output]
+match:
+  detector: pii.phone_intl
+examples:
+  hit:
+    - "ring +1 (415) 555-0132"
+  miss:
+    - "+12 34"
+    - "version +1.2"

@@ -1,0 +1,14 @@
+schema: 1
+id: pii.email
+# 邮箱地址（排除保留域名、noreply、SSH 地址）
+category: pii
+on: [prompt, tool_output]
+match:
+  detector: pii.email
+examples:
+  hit:
+    - "contact alice.wang@acme-corp.cn for access"
+  miss:
+    - "mail carol@example.org"
+    - "noreply@github.com"
+    - "git clone git@github.com:acme/repo.git"

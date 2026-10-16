@@ -12,6 +12,7 @@ import (
 	"path"
 	"strings"
 
+	"github.com/cyberchen1995/h-guard/pkg/detect/command"
 	"github.com/cyberchen1995/h-guard/pkg/guard"
 	"github.com/cyberchen1995/h-guard/pkg/harness"
 )
@@ -109,6 +110,7 @@ func (a Adapter) Parse(raw []byte) (guard.Event, error) {
 		ev.Actions = acts
 	case "PostToolUse":
 		ev.Kind, ev.Text = guard.EventToolOutput, outputText(in.ToolResponse)
+		ev.FileContent = a.readsFiles(in.ToolName, in.ToolInput)
 	case "UserPromptSubmit":
 		if in.Prompt == nil {
 			return guard.Event{}, errors.New("codex: UserPromptSubmit without a prompt")
@@ -122,6 +124,31 @@ func (a Adapter) Parse(raw []byte) (guard.Event, error) {
 		return guard.Event{}, err
 	}
 	return ev, nil
+}
+
+// readsFiles 报告 shell 工具的命令是不是读文件的命令（outbound 第 2 档，维护者决定 2026-10-15）：Codex 没有
+// 单独的读文件工具。读不懂的输入不算（工具输出照样在第 3 档扫描）。
+func (a Adapter) readsFiles(tool string, raw json.RawMessage) bool {
+	if !shellTools[tool] {
+		return false
+	}
+	cmds, opt, err := commands(raw)
+	if err != nil {
+		return false
+	}
+	shell := a.shell
+	if opt.shell != "" {
+		shell = opt.shell
+	}
+	if shell == "" {
+		shell = guard.ShellPOSIX
+	}
+	for _, c := range cmds {
+		if command.ReadsFiles(c.text, shell) {
+			return true
+		}
+	}
+	return false
 }
 
 // shellTools 是执行命令的工具名：Codex 0.162.1 在 hook 里一律报告 Bash（M0 核实），其余是它内部的工具名，

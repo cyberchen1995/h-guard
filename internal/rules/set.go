@@ -13,9 +13,10 @@ import (
 	builtin "github.com/cyberchen1995/h-guard/rules"
 )
 
-// Set 是加载完成的全部规则，按 id 索引。
+// Set 是加载完成的全部规则，按 id 索引。action 规则与 outbound 规则（M4）共用 id。
 type Set struct {
-	byID map[string]*Rule
+	byID  map[string]*Rule
+	outID map[string]*OutboundRule
 }
 
 // Builtin 只加载内置规则包。
@@ -24,7 +25,7 @@ func Builtin() (*Set, error) { return Load("") }
 // Load 加载内置规则包，再叠加用户目录 userDir 下的 *.yaml（含子目录；userDir 为空或不存在时跳过）。
 // 同 id 的用户规则整条覆盖内置规则；覆盖硬规则是配置错误。
 func Load(userDir string) (*Set, error) {
-	s := &Set{byID: map[string]*Rule{}}
+	s := &Set{byID: map[string]*Rule{}, outID: map[string]*OutboundRule{}}
 	err := fs.WalkDir(builtin.FS, ".", func(path string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".yaml") {
 			return err
@@ -33,15 +34,12 @@ func Load(userDir string) (*Set, error) {
 		if err != nil {
 			return err
 		}
-		r, err := parseRule(data, "builtin:"+path, true)
-		if err != nil {
-			return err
-		}
-		if _, dup := s.byID[r.ID]; dup {
-			return &Error{File: "builtin:" + path, Rule: r.ID, Path: "id", Err: errors.New("duplicate rule id")}
-		}
-		s.byID[r.ID] = r
-		return nil
+		return s.add(data, "builtin:"+path, true, func(id string) error {
+			if s.has(id) {
+				return &Error{File: "builtin:" + path, Rule: id, Path: "id", Err: errors.New("duplicate rule id")}
+			}
+			return nil
+		})
 	})
 	if err != nil {
 		return nil, err
@@ -61,20 +59,17 @@ func Load(userDir string) (*Set, error) {
 		if err != nil {
 			return err
 		}
-		r, err := parseRule(data, path, false)
-		if err != nil {
-			return err
-		}
-		if prev, dup := seen[r.ID]; dup {
-			return &Error{File: path, Rule: r.ID, Path: "id", Err: fmt.Errorf("also defined in %s", prev)}
-		}
-		seen[r.ID] = path
-		if old, ok := s.byID[r.ID]; ok && old.Locked {
-			return &Error{File: path, Rule: r.ID, Path: "id",
-				Err: errors.New("the built-in rule is locked and cannot be overridden (disable it in config instead)")}
-		}
-		s.byID[r.ID] = r
-		return nil
+		return s.add(data, path, false, func(id string) error {
+			if prev, dup := seen[id]; dup {
+				return &Error{File: path, Rule: id, Path: "id", Err: fmt.Errorf("also defined in %s", prev)}
+			}
+			seen[id] = path
+			if old, ok := s.byID[id]; ok && old.Locked {
+				return &Error{File: path, Rule: id, Path: "id",
+					Err: errors.New("the built-in rule is locked and cannot be overridden (disable it in config instead)")}
+			}
+			return nil
+		})
 	})
 	if err != nil {
 		return nil, err
@@ -82,7 +77,57 @@ func Load(userDir string) (*Set, error) {
 	return s, nil
 }
 
-// All 返回全部规则，按 id 排序。
+// add 解析一个规则文件（有 category 字段的是 outbound 规则）并加入：check 先检查 id（重复、覆盖硬规则）；
+// 同 id 的用户规则整条覆盖内置规则，但只能覆盖同一种规则：action 规则与 outbound 规则同 id 是配置错误。
+func (s *Set) add(data []byte, origin string, builtin bool, check func(id string) error) error {
+	if isOutbound(data) {
+		r, err := parseOutbound(data, origin, builtin)
+		if err != nil {
+			return err
+		}
+		if err := check(r.ID); err != nil {
+			return err
+		}
+		if _, clash := s.byID[r.ID]; clash {
+			return &Error{File: origin, Rule: r.ID, Path: "id", Err: errors.New("an action rule has the same id")}
+		}
+		s.outID[r.ID] = r
+		return nil
+	}
+	r, err := parseRule(data, origin, builtin)
+	if err != nil {
+		return err
+	}
+	if err := check(r.ID); err != nil {
+		return err
+	}
+	if _, clash := s.outID[r.ID]; clash {
+		return &Error{File: origin, Rule: r.ID, Path: "id", Err: errors.New("an outbound rule has the same id")}
+	}
+	s.byID[r.ID] = r
+	return nil
+}
+
+func (s *Set) has(id string) bool {
+	_, a := s.byID[id]
+	_, o := s.outID[id]
+	return a || o
+}
+
+// Outbound 返回全部 outbound 规则，按 id 排序。
+func (s *Set) Outbound() []*OutboundRule {
+	out := make([]*OutboundRule, 0, len(s.outID))
+	for _, r := range s.outID {
+		out = append(out, r)
+	}
+	slices.SortFunc(out, func(a, b *OutboundRule) int { return strings.Compare(a.ID, b.ID) })
+	return out
+}
+
+// GetOutbound 返回 id 对应的 outbound 规则，没有时返回 nil。
+func (s *Set) GetOutbound(id string) *OutboundRule { return s.outID[id] }
+
+// All 返回全部 action 规则，按 id 排序。
 func (s *Set) All() []*Rule {
 	out := make([]*Rule, 0, len(s.byID))
 	for _, r := range s.byID {
@@ -104,6 +149,10 @@ type Overrides map[string]bool
 func (s *Set) Apply(ov Overrides) (warnings []string, err error) {
 	var unknown []string
 	for _, id := range sortedIDs(ov) {
+		if r, ok := s.outID[id]; ok {
+			r.enabled = ov[id]
+			continue
+		}
 		r, ok := s.byID[id]
 		if !ok {
 			unknown = append(unknown, id)

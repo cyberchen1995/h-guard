@@ -44,6 +44,7 @@ func runStatus(args []string, o Options) int {
 	fmt.Fprintln(o.Stdout, "config dir:", dir(o.ConfigDir))
 	fmt.Fprintln(o.Stdout, "cache dir: ", dir(o.CacheDir))
 	statusJudge(s, o)
+	statusOutbound(s, o)
 	statusRules(s, o)
 	statusHarnesses(s, o)
 	statusHealth(o)
@@ -71,6 +72,31 @@ func statusJudge(s setup, o Options) {
 	}
 }
 
+// outboundScope 是各 outbound 档位扫描的内容（spec §4）。
+var outboundScope = map[int]string{1: "prompts", 2: "prompts and file contents read by tools", 3: "prompts and all tool output"}
+
+// statusOutbound 报告 outbound 的档位与各类别（启用时写动作，停用时写 off）：内置、配置里写的、规则引用的类别。
+func statusOutbound(s setup, o Options) {
+	fmt.Fprintf(o.Stdout, "outbound: tier %d (%s)\n", s.cfg.Outbound.Tier, outboundScope[s.cfg.Outbound.Tier])
+	names := map[string]bool{}
+	for name := range s.cfg.Outbound.Categories {
+		names[name] = true
+	}
+	for _, r := range s.rules.Outbound() {
+		names[r.Category] = true
+	}
+	var parts []string
+	for _, name := range slices.Sorted(maps.Keys(names)) {
+		c := s.cfg.Category(name)
+		state := string(c.Action)
+		if !c.Enabled {
+			state = "off"
+		}
+		parts = append(parts, name+" "+state)
+	}
+	fmt.Fprintln(o.Stdout, "categories:", strings.Join(parts, ", "))
+}
+
 // statusRules 列出不生效的规则与原因（spec §4 规则状态）。
 func statusRules(s setup, o Options) {
 	reasons := map[string]string{rules.InactiveDisabled: "disabled", rules.InactiveTier: "action tier", rules.InactiveJudgeDisabled: "judge disabled"}
@@ -78,6 +104,12 @@ func statusRules(s setup, o Options) {
 	for _, r := range s.rules.All() {
 		if st := rules.StateOf(r, s.cfg.Action.Tier, s.cfg.Judge.Enabled); !st.Effective {
 			off = append(off, fmt.Sprintf("%s (%s)", r.ID, reasons[st.Inactive]))
+		}
+	}
+	outReasons := map[string]string{rules.InactiveDisabled: "disabled", rules.InactiveCategory: "category disabled", rules.InactiveTier: "outbound tier"}
+	for _, r := range s.rules.Outbound() {
+		if st := rules.OutboundStateOf(r, s.cfg.Outbound.Tier, s.cfg.Category(r.Category).Enabled); !st.Effective {
+			off = append(off, fmt.Sprintf("%s (%s)", r.ID, outReasons[st.Inactive]))
 		}
 	}
 	if len(off) > 0 {

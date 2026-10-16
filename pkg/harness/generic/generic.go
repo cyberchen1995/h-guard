@@ -56,6 +56,8 @@ type input struct {
 	Requests  []request `json:"requests"`
 	SessionID string    `json:"session_id"`
 	CallID    string    `json:"call_id"`
+	// FileContent：工具输出是文件内容（可选，outbound 第 2 档扫描它；新增可选字段不升契约版本）
+	FileContent bool `json:"file_content"`
 }
 
 type action struct {
@@ -106,6 +108,7 @@ func (Adapter) Parse(raw []byte) (guard.Event, error) {
 	if kind != guard.EventAction {
 		ev.Text = in.Text
 	}
+	ev.FileContent = in.FileContent && kind == guard.EventToolOutput // 其他事件带它时忽略，不让输入因此读不懂
 	for _, r := range in.Requests {
 		src := guard.Source(r.Source)
 		if r.Source == "" {

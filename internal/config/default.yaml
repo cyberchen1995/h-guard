@@ -2,7 +2,15 @@
 version: 1
 judge: {enabled: false, backend: jev}
 action: {tier: 2}
-outbound: {tier: 1, judge_max_chunks: 4, judge_min_chars: 200}
+outbound:
+  tier: 1
+  judge_max_chunks: 4
+  judge_min_chars: 200
+  # 检测规则在规则包里（rules/outbound），类别只管策略（spec §6.1）。PII 默认关闭：开发场景里邮箱、公网 IP 常见。
+  categories:
+    credentials: {enabled: true, action: deny}
+    private_key: {enabled: true, action: deny}
+    pii: {enabled: false, action: deny}
 backends:
   jev: {type: typesafe, model: jev-latest, profile: jev, api_key_env: TYPESAFE_API_KEY}
   # 推荐后端（名字稳定），都带校准档案，选用时不需要用户校准。

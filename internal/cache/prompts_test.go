@@ -136,3 +136,20 @@ func TestMultiProcessWriters(t *testing.T) {
 		t.Errorf("got %d entries, want 40", len(got))
 	}
 }
+
+// TestBlockedNormalizesWhitespace：被拦提示词的指纹按空白归一：会话记录里换行写成 \r\n、多个空格合并或首尾带空白时
+// 仍认得出（M4a 计划评审）；内容不同的提示词不算。
+func TestBlockedNormalizesWhitespace(t *testing.T) {
+	p := &cache.Prompts{Dir: t.TempDir()}
+	if err := p.Block("codex", "s1", "deploy  with\ttoken\nabc"); err != nil {
+		t.Fatal(err)
+	}
+	for _, same := range []string{"deploy with token abc", " deploy with\r\ntoken  abc\n"} {
+		if !p.Blocked("codex", "s1", same) {
+			t.Errorf("%q not recognized", same)
+		}
+	}
+	if p.Blocked("codex", "s1", "deploy with token abd") || p.Blocked("codex", "s2", "deploy with token abc") {
+		t.Error("different prompt or session matched")
+	}
+}

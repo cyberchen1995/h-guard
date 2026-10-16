@@ -159,3 +159,20 @@ func TestParseFailure(t *testing.T) {
 		t.Errorf("parse failure = %s, exit %d", b, code)
 	}
 }
+
+// TestFileContent：generic 的工具输出可以写 file_content（可选字段，不升契约版本）。
+func TestFileContent(t *testing.T) {
+	ev, err := a.Parse(input(map[string]any{"kind": "tool_output", "text": "x", "tool": "read_file", "file_content": true}))
+	if err != nil || !ev.FileContent {
+		t.Errorf("%+v %v", ev, err)
+	}
+	ev, err = a.Parse(input(map[string]any{"kind": "tool_output", "text": "x"}))
+	if err != nil || ev.FileContent {
+		t.Errorf("default: %+v %v", ev, err)
+	}
+	// 其他事件带 file_content 时忽略它，不能因此读不懂输入而放过提示词（M4a 计划评审）
+	ev, err = a.Parse(input(map[string]any{"kind": "prompt", "text": "x", "file_content": true}))
+	if err != nil || ev.FileContent {
+		t.Errorf("prompt: %+v %v", ev, err)
+	}
+}

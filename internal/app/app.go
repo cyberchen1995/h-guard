@@ -5,12 +5,15 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"time"
 
 	"github.com/cyberchen1995/h-guard/internal/check/action"
+	"github.com/cyberchen1995/h-guard/internal/check/outbound"
 	"github.com/cyberchen1995/h-guard/internal/config"
 	"github.com/cyberchen1995/h-guard/internal/engine"
 	"github.com/cyberchen1995/h-guard/internal/i18n"
@@ -233,6 +236,9 @@ func loadConfig(o Options, extra string, checkKinds bool) (setup, error) {
 	if _, err := set.Apply(ov); err != nil {
 		return s, err
 	}
+	if err := judgeOnlyCategories(cfg, set); err != nil {
+		return s, err
+	}
 	s.rules = set
 	if o.ConfigDir == "" {
 		return s, nil
@@ -243,15 +249,41 @@ func loadConfig(o Options, extra string, checkKinds bool) (setup, error) {
 	return s, nil
 }
 
-// newEngine 组装 Engine：目前只有 action 检查。文件动作的保护路径用主目录、h-guard 实际的配置与缓存目录，
+// newEngine 组装 Engine：action 检查与 outbound 检查（M4）。文件动作的保护路径用主目录、h-guard 实际的配置与缓存目录，
 // 以及这次 --config 加载的文件展开。
 func (s setup) newEngine(o Options, j action.Judge) *engine.Engine {
 	c := &action.Check{Rules: s.rules, Config: s.cfg, Catalog: s.catalog, Locale: s.locale, Judge: j,
 		Paths: paths.Env{Home: o.Home, FoldCase: paths.FoldCaseDefault, Windows: paths.WindowsDefault,
 			Vars: map[string]string{rules.VarConfig: o.ConfigDir, rules.VarCache: o.CacheDir, rules.VarExtraConfig: s.extra,
 				rules.VarClaudeConfig: o.Getenv("CLAUDE_CONFIG_DIR"), rules.VarCodexHome: o.Getenv("CODEX_HOME")}}}
+	o2 := &outbound.Check{Rules: s.rules, Config: s.cfg}
 	return &engine.Engine{
-		Checks: []guard.Check{c}, Catalog: s.catalog, Locale: s.locale,
+		Checks: []guard.Check{c, o2}, Catalog: s.catalog, Locale: s.locale,
 		WhenAskUnsupported: guard.Decision(s.cfg.Policy.WhenAskUnsupported),
 	}
+}
+
+// judgeOnlyCategories 报告完全依赖模型的 outbound 类别（spec §4）：启用、写了题目、却没有启用的本地规则，而模型
+// 关闭——这样的类别什么也查不出，是配置错误。错误指出类别与开启方法。
+func judgeOnlyCategories(cfg *config.Config, set *rules.Set) error {
+	if cfg.Judge.Enabled {
+		return nil
+	}
+	local := map[string]bool{}
+	for _, r := range set.Outbound() {
+		if r.Enabled() {
+			local[r.Category] = true
+		}
+	}
+	var issues []config.Issue
+	for _, name := range slices.Sorted(maps.Keys(cfg.Outbound.Categories)) {
+		if c := cfg.Category(name); c.Enabled && c.Question != nil && !local[name] {
+			issues = append(issues, config.Issue{Path: "outbound.categories." + name,
+				Msg: "has no enabled local rule and relies on the judge, but judge.enabled is false (run h-guard init, or add a rule with this category)"})
+		}
+	}
+	if len(issues) > 0 {
+		return &config.Error{Issues: issues}
+	}
+	return nil
 }
