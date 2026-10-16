@@ -118,6 +118,8 @@ func findEmail(text string) [][2]int {
 		switch {
 		case loc[1] < len(text) && text[loc[1]] == ':':
 			continue // git@github.com:org/repo 是 SSH 地址
+		case local == "git":
+			continue // ssh -T git@github.com：git 是代码托管的 SSH 用户，不是人
 		case reservedDomain(domain):
 			continue
 		case noreply(local) || strings.Contains("."+domain+".", ".noreply."):
@@ -153,19 +155,29 @@ var phoneCNRe = regexp.MustCompile(`(?:\+?86[\s-]?)?1[3-9]\d[\s-]?\d{4}[\s-]?\d{
 func findPhoneCN(text string) [][2]int {
 	var out [][2]int
 	for _, loc := range phoneCNRe.FindAllStringIndex(text, -1) {
-		if digitBounded(text, loc[0], loc[1]) {
+		if digitBounded(text, loc[0], loc[1]) && !quantity(text, loc[0], loc[1]) {
 			out = append(out, [2]int{loc[0], loc[1]})
 		}
 	}
 	return out
 }
 
-var phoneIntlRe = regexp.MustCompile(`\+[1-9][\d\s().-]{6,22}\d`)
+var (
+	phoneIntlRe = regexp.MustCompile(`\+[1-9][\d\s().-]{6,22}\d`)
+	dateAfter   = regexp.MustCompile(`^\+\d{4}-\d{2}-\d{2}`)
+	// diffHunk 是 unified diff 的块头：这样的文本里行首的 + 是新增行的标记，不是国际号码的开头
+	diffHunk = regexp.MustCompile(`(?m)^@@ -\d`)
+)
 
 func findPhoneIntl(text string) [][2]int {
 	var out [][2]int
+	isDiff := diffHunk.MatchString(text)
 	for _, loc := range phoneIntlRe.FindAllStringIndex(text, -1) {
-		if loc[1] < len(text) && isDigit(text[loc[1]]) {
+		switch {
+		case loc[1] < len(text) && isDigit(text[loc[1]]),
+			loc[0] > 0 && (isWord(text[loc[0]-1]) || text[loc[0]-1] == '.'), // 1.2.3+20231015.1 的构建元数据
+			dateAfter.MatchString(text[loc[0]:]),                            // +2026-10-16：diff 里的时间戳
+			isDiff && (loc[0] == 0 || text[loc[0]-1] == '\n'):
 			continue
 		}
 		n := 0
@@ -250,9 +262,15 @@ var (
 	}
 )
 
+// versionWord 是写在版本号前面的词：build 2.0.0.1 是版本号，不是地址。
+var versionWord = regexp.MustCompile(`(?i)\b(?:version|ver|build|release|rev|revision)\s*$`)
+
 func findIP(text string) [][2]int {
 	var out [][2]int
 	for _, loc := range ipv4Re.FindAllStringIndex(text, -1) {
+		if versionWord.MatchString(text[max(0, loc[0]-12):loc[0]]) {
+			continue
+		}
 		// 版本号形态：前面紧邻字母、数字或点（v1.2.3.4、1.2.3.4.5 的后四段），后面还有 .数字
 		if loc[0] > 0 && (isWord(text[loc[0]-1]) || text[loc[0]-1] == '.') {
 			continue
@@ -276,6 +294,21 @@ func findIP(text string) [][2]int {
 		}
 	}
 	return out
+}
+
+// quantityKey、quantityUnit 是数量的写法：size=13421772800、17179869184 bytes 是字节数，不是手机号。
+var (
+	quantityKey = regexp.MustCompile(`(?i)\b(?:size|bytes|memory|mem|length|len|count|total|offset|timestamp|ts|ms|elapsed)\s*[=:]\s*$`)
+	// 单位紧跟数字（至多隔一个空格）：长单位后面可以接词（bytes free）；短单位（b、s、us、ms、ns、sec）后面不能再是
+	// 字母或「空格加字母」（B座、us office 不是单位，M4b 计划评审 M-2）
+	quantityUnit      = regexp.MustCompile(`(?i)^ ?(?:bytes?|seconds?|[kmgt]i?b)(?:$|[^\p{L}])`)
+	quantityUnitShort = regexp.MustCompile(`(?i)^ ?(?:b|s|us|µs|ns|ms|sec)(?:$|[^\p{L}\s]|\s+[^\p{L}\s]|\s*$)`)
+)
+
+// quantity 报告 [start, end) 写在数量的位置上：前面是 size=、memory: 这类键，或后面跟着单位。
+func quantity(text string, start, end int) bool {
+	after := text[end:min(len(text), end+16)]
+	return quantityKey.MatchString(text[max(0, start-16):start]) || quantityUnit.MatchString(after) || quantityUnitShort.MatchString(after)
 }
 
 func isWord(b byte) bool {

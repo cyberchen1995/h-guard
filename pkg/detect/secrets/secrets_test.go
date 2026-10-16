@@ -370,6 +370,7 @@ func TestConfirmed(t *testing.T) {
 		{secrets.RuleAssignment, "hashedPassword,", false},
 		{secrets.RuleAssignment, "accessToken", false},
 		{secrets.RuleAssignment, "expired_signature", false},
+		{secrets.RuleAssignment, "expired_signature.", false}, // 句末的句号（M4b 语料起草时发现）
 		{secrets.RuleAssignment, "required", false},
 		{secrets.RuleAssignment, "&secret", false},
 		{secrets.RuleAssignment, "!vault", false},

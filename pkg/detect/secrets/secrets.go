@@ -408,7 +408,7 @@ func Confirmed(rule, value string) bool {
 		hasDigit := strings.ContainsAny(v, "0123456789")
 		return hasDigit || strings.ToLower(v) != v && strings.ToUpper(v) != v && wordShare(v) < maxWordShare
 	case RuleAssignment, RuleURLPassword:
-		v = strings.TrimRight(v, ";,") // 代码里的 token: string; 与对象里的 password: hashedPassword,
+		v = strings.TrimRight(v, ";,.") // 代码里的 token: string; 、对象里的 password: hashedPassword, 与句末的句号
 		switch {
 		case placeholderValue.MatchString(strings.ToLower(v)),
 			strings.ContainsAny(v, "$%") && !strings.ContainsAny(v, "0123456789"), // ${VAR}、$VAR、%VAR%
