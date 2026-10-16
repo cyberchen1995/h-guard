@@ -405,3 +405,32 @@ func TestConsentPIILater(t *testing.T) {
 		t.Errorf("status = %s", st)
 	}
 }
+
+// TestOutboundClaudeTranscript：claude -p 下被 drop 的提示词仍写进 Claude Code 的会话记录（spec §6.3 的 M0 实测）。
+// 它不进缓存，transcript 回退读到它时按指纹跳过，h-guard 自己的说明同样跳过，不会成为授权依据（spec §5.4，M4a 计划
+// 评审 M1）。会话记录里的写法与 hook 收到的空白不同（换行、首尾空白）也认得出。
+func TestOutboundClaudeTranscript(t *testing.T) {
+	e := newEnv(t)
+	e.config("version: 1\nlog: {decisions: true}\n")
+	blocked := "deploy with token " + testKey + "\nthen   restart"
+	if out, _, _ := e.run(promptReq(blocked, "sdk"), "hook", "claudecode", "--event", "prompt.submit"); !strings.Contains(out, `"action":"deny"`) {
+		t.Fatalf("not blocked: %s", out)
+	}
+	rec := func(text, kind string) string {
+		b, _ := json.Marshal(map[string]any{"type": "user", "message": map[string]any{"content": text}, "origin": map[string]string{"kind": kind}})
+		return string(b) + "\n"
+	}
+	tr := filepath.Join(t.TempDir(), "s1.jsonl")
+	os.WriteFile(tr, []byte(rec("clean the build dir", "human")+rec(" deploy with token "+testKey+"\r\nthen restart ", "sdk")+
+		rec("h-guard: Contains credentials (1 found, line 1).", "human")), 0o600)
+	e.run(pre("Bash", map[string]any{"command": "rm -rf build"}, tr), "hook", "claudecode", "--event", "PreToolUse")
+	var action string
+	for _, line := range strings.Split(e.files("logs"), "\n") {
+		if strings.Contains(line, `"event":"action"`) {
+			action = line
+		}
+	}
+	if !strings.Contains(action, `"text":"clean the build dir"`) || strings.Contains(action, "deploy with token") || strings.Contains(action, "Contains credentials") {
+		t.Errorf("action entry = %s", action)
+	}
+}
