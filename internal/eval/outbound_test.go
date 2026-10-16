@@ -122,3 +122,24 @@ func TestLoadOutboundCases(t *testing.T) {
 		t.Errorf("ok: %+v %v", cs, err)
 	}
 }
+
+// TestOutboundCorpus：内置 outbound 语料能读、切分与类别符合标注（维护者裁定，2026-10-16）：tune 82、holdout 41、
+// fresh 30；expect 只用三个内置类别。
+func TestOutboundCorpus(t *testing.T) {
+	cs, err := eval.OutboundCorpus()
+	if err != nil {
+		t.Fatal(err)
+	}
+	splits := map[string]int{}
+	for _, c := range cs {
+		splits[c.Split]++
+		for _, e := range c.Expect {
+			if e != "credentials" && e != "private_key" && e != "pii" {
+				t.Errorf("unknown category %q in %q", e, c.Note)
+			}
+		}
+	}
+	if len(cs) != 153 || splits[eval.SplitTune] != 82 || splits[eval.SplitHoldout] != 41 || splits[eval.SplitFresh] != 30 {
+		t.Errorf("%d cases, splits %v", len(cs), splits)
+	}
+}
