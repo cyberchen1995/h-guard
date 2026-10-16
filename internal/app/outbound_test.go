@@ -18,8 +18,10 @@ import (
 	"github.com/cyberchen1995/h-guard/internal/cache"
 	"github.com/cyberchen1995/h-guard/internal/check/outbound"
 	"github.com/cyberchen1995/h-guard/internal/consent"
+	"github.com/cyberchen1995/h-guard/internal/i18n"
 	hglog "github.com/cyberchen1995/h-guard/internal/log"
 	"github.com/cyberchen1995/h-guard/pkg/guard"
+	"github.com/cyberchen1995/h-guard/pkg/harness"
 	"github.com/cyberchen1995/h-guard/pkg/harness/extproto"
 )
 
@@ -560,5 +562,48 @@ func TestEvalOutboundFailureDetail(t *testing.T) {
 	_, errs, code := e.run(nil, "eval", "--outbound", "--yes", "--backend", "claude-haiku", "--cases", cases)
 	if code != 1 || !strings.Contains(errs, "auth") || !strings.Contains(errs, "HG_TEST_MISSING_KEY is not set") {
 		t.Errorf("exit %d, stderr %s", code, errs)
+	}
+}
+
+// TestBlockedPromptFingerprintOnFallback：看门狗或 panic 兜底输出了已提交的 deny 时，被拦的提示词同样记指纹，transcript
+// 回退不会把它读成授权（M4a 终审 M-1）。
+func TestBlockedPromptFingerprintOnFallback(t *testing.T) {
+	text := "deploy with token " + testKey
+	for _, path := range []string{"recover", "expire"} {
+		cacheDir := t.TempDir()
+		var out strings.Builder
+		h := &hookRun{o: Options{Stdout: &out, Getenv: func(string) string { return "" }, CacheDir: cacheDir, Now: time.Now}, event: "prompt.submit", start: time.Now()}
+		h.adapter, _ = harness.Lookup("claudecode")
+		h.logs = &hglog.Writer{Dir: cacheDir, Now: time.Now}
+		ev := guard.Event{Kind: guard.EventPrompt, Harness: "claudecode", SessionID: "s1", Text: text}
+		h.ev = &ev
+		h.commit("outbound", guard.Verdict{Decision: guard.DecisionDeny, Reasons: []guard.Reason{{Code: i18n.KeyOutboundCredentials, Params: map[string]string{"count": "1", "lines": "1"}}}})
+		if path == "recover" {
+			func() {
+				defer h.recover()
+				panic("boom")
+			}()
+		} else {
+			h.expire()
+		}
+		p := &cache.Prompts{Dir: filepath.Join(cacheDir, "prompts")}
+		if !eventually(func() bool { return p.Blocked("claudecode", "s1", text) }) || !strings.Contains(out.String(), `"action":"deny"`) {
+			t.Errorf("%s: no fingerprint, output %s", path, out.String())
+		}
+	}
+}
+
+// TestCacheMasksUserCredentials：credentials 设为 warn 时提示词照常写入指令缓存；用户自己的凭据正则认出的值在写入前
+// 遮蔽（M4a 终审 M-3）。
+func TestCacheMasksUserCredentials(t *testing.T) {
+	e := newEnv(t)
+	e.config("version: 1\noutbound: {categories: {credentials: {action: warn}}}\n")
+	dir := filepath.Join(e.configDir, "rules")
+	os.MkdirAll(dir, 0o700)
+	os.WriteFile(filepath.Join(dir, "k.yaml"), []byte("schema: 1\nid: acme.key\ncategory: credentials\non: [prompt]\nmatch: {regex: ['ACME-[0-9]{12}']}\n"), 0o600)
+	e.run(promptReq("deploy using ACME-123456789012 tonight", "composer"), "hook", "claudecode", "--event", "prompt.submit")
+	got := (&cache.Prompts{Dir: filepath.Join(e.cache, "prompts")}).Recent("claudecode", "s1", 5)
+	if len(got) != 1 || strings.Contains(got[0].Text, "ACME-1234") || !strings.Contains(got[0].Text, "deploy using") {
+		t.Errorf("cache = %+v", got)
 	}
 }
