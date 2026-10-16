@@ -27,9 +27,13 @@ profiles:
     fingerprint: {model: jev-latest, probability: native, questions: "sha256:cdd8dab0be5e906b5d5f0fda6c5c60412214db02637af427adcc8e7a9415a5ab"}
   # 按 M3a 在 113 条语料上用 Claude 校准（2026-10-14，维护者采用 sweep 的建议）。拟合的是同一份语料：
   # 与保守默认值相比只有 requested 由 0.9 降到 0.85，多放行的几条都是模型对授权恰好答 0.85 的语料。
+  # outbound 门槛按 M4b 验收在 153 条 outbound 语料上校准（2026-10-16）：扫描的平台是 0.15–0.25（tune 上 6 处错），维护者
+  # 采用中间的 0.2——模型对两条带秘密的 URL 恰好答 0.25，干净文本除一条外都低于 0.15。复测时扫描建议 0.1（只多接住
+  # 一条），与 0.2 的差别在两次运行的波动之内，维护者保持 0.2。模型的命中只提示、不拦。
   claude-haiku:
-    thresholds: {hit: 0.3, veto: 0.05, requested: 0.85, radius_floor: {recursive_delete: 1.25}}
-    fingerprint: {model: claude-haiku-5-5, probability: verbalized, questions: "sha256:cdd8dab0be5e906b5d5f0fda6c5c60412214db02637af427adcc8e7a9415a5ab"}
+    thresholds: {hit: 0.3, veto: 0.05, requested: 0.85, radius_floor: {recursive_delete: 1.25}, outbound: 0.2}
+    fingerprint: {model: claude-haiku-5-5, probability: verbalized, questions: "sha256:cdd8dab0be5e906b5d5f0fda6c5c60412214db02637af427adcc8e7a9415a5ab",
+      outbound_questions: "sha256:e7ee52fe169a18ddc19689ea73e9bbdec3073f34c5c25f5558cba8db7cdfa91a"}
   claude-sonnet:
     thresholds: {hit: 0.3, veto: 0.05, requested: 0.85, radius_floor: {recursive_delete: 1.25}}
     fingerprint: {model: claude-sonnet-5-5, probability: verbalized-structured-effort-low, questions: "sha256:cdd8dab0be5e906b5d5f0fda6c5c60412214db02637af427adcc8e7a9415a5ab"}

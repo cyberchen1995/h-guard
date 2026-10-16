@@ -77,12 +77,23 @@ func TestBuiltinProfileMatchesTheQuestions(t *testing.T) {
 // TestBuiltinOutboundProfiles：写了 outbound 门槛的内置档案必须按当前的 outbound 题集校准（fingerprint.outbound_questions
 // 等于 outbound.BuiltinQuestionsDigest，模型与概率获取方式与后端一致）。改了 outbound 题目的措辞而不重新校准，这里会失败
 // （M4b，与 TestBuiltinProfileMatchesTheQuestions 对 action 题集的要求相同）。
+//
+// builtinOutbound 列出带 outbound 门槛的内置后端与门槛：claude-haiku 按 M4b 验收在 153 条 outbound 语料上真实调用，
+// 维护者采用 0.2（扫描的平台 0.15–0.25 的中间，2026-10-16）。
+var builtinOutbound = map[string]float64{"claude-haiku": 0.2}
+
 func TestBuiltinOutboundProfiles(t *testing.T) {
 	cfg := config.Defaults()
 	for _, name := range slices.Sorted(maps.Keys(cfg.Backends)) {
 		p, ok := cfg.Profiles[cfg.Backends[name].Profile]
+		if want, listed := builtinOutbound[name]; listed && (!ok || p.Thresholds.Outbound == nil || *p.Thresholds.Outbound != want) {
+			t.Errorf("built-in backend %s should have outbound threshold %g", name, want)
+		}
 		if !ok || p.Thresholds.Outbound == nil {
 			continue
+		}
+		if _, listed := builtinOutbound[name]; !listed {
+			t.Errorf("built-in backend %s has an outbound threshold that builtinOutbound does not list", name)
 		}
 		b, err := cfg.NewBackend(name)
 		if err != nil {
