@@ -66,6 +66,9 @@ func statusJudge(s setup, o Options) {
 	fmt.Fprintln(o.Stdout, "calibration:", calibrationText(st))
 	if s.cfg.OutboundJudge() {
 		fmt.Fprintln(o.Stdout, "outbound calibration:", outboundCalibrationText(st))
+		if own := ownCategoryQuestions(s); len(own) > 0 { // 门槛是在内置措辞上校准的（M4b 终审 M-5）
+			fmt.Fprintf(o.Stdout, "not calibrated: your categories %s ask their own questions, which no profile covers\n", strings.Join(own, ", "))
+		}
 	} else {
 		fmt.Fprintln(o.Stdout, "outbound judge: off (outbound.judge: false); prompts and tool output are checked by local rules only")
 	}

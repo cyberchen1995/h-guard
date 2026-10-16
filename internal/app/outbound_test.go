@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/cyberchen1995/h-guard/internal/config"
+	"github.com/cyberchen1995/h-guard/pkg/judge"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -432,5 +434,131 @@ func TestOutboundClaudeTranscript(t *testing.T) {
 	}
 	if !strings.Contains(action, `"text":"clean the build dir"`) || strings.Contains(action, "deploy with token") || strings.Contains(action, "Contains credentials") {
 		t.Errorf("action entry = %s", action)
+	}
+}
+
+// TestEvalOutbound：eval --outbound 把语料发给后端前说明并确认（或 --yes），报告仅本地与本地 + 模型的漏报率与误报率；
+// --sweep 只在 tune 切分上扫门槛，给出带 outbound 题集指纹的建议（M4b）。与 --shell、--repeat 同用是用法错误。
+func TestEvalOutbound(t *testing.T) {
+	srv := newOutboundServer(t, 0.9)
+	e := newEnv(t)
+	e.outboundJudgeConfig(srv, "")
+	filler := strings.Repeat("Notes from the weekly sync about the release schedule and testing. ", 4)
+	cases := filepath.Join(t.TempDir(), "cases.jsonl")
+	lines := []map[string]any{
+		{"text": "use key " + testKey, "source": "prompt", "expect": []string{"credentials"}, "split": "tune", "note": "local"},
+		{"text": filler + "the admin pw is Tr0ub4dor and3", "source": "prompt", "expect": []string{"credentials"}, "split": "tune", "note": "judge"},
+		{"text": filler + "pw rotated last week", "source": "tool_output", "tool": "Bash", "expect": []string{"credentials"}, "split": "holdout", "note": "judge"},
+	}
+	var b strings.Builder
+	for _, l := range lines {
+		j, _ := json.Marshal(l)
+		b.Write(j)
+		b.WriteString("\n")
+	}
+	os.WriteFile(cases, []byte(b.String()), 0o600)
+	if _, errs, code := e.run(nil, "eval", "--outbound", "--cases", cases); code != 1 || !strings.Contains(errs, "--yes") || srv.calls != 0 {
+		t.Errorf("without --yes: exit %d, %s", code, errs)
+	}
+	for _, bad := range [][]string{{"--shell", "posix"}, {"--repeat", "2"}} {
+		if _, _, code := e.run(nil, append([]string{"eval", "--outbound", "--yes", "--cases", cases}, bad...)...); code != 2 {
+			t.Errorf("%v: exit %d", bad, code)
+		}
+	}
+	out, errs, code := e.run(nil, "eval", "--outbound", "--yes", "--sweep", "--cases", cases)
+	if code != 0 || srv.calls != 2 || !strings.Contains(errs, "sends 3 texts") {
+		t.Fatalf("exit %d, calls %d\n%s\n%s", code, srv.calls, out, errs)
+	}
+	for _, want := range []string{"missed, local only", "1/2 50%", "0/2 0%", "=== Outbound threshold sweep (tune split) ===",
+		"outbound: ", "hit: 0.4", "questions: \"sha256:", "outbound_questions: \"" + outbound.BuiltinQuestionsDigest + "\""} {
+		if !strings.Contains(out, want) {
+			t.Errorf("report lacks %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out+errs, testKey) {
+		t.Errorf("output leaks the key")
+	}
+	// 建议的档案照抄进配置是合法的（M4b 计划评审 M-3）
+	snippet := out[strings.LastIndex(out, "profiles:\n"):]
+	if i := strings.Index(snippet, "\n#"); i >= 0 {
+		snippet = snippet[:i+1]
+	}
+	e.config("version: 1\n" + snippet)
+	if _, errs, code := e.run(nil, "config", "validate"); code != 0 {
+		t.Errorf("suggested profile is not a valid config:\n%s\n%s", snippet, errs)
+	}
+}
+
+// describedBackend 只报告模型与概率获取方式。
+type describedBackend struct {
+	judge.Backend
+	info judge.Info
+}
+
+func (b describedBackend) Describe() judge.Info { return b.info }
+
+// TestOutboundProfileIdentity：建议档案只在已有指纹的模型、概率获取方式与当前后端一致时保留 action 的阈值与指纹；不一致时
+// 只写 outbound 的部分，action 照旧按未校准，outbound 的校准不会顺带认可旧模型上的 action 阈值（M4b Codex 评审 M4B-02）。
+func TestOutboundProfileIdentity(t *testing.T) {
+	v := 0.4
+	old := config.Profile{Thresholds: config.ProfileThresholds{Hit: &v, Veto: &v, Requested: &v},
+		Fingerprint: &config.Fingerprint{Model: "old", Probability: "native", Questions: builtinDigest()}}
+	for name, info := range map[string]judge.Info{
+		"same":                {Model: "old", Probability: "native"},
+		"model changed":       {Model: "new", Probability: "native"},
+		"probability changed": {Model: "old", Probability: "logprobs"},
+	} {
+		text := "version: 1\nbackends: {probe: {type: openai, model: " + info.Model + ", profile: p}}\n" + outboundProfileYAML("p", old, 0.5, info)
+		path := filepath.Join(t.TempDir(), "config.yaml")
+		os.WriteFile(path, []byte(text), 0o600)
+		cfg, err := config.Load(path)
+		if err != nil {
+			t.Fatalf("%s: %v\n%s", name, err, text)
+		}
+		b := describedBackend{info: info}
+		_, action := cfg.ThresholdsFor("probe", b, builtinDigest())
+		th, ob := cfg.OutboundThresholdFor("probe", b, outbound.BuiltinQuestionsDigest)
+		if action.Calibrated() != (name == "same") || !ob.Calibrated() || th != 0.5 {
+			t.Errorf("%s: action %+v, outbound %v %+v\n%s", name, action, th, ob, text)
+		}
+	}
+}
+
+// TestEvalOutboundNeedsTuneAnswers：tune 切分里没有任何有效的模型答案时不给建议、退出码 1（M4b Codex 评审 M4B-03）：
+// 只有 fresh 切分、tune 的文本都短于门槛。outbound.judge: false 不影响评估（用户确认了这一次发送）。
+func TestEvalOutboundNeedsTuneAnswers(t *testing.T) {
+	long := strings.Repeat("weekly planning notes ", 20)
+	for name, c := range map[string]struct {
+		extra, text, split string
+		suggest            bool
+	}{
+		"fresh only":          {"", long, "fresh", false},
+		"tune too short":      {"", "short note", "tune", false},
+		"outbound judge off":  {"outbound: {judge: false}\n", long, "tune", true},
+		"tune with an answer": {"", long, "tune", true},
+	} {
+		srv := newOutboundServer(t, 0.9)
+		e := newEnv(t)
+		e.outboundJudgeConfig(srv, c.extra)
+		cases := filepath.Join(t.TempDir(), "cases.jsonl")
+		os.WriteFile(cases, []byte(`{"text":"`+c.text+`","source":"prompt","expect":[],"split":"`+c.split+`"}`+"\n"), 0o600)
+		out, errs, code := e.run(nil, "eval", "--outbound", "--yes", "--sweep", "--cases", cases)
+		if got := strings.Contains(out, "# Suggested outbound threshold"); got != c.suggest || (code == 0) != c.suggest ||
+			!c.suggest && !strings.Contains(errs, "no tune case") {
+			t.Errorf("%s: suggested %v, exit %d, calls %d\n%s", name, got, code, srv.calls, errs)
+		}
+	}
+}
+
+// TestEvalOutboundFailureDetail：调用失败时 stderr 写明失败的类别与后端给出的说明（凭据遮蔽），用户才知道怎么修
+// （与动作评估相同；M4b 真实评估时全部失败却看不出原因）。
+func TestEvalOutboundFailureDetail(t *testing.T) {
+	e := newEnv(t)
+	e.config("version: 1\nbackends: {claude-haiku: {type: anthropic, model: claude-haiku-5-5, api_key_env: HG_TEST_MISSING_KEY}}\n")
+	cases := filepath.Join(t.TempDir(), "cases.jsonl")
+	os.WriteFile(cases, []byte(`{"text":"`+strings.Repeat("weekly planning notes ", 20)+`","source":"prompt","expect":[],"split":"tune"}`+"\n"), 0o600)
+	_, errs, code := e.run(nil, "eval", "--outbound", "--yes", "--backend", "claude-haiku", "--cases", cases)
+	if code != 1 || !strings.Contains(errs, "auth") || !strings.Contains(errs, "HG_TEST_MISSING_KEY is not set") {
+		t.Errorf("exit %d, stderr %s", code, errs)
 	}
 }

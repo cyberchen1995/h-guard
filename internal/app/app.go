@@ -112,6 +112,7 @@ const usage = `usage:
   h-guard backend list | enable <name> | disable <name> [--config <file>]
   h-guard status [--config <file>]
   h-guard eval [--backend <name>] [--sweep] [--shell posix|powershell | --cases <file>] [--repeat <K>] [--bootstrap <N>] [--seed <n>] [--yes] [--config <file>]
+  h-guard eval --outbound [--backend <name>] [--sweep] [--threshold <t>] [--cases <file>] [--yes] [--config <file>]
   h-guard init
   h-guard install claudecode|codex [--write] [--remove] [--timeout <seconds>] [--shell posix|powershell]
   h-guard migrate <questions.json> [--write]
