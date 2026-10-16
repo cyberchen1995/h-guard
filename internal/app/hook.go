@@ -134,7 +134,11 @@ func (h *hookRun) commit(check string, v guard.Verdict) {
 // newEngine 是 hook 使用的 Engine：判断层按配置与同意接入（spec §8.5），再接上提交记录，供看门狗读取。
 func (h *hookRun) newEngine(s setup) (*engine.Engine, judgeState) {
 	j, st := s.actionJudge(h.o)
-	eng := s.newEngine(h.o, j)
+	oj := s.outboundJudge(st)
+	if h.ev != nil && h.ev.Kind != guard.EventAction && !h.adapter.CapsFor(*h.ev).Warn {
+		oj.Skip = true // harness 显示不了提示：outbound 判断层的命中只提示，不调用（M4b 终审 I-1）
+	}
+	eng := s.newEngine(h.o, j, oj)
 	eng.OnCommit = h.commit
 	for _, c := range eng.Checks {
 		if oc, ok := c.(*outbound.Check); ok {

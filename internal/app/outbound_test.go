@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,6 +15,7 @@ import (
 
 	"github.com/cyberchen1995/h-guard/internal/cache"
 	"github.com/cyberchen1995/h-guard/internal/check/outbound"
+	"github.com/cyberchen1995/h-guard/internal/consent"
 	hglog "github.com/cyberchen1995/h-guard/internal/log"
 	"github.com/cyberchen1995/h-guard/pkg/guard"
 	"github.com/cyberchen1995/h-guard/pkg/harness/extproto"
@@ -272,4 +276,132 @@ func ext(hook string, data, result map[string]any) []byte {
 	b, _ := json.Marshal(map[string]any{"protocol": extproto.Protocol, "harness": "claudecode", "harness_version": "2.1.296",
 		"hook": hook, "session": map[string]string{"id": "s1", "cwd": "/w"}, "data": data, "result": result})
 	return b
+}
+
+// outboundServer 是假的 typesafe 服务，回答 outbound 类别题：credentials 为 p，其余 0.02。
+type outboundServer struct {
+	*httptest.Server
+	calls int
+	body  string
+}
+
+func newOutboundServer(t *testing.T, p float64) *outboundServer {
+	s := &outboundServer{}
+	s.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.calls++
+		b, _ := io.ReadAll(r.Body)
+		s.body = string(b)
+		low := `{"type":"noul","noul":0.02}`
+		fmt.Fprintf(w, `{"answers":{"outbound.credentials":{"type":"noul","noul":%g},"outbound.private_key":%s,"outbound.pii":%s}}`, p, low, low)
+	}))
+	t.Cleanup(s.Close)
+	return s
+}
+
+// outboundJudgeConfig 开启模型、把 jev 指向 srv；extra 追加在后面（如开启 PII）。
+func (e *env) outboundJudgeConfig(srv *outboundServer, extra string) {
+	e.t.Setenv("HG_TEST_KEY", "test-key-not-a-secret")
+	e.config("version: 1\njudge: {enabled: true, backend: jev}\n" +
+		"backends: {jev: {type: typesafe, model: jev-latest, profile: jev, base_url: '" + srv.URL + "', api_key_env: HG_TEST_KEY}}\n" + extra)
+}
+
+// TestBackendEnableGrantsOutbound：backend enable 一次说明并同意 action 与 outbound 两个范围；PII 类别开启时加上 pii
+// 范围并写明本地识别不了的个人信息会原样发送（M4b 已定决策，spec §8.5）。
+func TestBackendEnableGrantsOutbound(t *testing.T) {
+	srv := newOutboundServer(t, 0.9)
+	id := func(e *env) consent.Identity {
+		return consent.Identity{Backend: "jev", Type: "typesafe", Target: srv.URL}
+	}
+	for pii, scopes := range map[bool][]consent.Scope{false: {consent.ScopeAction, consent.ScopeOutbound}, true: {consent.ScopeAction, consent.ScopeOutbound, consent.ScopePII}} {
+		e := newEnv(t)
+		e.tty = true
+		extra := ""
+		if pii {
+			extra = "outbound: {categories: {pii: {enabled: true}}}\n"
+		}
+		e.outboundJudgeConfig(srv, extra)
+		out, _, code := e.run([]byte("y\n"), "backend", "enable", "jev")
+		if code != 0 || !strings.Contains(out, "prompts") || strings.Contains(out, "personal information that h-guard does not recognize") != pii {
+			t.Errorf("pii=%v: exit %d, out %q", pii, code, out)
+		}
+		store := consent.Store{Dir: e.configDir}
+		if !store.Covers(id(e), scopes...) || !pii && store.Covers(id(e), consent.ScopePII) {
+			t.Errorf("pii=%v: scopes not recorded", pii)
+		}
+		if out, _, _ := e.run(nil, "status"); !strings.Contains(out, "scopes: "+strings.Join(func() []string {
+			var s []string
+			for _, sc := range scopes {
+				s = append(s, string(sc))
+			}
+			return s
+		}(), ", ")) || !strings.Contains(out, "outbound calibration: uncalibrated") {
+			t.Errorf("pii=%v: status %q", pii, out)
+		}
+	}
+}
+
+// TestHookOutboundJudge：模型开启、同意含 outbound 时，够长的提示词本地没有命中也发给模型，模型报出凭据时提示（warn，
+// 模型的命中不拦，M4b 计划评审 I-3）；
+// 同意只有 action 范围时不调用（judge_consent_missing），状态里写明要重新同意（spec §8.5）。
+func TestHookOutboundJudge(t *testing.T) {
+	text := strings.Repeat("Here is the staging setup we discussed yesterday with the team. ", 4) + "admin pw Tr0ub4dor and3"
+	srv := newOutboundServer(t, 0.9)
+	e := newEnv(t)
+	e.outboundJudgeConfig(srv, "")
+	store := consent.Store{Dir: e.configDir}
+	id := consent.Identity{Backend: "jev", Type: "typesafe", Target: srv.URL}
+	store.Grant(id, []consent.Scope{consent.ScopeAction}, time.Now())
+	out, _, _ := e.run(promptReq(text, "composer"), "hook", "claudecode", "--event", "prompt.submit")
+	if !strings.Contains(out, `"action":"pass"`) || srv.calls != 0 || !strings.Contains(e.files("health"), "judge_consent_missing") {
+		t.Errorf("action-only consent: %s, calls %d", out, srv.calls)
+	}
+	if st, _, _ := e.run(nil, "status"); !strings.Contains(st, "does not cover outbound") {
+		t.Errorf("status = %q", st)
+	}
+	store.Grant(id, []consent.Scope{consent.ScopeAction, consent.ScopeOutbound}, time.Now())
+	out, _, _ = e.run(promptReq(text, "composer"), "hook", "claudecode", "--event", "prompt.submit")
+	r, err := extproto.ParseReply([]byte(out))
+	if err != nil || r.Action != extproto.ActionWarn || !strings.Contains(r.Message, "judge model reports credentials") || srv.calls != 1 ||
+		!strings.Contains(srv.body, "outbound.credentials") || strings.Contains(srv.body, "outbound.pii") {
+		t.Errorf("with consent: %s, calls %d, body %s", out, srv.calls, srv.body)
+	}
+}
+
+// TestOutboundJudgeOff：outbound.judge: false 时只用 action 判断：backend enable 只说明并同意 action，提示词不发给模型，
+// 也不记 judge_consent_missing（M4b 计划评审 I-4，维护者决定）。
+func TestOutboundJudgeOff(t *testing.T) {
+	srv := newOutboundServer(t, 0.9)
+	e := newEnv(t)
+	e.tty = true
+	e.outboundJudgeConfig(srv, "outbound: {judge: false}\n")
+	out, _, code := e.run([]byte("y\n"), "backend", "enable", "jev")
+	store := consent.Store{Dir: e.configDir}
+	id := consent.Identity{Backend: "jev", Type: "typesafe", Target: srv.URL}
+	if code != 0 || strings.Contains(out, "tool output that h-guard scans") || !store.Covers(id, consent.ScopeAction) || store.Covers(id, consent.ScopeOutbound) {
+		t.Errorf("enable: exit %d, %s", code, out)
+	}
+	text := strings.Repeat("Here is the staging setup we discussed yesterday with the team. ", 4)
+	e.run(promptReq(text, "composer"), "hook", "claudecode", "--event", "prompt.submit")
+	if srv.calls != 0 || strings.Contains(e.files("health"), "judge_consent_missing") {
+		t.Errorf("calls %d, health %s", srv.calls, e.files("health"))
+	}
+	if st, _, _ := e.run(nil, "status"); !strings.Contains(st, "outbound judge: off (outbound.judge: false)") || strings.Contains(st, "does not cover outbound") {
+		t.Errorf("status = %s", st)
+	}
+}
+
+// TestConsentPIILater：同意之后才开启 PII 类别时，status 写明同意不含 pii 并给出命令（spec §8.5：扩大范围要重新同意，
+// M4b 计划评审 M-4）；backend enable 的说明写明之后改档位与分块不再询问（M-5）。
+func TestConsentPIILater(t *testing.T) {
+	srv := newOutboundServer(t, 0.9)
+	e := newEnv(t)
+	e.tty = true
+	e.outboundJudgeConfig(srv, "")
+	if out, _, _ := e.run([]byte("y\n"), "backend", "enable", "jev"); !strings.Contains(out, "does not ask again") {
+		t.Errorf("enable text = %s", out)
+	}
+	e.outboundJudgeConfig(srv, "outbound: {categories: {pii: {enabled: true}}}\n")
+	if st, _, _ := e.run(nil, "status"); !strings.Contains(st, "does not cover pii") {
+		t.Errorf("status = %s", st)
+	}
 }

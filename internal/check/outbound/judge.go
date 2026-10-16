@@ -30,6 +30,9 @@ type Judge struct {
 	Unavailable string        // 模型已开启但不能调用的原因码（如 judge_consent_missing）；非空时不调用
 	Threshold   float64       // 类别题的门槛：概率不低于它时算命中（校准档案的 thresholds.outbound）
 	PII         bool          // 同意含 pii 范围：可以问 PII 类别题（spec §8.5）
+	// Skip 为真时这一次不调用：模型的命中只提示，harness 在这类事件上显示不了提示时（Codex 的提示词与工具输出）发出去
+	// 也送不到用户面前，白白外发、多等（M4b 终审 I-1）。
+	Skip bool
 }
 
 // judgeHit 是判断层报告的一个类别。
@@ -51,7 +54,7 @@ type judgeResult struct {
 // 最大值，不低于门槛即算命中。模型只能补报，不能否决本地命中（泄露不可逆）。不可用、超时、答案无效、同意缺失或本地
 // 扫描不完整时只用本地结论，带原因码。
 func (c *Check) askJudge(ctx context.Context, ev guard.Event, local guard.Decision, scan Scan) judgeResult {
-	if !c.Config.Judge.Enabled || !c.Config.OutboundJudge() {
+	if !c.Config.Judge.Enabled || !c.Config.OutboundJudge() || c.Judge.Skip {
 		return judgeResult{}
 	}
 	qs := c.judgeQuestions()

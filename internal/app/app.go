@@ -251,12 +251,12 @@ func loadConfig(o Options, extra string, checkKinds bool) (setup, error) {
 
 // newEngine 组装 Engine：action 检查与 outbound 检查（M4）。文件动作的保护路径用主目录、h-guard 实际的配置与缓存目录，
 // 以及这次 --config 加载的文件展开。
-func (s setup) newEngine(o Options, j action.Judge) *engine.Engine {
+func (s setup) newEngine(o Options, j action.Judge, oj outbound.Judge) *engine.Engine {
 	c := &action.Check{Rules: s.rules, Config: s.cfg, Catalog: s.catalog, Locale: s.locale, Judge: j,
 		Paths: paths.Env{Home: o.Home, FoldCase: paths.FoldCaseDefault, Windows: paths.WindowsDefault,
 			Vars: map[string]string{rules.VarConfig: o.ConfigDir, rules.VarCache: o.CacheDir, rules.VarExtraConfig: s.extra,
 				rules.VarClaudeConfig: o.Getenv("CLAUDE_CONFIG_DIR"), rules.VarCodexHome: o.Getenv("CODEX_HOME")}}}
-	o2 := &outbound.Check{Rules: s.rules, Config: s.cfg}
+	o2 := &outbound.Check{Rules: s.rules, Config: s.cfg, Judge: oj}
 	return &engine.Engine{
 		Checks: []guard.Check{c, o2}, Catalog: s.catalog, Locale: s.locale,
 		WhenAskUnsupported: guard.Decision(s.cfg.Policy.WhenAskUnsupported),

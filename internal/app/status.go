@@ -64,6 +64,11 @@ func statusJudge(s setup, o Options) {
 	}
 	fmt.Fprintln(o.Stdout, "consent:", consentText(st, s.extra))
 	fmt.Fprintln(o.Stdout, "calibration:", calibrationText(st))
+	if s.cfg.OutboundJudge() {
+		fmt.Fprintln(o.Stdout, "outbound calibration:", outboundCalibrationText(st))
+	} else {
+		fmt.Fprintln(o.Stdout, "outbound judge: off (outbound.judge: false); prompts and tool output are checked by local rules only")
+	}
 	if own := s.ownQuestions(); len(own) > 0 {
 		fmt.Fprintf(o.Stdout, "not calibrated: your rules %s ask their own questions, which no profile covers\n", strings.Join(own, ", "))
 	}
