@@ -42,7 +42,11 @@ func TestResolveWindowsSpellings(t *testing.T) {
 
 // TestResolveFollowsJunctions：目录联接（mklink /J）与符号链接一样解析，否则经联接写受保护的目录不命中。
 func TestResolveFollowsJunctions(t *testing.T) {
-	dir := t.TempDir()
+	// t.TempDir() 在 Windows 上可能是 8.3 短路径（RUNNER~1），而期望值是长路径，先统一成长路径
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	target := filepath.Join(dir, "real")
 	os.Mkdir(target, 0o755)
 	link := filepath.Join(dir, "junction")
