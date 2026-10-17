@@ -285,6 +285,8 @@ func fileContent(tool string, raw json.RawMessage, in arguments) bool {
 		return true
 	case "skill": // 从项目或用户目录读出的 SKILL.md
 		return true
+	case "session_event_read", "session_event_search", "session_search": // 会话里之前的事件（包括读文件的结果）原文或摘录
+		return true
 	}
 	return false
 }

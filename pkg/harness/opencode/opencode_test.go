@@ -136,6 +136,10 @@ func TestToolOutput(t *testing.T) {
 	if err != nil || !ev.FileContent {
 		t.Fatalf("%+v %v", ev, err)
 	}
+	ev, err = a.Parse(after("skill", map[string]string{"name": "deploy"}, map[string]any{"output": "SKILL body"}))
+	if err != nil || !ev.FileContent {
+		t.Fatalf("skill: %+v %v", ev, err)
+	}
 }
 
 // TestPrompt：消息的全部文本都扫描；用户指令只取用户写的部分；子 agent 会话（parentID 不为空）的消息是自动消息。

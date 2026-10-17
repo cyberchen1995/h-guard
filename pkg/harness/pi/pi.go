@@ -442,7 +442,7 @@ func ompLSP(in toolInput) ([]guard.Action, error) {
 		if len(acts) == 0 || strings.TrimSpace(in.NewName) == "" {
 			return nil, errUnparsed
 		}
-		acts[0].Kind, acts[0].File.To = guard.ActionFileRename, in.NewName
+		acts[0].Kind, acts[0].File.To = guard.ActionFileRename, ompPath(in.NewName)
 		return acts, errUnparsed // 引用它的文件同样会被改动
 	case "rename":
 		if !applied {
@@ -547,7 +547,7 @@ func sloppyEdit(input string) (acts []guard.Action, ok bool) {
 const sloppyHeader = "*** Edit File:"
 
 // ompPath 按 omp 的 expandPath 规范化路径：去掉误加在路径前的 :（:/abs、:~/x、:./x、:C:\x），去掉表示路径的 @ 前缀
-// （@/abs、@~/x、@C:\x、@\\server、@<内部 URL>），file:// URL 换成它指向的文件。其余原样返回。
+// （@/abs、@~/x、@C:\x、@\\server、@<内部 URL>），file:// URL 换成它指向的文件，~x 写成 ~/x。其余原样返回。
 func ompPath(p string) string {
 	if len(p) > 1 && p[0] == ':' && pathStart(p[1:], true) {
 		p = p[1:]
@@ -563,6 +563,9 @@ func ompPath(p string) string {
 			}
 			return f
 		}
+	}
+	if len(p) > 1 && p[0] == '~' && p[1] != '/' && p[1] != '\\' { // omp 把 ~.omp/x 也展开成主目录下的 .omp/x
+		p = "~/" + p[1:]
 	}
 	return p
 }

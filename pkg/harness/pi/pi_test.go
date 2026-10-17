@@ -307,6 +307,7 @@ func TestOMPPaths(t *testing.T) {
 		":~/.aws/credentials":        "~/.aws/credentials",
 		":./.env":                    "./.env",
 		"@my-file.txt":               "@my-file.txt",
+		"~.omp/agent/config.yml":     "~/.omp/agent/config.yml",
 		"a:b":                        "a:b",
 	} {
 		got, _ := actions(t, pi.OMP, "read", map[string]any{"path": in})
@@ -392,6 +393,10 @@ func TestOMPPaths(t *testing.T) {
 		if ev, err := pi.OMP.Parse(result("omp", tool, map[string]any{"pat": "x"}, "K=V")); err != nil || !ev.FileContent {
 			t.Errorf("%s result: %+v %v", tool, ev, err)
 		}
+	}
+	_, err := pi.OMP.Parse(call("omp", "lsp", map[string]any{"action": "rename_file", "file": "a.go", "new_name": "@~/.config/h-guard/config.yaml"}))
+	if !errors.As(err, &tu) || tu.Event.Actions[0].File.To != "~/.config/h-guard/config.yaml" {
+		t.Errorf("lsp rename_file destination: %v %+v", err, tu)
 	}
 	var ut *harness.UnknownToolError
 	if _, err := pi.OMP.Parse(call("omp", "security_scan", map[string]any{"action": "start"})); !errors.As(err, &ut) {
