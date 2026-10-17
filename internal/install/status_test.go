@@ -4,13 +4,14 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
 
 // TestInspectStalePlugin：插件文件缺失、被改动或是旧版 h-guard 写出的内容时报告，不显示为正常（审查次要 8）。
 func TestInspectStalePlugin(t *testing.T) {
-	tg := target(t, "linux")
+	tg := target(t, runtime.GOOS) // 本机路径按本机平台的列表分隔符拆分
 	tg.Bin = filepath.Join(t.TempDir(), "h-guard")
 	os.WriteFile(tg.Bin, []byte("x"), 0o700)
 	steps, _ := ClaudeCode(tg, false)

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -81,8 +82,15 @@ func TestClaudeCodeInstall(t *testing.T) {
 	if got := settings["env"].(map[string]any)["CLAUDE_CODE_PLUGIN_DIRS"]; got != dir {
 		t.Errorf("CLAUDE_CODE_PLUGIN_DIRS = %v", got)
 	}
-	// 重复安装只更新、不新增
-	steps, _ = ClaudeCode(tg, false)
+	// 重复安装只更新、不新增。插件目录来自本机的临时目录，按本机平台的列表分隔符拆分才对得上
+	// （Windows 上的 C:\ 含有 Unix 的分隔符 :），所以这一段用本机平台的目标。
+	host := target(t, runtime.GOOS)
+	steps, err = ClaudeCode(host, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	apply(t, steps)
+	steps, _ = ClaudeCode(host, false)
 	for _, s := range steps {
 		if s.Changes() {
 			t.Errorf("reinstall changes %s", s.Path)
@@ -92,10 +100,16 @@ func TestClaudeCodeInstall(t *testing.T) {
 
 // TestClaudeCodeKeepsOtherSettings：已有的其他设置与插件目录原样保留，只加本项目的目录。
 func TestClaudeCodeKeepsOtherSettings(t *testing.T) {
-	tg := target(t, "linux")
+	tg := target(t, runtime.GOOS) // 插件目录是本机路径，列表分隔符要与本机平台一致
+	sep := tg.listSep()
+	others := filepath.FromSlash("/a") + sep + filepath.FromSlash("/b")
+	quote := func(v string) string {
+		b, _ := json.Marshal(v)
+		return string(b)
+	}
 	settings := filepath.Join(tg.Home, ".claude", "settings.json")
 	os.MkdirAll(filepath.Dir(settings), 0o700)
-	os.WriteFile(settings, []byte(`{"model":"opus","env":{"FOO":"1","CLAUDE_CODE_PLUGIN_DIRS":"/a:/b"},"hooks":{"Stop":[]}}`), 0o644)
+	os.WriteFile(settings, []byte(`{"model":"opus","env":{"FOO":"1","CLAUDE_CODE_PLUGIN_DIRS":`+quote(others)+`},"hooks":{"Stop":[]}}`), 0o644)
 	steps, err := ClaudeCode(tg, false)
 	if err != nil {
 		t.Fatal(err)
@@ -104,7 +118,7 @@ func TestClaudeCodeKeepsOtherSettings(t *testing.T) {
 	b, _ := os.ReadFile(settings)
 	dir := filepath.Join(tg.ConfigDir, "extensions", "claudecode")
 	if !strings.HasPrefix(string(b), "{\n  \"model\": \"opus\",\n  \"env\": {\n    \"FOO\": \"1\",") ||
-		!strings.Contains(string(b), `"CLAUDE_CODE_PLUGIN_DIRS": "/a:/b:`+dir+`"`) || !strings.Contains(string(b), `"Stop": []`) {
+		!strings.Contains(string(b), `"CLAUDE_CODE_PLUGIN_DIRS": `+quote(others+sep+dir)) || !strings.Contains(string(b), `"Stop": []`) {
 		t.Errorf("settings.json =\n%s", b)
 	}
 	if backups, _ := os.ReadDir(filepath.Join(tg.CacheDir, "backups")); len(backups) != 1 {
@@ -117,7 +131,7 @@ func TestClaudeCodeKeepsOtherSettings(t *testing.T) {
 	}
 	apply(t, steps)
 	b, _ = os.ReadFile(settings)
-	if !strings.Contains(string(b), `"CLAUDE_CODE_PLUGIN_DIRS": "/a:/b"`) || !strings.Contains(string(b), `"FOO": "1"`) {
+	if !strings.Contains(string(b), `"CLAUDE_CODE_PLUGIN_DIRS": `+quote(others)) || !strings.Contains(string(b), `"FOO": "1"`) {
 		t.Errorf("after remove:\n%s", b)
 	}
 	if _, err := os.Stat(dir); !errors.Is(err, os.ErrNotExist) {
@@ -127,7 +141,7 @@ func TestClaudeCodeKeepsOtherSettings(t *testing.T) {
 
 // TestClaudeCodeRemoveDropsEmptyEntries：移除后列表空了就删掉这个键，env 空了也删掉；没有安装时移除不改任何东西。
 func TestClaudeCodeRemoveDropsEmptyEntries(t *testing.T) {
-	tg := target(t, "linux")
+	tg := target(t, runtime.GOOS) // 本机路径按本机平台的列表分隔符拆分
 	steps, _ := ClaudeCode(tg, false)
 	apply(t, steps)
 	steps, _ = ClaudeCode(tg, true)
@@ -367,7 +381,7 @@ func TestPluginBackup(t *testing.T) {
 // settings.json）规划之后，插件被另一个 install 卸载，执行时报冲突，不登记一个不存在的插件。
 // 普通的重复安装仍然什么都不写、不备份。
 func TestStalePlanChecksUnchangedSteps(t *testing.T) {
-	tg := target(t, "linux")
+	tg := target(t, runtime.GOOS) // 本机路径按本机平台的列表分隔符拆分
 	steps, _ := ClaudeCode(tg, false)
 	apply(t, steps)
 	settings := ClaudeSettings(tg)
