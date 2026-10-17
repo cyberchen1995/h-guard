@@ -4,6 +4,8 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strconv"
 	"testing"
 	"time"
 
@@ -49,8 +51,12 @@ func TestGrantCoversOnlyTheSameIdentityAndScope(t *testing.T) {
 		t.Error("a wider scope is covered without new consent")
 	}
 	info, err := os.Stat(filepath.Join(s.Dir, consent.FileName))
-	if err != nil || info.Mode().Perm() != 0o600 {
-		t.Errorf("consent file mode = %v, %v", info.Mode(), err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Windows 没有 POSIX 权限位，可写文件一律报 0666
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
+		t.Errorf("consent file mode = %v", info.Mode())
 	}
 }
 
@@ -239,14 +245,18 @@ func TestIdentityOfBackends(t *testing.T) {
 	}
 	ts, _ := typesafe.New("jev", typesafe.Options{Model: "jev-latest", APIKeyEnv: "TYPESAFE_API_KEY"})
 	an, _ := anthropic.New("claude", anthropic.Options{Model: "claude-haiku"})
+	cmd := "/opt/judge"
+	if runtime.GOOS == "windows" {
+		cmd = `C:\opt\judge`
+	}
 	want := map[string]judge.Backend{
-		"http://localhost:11434":        newOpenAI("http://localhost:11434/v1"),
-		"http://localhost:80":           newOpenAI("http://localhost/v1"),
-		"https://localhost:11434":       newOpenAI("https://localhost:11434/v1"),
-		"https://api.typesafe.ai:443":   ts,
-		"https://api.anthropic.com:443": an,
-		`"/opt/judge" "--fast"`:         newExec("/opt/judge", "--fast"),
-		`"/opt/judge"`:                  newExec("/opt/judge"),
+		"http://localhost:11434":                         newOpenAI("http://localhost:11434/v1"),
+		"http://localhost:80":                            newOpenAI("http://localhost/v1"),
+		"https://localhost:11434":                        newOpenAI("https://localhost:11434/v1"),
+		"https://api.typesafe.ai:443":                    ts,
+		"https://api.anthropic.com:443":                  an,
+		strconv.Quote(filepath.Clean(cmd)) + ` "--fast"`: newExec(cmd, "--fast"),
+		strconv.Quote(filepath.Clean(cmd)):               newExec(cmd),
 	}
 	for target, b := range want {
 		id, ok := consent.IdentityOf(b.Name(), "t", b)
