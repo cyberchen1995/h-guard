@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -49,6 +50,8 @@ func TestInstallClaudeCodeWrite(t *testing.T) {
 		calls = append(calls, name+" "+strings.Join(args, " "))
 		return claudeOK(name, args...)
 	})
+	// 插件目录是本机的临时目录，settings.json 里的列表按本机平台的分隔符拆分，重复安装才认得出已登记
+	e.goos = runtime.GOOS
 	out, errs, code := e.run(nil, "install", "claudecode", "--write", "--timeout", "25")
 	dir := filepath.Join(e.configDir, "extensions", "claudecode")
 	if code != 0 || !strings.Contains(out, "wrote") || !strings.Contains(out, "restart Claude Code") {
