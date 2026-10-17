@@ -242,3 +242,39 @@ func TestOMPToolLists(t *testing.T) {
 		t.Errorf("search: %+v", got)
 	}
 }
+
+// TestOMPWriteTargets：omp 的 write 目标还原成实际改动的文件；应用预览的 xd://resolve 等内部 URL 请求确认；
+// 严格语法包了 *** Begin Patch 的 hashline 补丁照样按段头读。
+func TestOMPWriteTargets(t *testing.T) {
+	for in, want := range map[string]string{
+		"src/config.json":                  "src/config.json",
+		"fixtures/archive.zip:templates/x": "fixtures/archive.zip",
+		"data/app.sqlite:users:42":         "data/app.sqlite",
+		"[src/a.go#1a2b]":                  "src/a.go",
+		`C:\work\a.txt`:                    `C:\work\a.txt`,
+	} {
+		got, _ := actions(t, pi.OMP, "write", map[string]any{"path": in, "content": "x"})
+		if len(got) != 1 || got[0].File.Path != want {
+			t.Errorf("write %q: %+v, want %q", in, got, want)
+		}
+	}
+	var tu *harness.TargetUnparsedError
+	for _, in := range []string{"xd://resolve", "xd://some_tool", "conflict://*", "memory://x"} {
+		if _, err := pi.OMP.Parse(call("omp", "write", map[string]any{"path": in, "content": "x"})); !errors.As(err, &tu) {
+			t.Errorf("write %q: %v, want TargetUnparsedError", in, err)
+		}
+	}
+	for _, in := range []string{"xd://reject", "proc://12/kill"} {
+		if _, err := pi.OMP.Parse(call("omp", "write", map[string]any{"path": in})); !errors.Is(err, harness.ErrNoAction) {
+			t.Errorf("write %q: %v, want ErrNoAction", in, err)
+		}
+	}
+	got, _ := actions(t, pi.OMP, "read", map[string]any{"path": "secrets.zip:keys/id_rsa"})
+	if got[0].File.Path != "secrets.zip" {
+		t.Errorf("read archive entry: %+v", got)
+	}
+	got, _ = actions(t, pi.OMP, "edit", map[string]any{"input": "*** Begin Patch\n[src/a.go#1a2b]\n+ x\n*** End Patch"})
+	if asJSON(got) != asJSON([]guard.Action{{Kind: guard.ActionFileWrite, File: &guard.FileAction{Path: "src/a.go"}}}) {
+		t.Errorf("wrapped hashline: %s", asJSON(got))
+	}
+}

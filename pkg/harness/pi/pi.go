@@ -238,12 +238,22 @@ func (a Adapter) actions(tool string, in toolInput) ([]guard.Action, error) {
 		p := in.Path
 		if a.omp {
 			p = stripSelector(p)
+			if b, ok := containerFile(p); ok {
+				p = b
+			}
 		}
 		return one(extadapter.File(guard.ActionFileRead, p))
 	case "grep", "search": // search 是 omp 的 grep 的旧名
 		return one(extadapter.File(guard.ActionFileRead, in.Path))
 	case "write":
-		return one(extadapter.File(guard.ActionFileWrite, in.Path))
+		if !a.omp {
+			return one(extadapter.File(guard.ActionFileWrite, in.Path))
+		}
+		p, err := ompWriteTarget(in.Path)
+		if err != nil {
+			return nil, err
+		}
+		return one(extadapter.File(guard.ActionFileWrite, p))
 	case "edit":
 		if !a.omp {
 			return one(extadapter.File(guard.ActionFileWrite, in.Path))
@@ -314,13 +324,7 @@ func ompEdit(in toolInput) ([]guard.Action, error) {
 		}
 		return []guard.Action{act}, nil
 	}
-	if strings.Contains(in.Input, applypatch.BeginPatch) { // apply_patch 模式
-		acts, err := applypatch.Actions(in.Input)
-		if err != nil {
-			return nil, errUnparsed
-		}
-		return acts, nil
-	}
+	// hashline 的段头 [路径#标签] 优先：严格语法下 hashline 补丁同样包在 *** Begin Patch / *** End Patch 里
 	var acts []guard.Action
 	for _, line := range strings.Split(strings.TrimPrefix(in.Input, "\ufeff"), "\n") {
 		line = strings.TrimRight(line, "\r")
@@ -340,6 +344,13 @@ func ompEdit(in toolInput) ([]guard.Action, error) {
 		}
 	}
 	if len(acts) > 0 {
+		return acts, nil
+	}
+	if strings.Contains(in.Input, applypatch.BeginPatch) { // apply_patch 模式
+		acts, err := applypatch.Actions(in.Input)
+		if err != nil {
+			return nil, errUnparsed
+		}
 		return acts, nil
 	}
 	for _, p := range append([]string{in.Path}, in.Paths...) {
@@ -386,6 +397,39 @@ func ompLSP(in toolInput) ([]guard.Action, error) {
 		return acts, errUnparsed
 	}
 	return nil, ErrNoAction
+}
+
+// ompWriteTarget 返回 omp 的 write 实际改动的文件：复制来的 [路径#标签] 外壳去掉；归档里的条目（a.zip:inner）与 SQLite
+// 的行（app.sqlite:users:42）是对所在文件的改写；xd://reject 与 proc://<id>/kill 不改动文件（ErrNoAction）；xd://resolve
+// （应用 ast_edit 等预览过的改动）、其余 xd:// 设备、conflict:// 与其他内部 URL 改动的文件读不出，请求确认（errUnparsed）。
+func ompWriteTarget(p string) (string, error) {
+	if h, ok := hashlineHeader(strings.TrimSpace(p)); ok {
+		p = h
+	}
+	if i := strings.Index(p, "://"); i > 0 && !strings.ContainsAny(p[:i], `/\.`) {
+		scheme, rest := strings.ToLower(p[:i]), p[i+3:]
+		if (scheme == "xd" && rest == "reject") || (scheme == "proc" && strings.HasSuffix(rest, "/kill")) {
+			return "", ErrNoAction
+		}
+		return "", errUnparsed
+	}
+	if b, ok := containerFile(p); ok {
+		return b, nil
+	}
+	return p, nil
+}
+
+// containerExt 是 omp 能以「文件:内部路径」读写的容器：归档与 SQLite 数据库。
+var containerExt = regexp.MustCompile(`(?i)\.(zip|jar|war|ear|apk|aar|ipa|xpi|nupkg|whl|tar|tar\.gz|tgz|tar\.zst|tzst|asar|sqlite|sqlite3|db)$`)
+
+// containerFile 返回「容器文件:内部路径」里的容器文件；盘符的冒号不算。
+func containerFile(p string) (string, bool) {
+	for i := 2; i < len(p); i++ {
+		if p[i] == ':' && containerExt.MatchString(p[:i]) {
+			return p[:i], true
+		}
+	}
+	return "", false
 }
 
 var hashlineTag = regexp.MustCompile(`#[0-9a-fA-F]{4}$`)

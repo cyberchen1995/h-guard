@@ -230,7 +230,11 @@ Differences:
   its `patch` mode from each entry's `op` and `rename`; an edit whose files
   cannot be read asks. `lsp` renames, applied code actions and raw requests
   change files h-guard cannot list, so they ask. `read` paths lose their line
-  selectors (`a.go:10-20`).
+  selectors (`a.go:10-20`). oh-my-pi's `write` is checked against the file it
+  really changes: an archive entry (`a.zip:inner`) or SQLite row
+  (`app.sqlite:users:42`) counts as a write to the archive or database, and
+  `xd://resolve` (which applies a previewed `ast_edit` or edit), other `xd://`
+  devices, `conflict://` and other internal URLs ask.
 - **Shell.** Both run `bash` commands with a bash-compatible shell on every
   platform (pi uses Git Bash on Windows; oh-my-pi has its own), so they are
   checked as POSIX commands.
