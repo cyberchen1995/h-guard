@@ -1,0 +1,29 @@
+{
+  "harness": "claudecode",
+  "version": "2.1.296",
+  "scenario": "prompt-plain",
+  "platform": "darwin-arm64",
+  "run_id": "20261012T023050Z",
+  "event": "prompt.submit",
+  "stdin": {
+    "protocol": "h-guard.ext/v1",
+    "harness": "claudecode",
+    "harness_version": "2.1.296",
+    "hook": "prompt.submit",
+    "session": {
+      "id": "9515204f-49e3-409f-8c5d-dc5946ebe50b",
+      "cwd": "/tmp/hg-m0/claudecode/prompt-plain"
+    },
+    "data": {
+      "text": "Reply with the single word OK.",
+      "wait": false,
+      "origin": {
+        "kind": "sdk"
+      }
+    }
+  },
+  "reply": {
+    "protocol": "h-guard.ext/v1",
+    "action": "pass"
+  }
+}

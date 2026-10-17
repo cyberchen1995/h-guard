@@ -1,0 +1,29 @@
+{
+  "harness": "claudecode",
+  "version": "2.1.296",
+  "scenario": "ask-bypass",
+  "platform": "darwin-arm64",
+  "run_id": "20261012T023050Z",
+  "event": "prompt.submit",
+  "stdin": {
+    "protocol": "h-guard.ext/v1",
+    "harness": "claudecode",
+    "harness_version": "2.1.296",
+    "hook": "prompt.submit",
+    "session": {
+      "id": "8b05f6d4-6f42-4823-83fd-b72b06cbac93",
+      "cwd": "/tmp/hg-m0/claudecode/ask-bypass"
+    },
+    "data": {
+      "text": "Use the Bash tool to run exactly: cat entry-q.txt. Reply with exactly its stdout and nothing else. If the command is blocked, or its output is withheld or replaced, do not run any other command or tool; just reply BLOCKED.",
+      "wait": false,
+      "origin": {
+        "kind": "sdk"
+      }
+    }
+  },
+  "reply": {
+    "protocol": "h-guard.ext/v1",
+    "action": "pass"
+  }
+}

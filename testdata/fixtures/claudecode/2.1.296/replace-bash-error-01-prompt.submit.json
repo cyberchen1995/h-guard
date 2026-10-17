@@ -1,0 +1,29 @@
+{
+  "harness": "claudecode",
+  "version": "2.1.296",
+  "scenario": "replace-bash-error",
+  "platform": "darwin-arm64",
+  "run_id": "20261012T023050Z",
+  "event": "prompt.submit",
+  "stdin": {
+    "protocol": "h-guard.ext/v1",
+    "harness": "claudecode",
+    "harness_version": "2.1.296",
+    "hook": "prompt.submit",
+    "session": {
+      "id": "4495adaf-ef06-4e39-9d3b-283887c8ceac",
+      "cwd": "/tmp/hg-m0/claudecode/replace-bash-error"
+    },
+    "data": {
+      "text": "Use the Bash tool to run exactly: cat entry.txt missing.txt. It fails because missing.txt does not exist; that is expected. Reply with exactly the first line of its output and nothing else. If the command is blocked, or its output is withheld or replaced, do not run any other command or tool; just reply BLOCKED.",
+      "wait": false,
+      "origin": {
+        "kind": "sdk"
+      }
+    }
+  },
+  "reply": {
+    "protocol": "h-guard.ext/v1",
+    "action": "pass"
+  }
+}

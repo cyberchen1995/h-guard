@@ -1,0 +1,20 @@
+schema: 1
+id: fork_bomb
+enabled: true
+action: deny
+on: [exec]
+locked: true
+reason:
+  en: 'Fork bomb'
+  zh-CN: 'fork bomb'
+match:
+  exec:
+    # any 组沿用 Python 版正则，两种 shell 都适用（不拆分，只收紧）；PowerShell 专有的写法在 powershell 组
+    any:
+      - ':\s*\(\s*\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:'
+    strip_quotes: true
+examples:
+  hit:
+    - {shell: posix, command: ":(){ :|:& };:"}
+  miss:
+    - {shell: posix, command: "echo ':(){ :|:& };:' >> docs/danger.md"}

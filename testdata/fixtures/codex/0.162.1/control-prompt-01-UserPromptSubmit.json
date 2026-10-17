@@ -1,0 +1,18 @@
+{
+  "harness": "codex",
+  "version": "0.162.1",
+  "scenario": "control-prompt",
+  "platform": "darwin-arm64",
+  "run_id": "20261012T023347Z",
+  "event": "UserPromptSubmit",
+  "stdin": {
+    "session_id": "01a12df8-2f8a-7a81-89d4-aa01cf21b995",
+    "turn_id": "01a12df8-300b-71d3-9e22-2c052f632207",
+    "transcript_path": "/home/user/.codex/sessions/2026/10/12/rollout-2026-10-12T10-36-42-01a12df8-2f8a-7a81-89d4-aa01cf21b995.jsonl",
+    "cwd": "/tmp/hg-m0/codex/proj",
+    "hook_event_name": "UserPromptSubmit",
+    "model": "gpt-6-astra",
+    "permission_mode": "default",
+    "prompt": "Remember this code: HGCANARY-525bffaf5f0b. Reply with exactly the code and nothing else."
+  }
+}

@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/cyberchen1995/h-guard/main/schema/rule-outbound.schema.json",
+  "title": "h-guard outbound rule",
+  "description": "One outbound rule of a rule pack (rule pack schema 1), one rule per YAML file. Outbound rules scan prompts and tool output; a hit counts toward the rule's category, whose action and question are set in the config (outbound.categories). Regular expressions are compiled and examples run by \"h-guard config validate --rules <dir>\", which is authoritative.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "id", "category", "on", "match"],
+  "properties": {
+    "schema": {
+      "description": "Rule pack format version.",
+      "type": "integer",
+      "const": 1
+    },
+    "id": {
+      "description": "Rule id: lowercase letters, digits, '.', '_' and '-', starting with a letter or digit. Shares the id space with action rules. explicitly_requested and blast_radius are reserved.",
+      "type": "string"
+    },
+    "enabled": {
+      "description": "Whether the rule is active; the config can override it (rules.<id>.enabled).",
+      "type": "boolean",
+      "default": true
+    },
+    "category": {
+      "description": "Category the hits count toward (e.g. credentials, private_key, pii): lowercase letters, digits, '.', '_' and '-'.",
+      "type": "string"
+    },
+    "on": {
+      "description": "Events the rule scans.",
+      "type": "array",
+      "minItems": 1,
+      "items": {"type": "string", "enum": ["prompt", "tool_output"]}
+    },
+    "match": {
+      "description": "Local detection: regular expressions or a built-in detector, not both.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "regex": {
+          "description": "Regular expressions (case-insensitive).",
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "detector": {
+          "description": "Built-in detector.",
+          "type": "string",
+          "enum": [
+            "credentials.prefixed_token", "credentials.bearer", "credentials.assignment", "credentials.aws_access_key",
+            "credentials.url_password", "credentials.high_entropy", "private_key.pem",
+            "pii.email", "pii.phone_cn", "pii.phone_intl", "pii.cn_id", "pii.us_ssn", "pii.ip"
+          ]
+        }
+      }
+    },
+    "examples": {
+      "description": "Example texts checked by \"h-guard config validate\": hit must match, miss must not.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "hit": {"type": "array", "items": {"type": "string"}},
+        "miss": {"type": "array", "items": {"type": "string"}}
+      }
+    }
+  }
+}

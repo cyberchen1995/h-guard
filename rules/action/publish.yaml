@@ -1,0 +1,65 @@
+schema: 1
+id: publish
+enabled: true
+action: ask
+on: [exec]
+requires_judge: true
+reason:
+  en: 'Publishes to or changes state on a remote (push, PR/MR, release, registry, mutating API call)'
+  zh-CN: '向远端发布或修改远端状态（push、PR/MR、release、registry、写 API）'
+match:
+  exec:
+    # any 组沿用 Python 版正则，两种 shell 都适用（不拆分，只收紧）；PowerShell 专有的写法在 powershell 组
+    any:
+      - '\bgit(?:\.exe)?\b[^\n;&|]*\bpush\b(?![^\n;&|]*--dry-run)'
+      - '\bgh(?:\.exe)?\s+pr\s+(?:create|merge|close|edit|comment|review|ready|reopen)\b'
+      - '\bgh(?:\.exe)?\s+api\b[^\n;&|]*(?:(?:--method(?:=|\s+)|-X\s*)(?:POST|PUT|PATCH|DELETE)\b|--input\b|\s-[fF]\s|--raw-field\b|--field\b)'
+      - '\bgh(?:\.exe)?\s+release\s+(?:create|upload|edit|delete|delete-asset)\b'
+      - '\bgh(?:\.exe)?\s+repo\s+(?:create|delete|edit|rename|archive)\b'
+      - '\bgh(?:\.exe)?\s+issue\s+(?:create|close|comment|edit|delete|reopen)\b'
+      - '\bglab\s+mr\s+(?:create|merge|close|approve|update)\b'
+      - '\b(?:npm|pnpm|yarn)\s+publish\b'
+      - '\b(?:twine\s+upload|uv\s+publish|cargo\s+publish|gem\s+push|docker\s+push)\b'
+      - '\b(?:curl|wget|http|https)\b[^\n;&|]*(?:-X\s*|--request(?:=|\s+)|--method(?:=|\s+))(?:POST|PUT|PATCH|DELETE)\b(?![^\n;&|]*(?:localhost|127\.0\.0\.1))'
+    # PowerShell：Invoke-RestMethod / Invoke-WebRequest（5.1 里 curl、wget 是它们的别名）的写操作，
+    # -Method 可缩写（-Me），也可用 -CustomMethod；只在实际的 URI 是本机时豁免：-Uri（或 -Ur）的值、或紧跟命令的
+    # 第一个位置参数是本机 URL。正文、请求头里的本机 URL 不算，URI 是变量时照常命中；扫描时按 PowerShell 的规则
+    # 跳过字符串（here-string、单引号里的 ''、双引号里的反引号转义与 ""）与引号外的反引号转义，字符串里的
+    # ; & | 与伪参数都不算；字符串内部用原子组，'' 与 "" 只有一种读法，不会指数回溯；
+    # 发布 PowerShell 模块与 NuGet 包
+    powershell:
+      - '\b(?:invoke-restmethod|irm|invoke-webrequest|iwr|curl|wget)\b(?=(?:@''[ \t]*\r?\n[\s\S]*?\n''@|@"[ \t]*\r?\n[\s\S]*?\n"@|''(?>(?:[^'']|'''')*)''|"(?>(?:[^"`]|`[\s\S]|"")*)"|`[\s\S]|[^\n;&|''"`])*\s-(?:me(?:t(?:h(?:o(?:d)?)?)?)?|custommethod)(?::|\s+)[''"]?(?:post|put|patch|delete)\b)(?!\s+[''\"]?https?://(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?(?:[/\s''"]|$)|(?:@''[ \t]*\r?\n[\s\S]*?\n''@|@"[ \t]*\r?\n[\s\S]*?\n"@|''(?>(?:[^'']|'''')*)''|"(?>(?:[^"`]|`[\s\S]|"")*)"|`[\s\S]|[^\n;&|''"`])*\s-ur(?:i)?(?::|\s+)[''"]?https?://(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?(?:[/\s''"]|$))'
+      - '\b(?:publish-module|publish-script|publish-psresource)\b'
+      - '\bnuget(?:\.exe)?\s+push\b'
+question:
+  kind: probability
+  instructions:
+    question: 'Would executing `call.command` publish something or mutate state outside this machine: push commits or tags, create, merge, close or edit a pull or merge request, create or edit a release, publish a package or image, or call a remote API with a mutating method?'
+    counts_as_yes: 'git push in any form (including --force, --tags, --delete, --mirror, -u); gh pr create/merge/close/edit/comment/review/ready; gh api with -X or --method POST, PUT, PATCH or DELETE, or with -f, -F, --input or --raw-field (a request body implies mutation); gh release create/upload/edit/delete; gh repo create/delete/edit; gh issue create/close/comment; glab mr create/merge/close; npm, pnpm or yarn publish; twine upload; uv publish; cargo publish; docker push; curl, wget or http with POST, PUT, PATCH or DELETE to a non-localhost host. Wrapped forms still count.'
+    counts_as_no: 'git fetch, git pull, git remote -v; gh pr list/view/checks/diff/status; gh api with GET or with no method and no body; gh issue list/view; gh release list/view; git push --dry-run; curl GET or any request to localhost or 127.0.0.1; git commit (local only); the text only mentioned in a commit message, grep pattern, echo or documentation.'
+  criteria:
+    'true': 'Running the command would actually send changes or mutations to a remote service or registry.'
+    'false': 'It only reads from remotes or stays local, or the text is only mentioned and never executed.'
+examples:
+  hit:
+    - {shell: powershell, command: "Invoke-RestMethod -Uri https://api.example.com/deploy -Method Post"}
+    - {shell: powershell, command: "dotnet nuget push pkg.nupkg"}
+    - {shell: powershell, command: "Invoke-RestMethod -Uri https://api.example.com/deploy -Method Post -Body 'http://localhost/payload'"}
+    - {shell: powershell, command: "git push origin main"}
+    - {shell: posix, command: "git push"}
+    - {shell: posix, command: "git push -u origin HEAD"}
+    - {shell: posix, command: "gh pr create --fill"}
+    - {shell: posix, command: "gh api -X POST repos/o/r/issues -f title=x"}
+    - {shell: posix, command: "gh release create v1.0"}
+    - {shell: posix, command: "npm publish"}
+    - {shell: posix, command: "glab mr create"}
+    - {shell: posix, command: "curl -X POST https://api.example.com/deploy"}
+  miss:
+    - {shell: powershell, command: "Invoke-RestMethod https://api.example.com/items"}
+    - {shell: powershell, command: "irm http://localhost:8000/echo -Method Post"}
+    - {shell: posix, command: "git push --dry-run"}
+    - {shell: posix, command: "git fetch"}
+    - {shell: posix, command: "gh pr view 12"}
+    - {shell: posix, command: "gh api repos/o/r/pulls"}
+    - {shell: posix, command: "curl https://example.com"}
+    - {shell: posix, command: "curl -X POST http://localhost:8000/echo"}

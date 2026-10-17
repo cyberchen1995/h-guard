@@ -1,0 +1,28 @@
+{
+  "harness": "claudecode",
+  "version": "2.1.296",
+  "scenario": "pre-files",
+  "platform": "darwin-arm64",
+  "run_id": "20261013T020955Z",
+  "event": "PreToolUse",
+  "stdin": {
+    "session_id": "01b2c648-49ab-4ecb-9fd6-f3708a42be13",
+    "transcript_path": "/home/user/.claude/projects/-tmp-hg-m0-claudecode-pre-files/01b2c648-49ab-4ecb-9fd6-f3708a42be13.jsonl",
+    "cwd": "/tmp/hg-m0/claudecode/pre-files",
+    "scratchpad_dir": "/tmp/claude-uid/-tmp-hg-m0-claudecode-pre-files/01b2c648-49ab-4ecb-9fd6-f3708a42be13/scratchpad",
+    "prompt_id": "fe260ca5-2878-4d4f-969d-422d0554bee5",
+    "permission_mode": "acceptEdits",
+    "effort": {
+      "level": "medium"
+    },
+    "hook_event_name": "PreToolUse",
+    "tool_name": "Grep",
+    "tool_input": {
+      "pattern": "hello",
+      "path": "/tmp/hg-m0/claudecode/pre-files",
+      "output_mode": "content",
+      "-n": true
+    },
+    "tool_use_id": "toolu_01HJfULASxPVViJg6x9xAKEy"
+  }
+}

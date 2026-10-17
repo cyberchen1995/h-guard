@@ -1,0 +1,58 @@
+schema: 1
+id: recursive_delete
+enabled: true
+action: ask
+on: [exec]
+requires_judge: true
+reason:
+  en: 'Deletes files or directories recursively'
+  zh-CN: '递归删除文件或目录'
+match:
+  exec:
+    # any 组沿用 Python 版正则，两种 shell 都适用（不拆分，只收紧）；PowerShell 专有的写法在 powershell 组
+    any:
+      - '(?:^|[\s;&|(`\"''])(?:sudo\s+(?:-\S+\s+)*)?rm(?:\.exe)?\s+(?:-\S+\s+)*-[a-z]*r'
+      - '(?:^|[\s;&|(`\"''])(?:sudo\s+)?rm(?:\.exe)?\s+[^\n;&|]*--recursive\b'
+      - '(?:^|[\s;&|(`\"''])rmdir(?:\.exe)?(?:\s|$)'
+      - '\bfind\b[^\n;&|]*\s-delete\b'
+      - '\bfind\b[^\n;&|]*-exec\s+rm\b'
+      - '\bxargs\b[^\n;&|]*\brm\s+-[a-z]*r'
+      - '\bshutil\.rmtree\s*\('
+      - '\bRemove-Item\b[^\n;&|]*(?:-Recurse\b|\s-r(?:\s|$))'
+      - '\bgit(?:\.exe)?\b[^\n;&|]*\brm\s+(?:-\S+\s+)*-[a-z]*r'
+    # PowerShell：Remove-Item 及其别名带 -Recurse 的任意前缀；.NET 的递归删除；递归列出再交给 Remove-Item
+    powershell:
+      - '(?:^|[\s;&|({])(?:remove-item|rm|del|erase|rd|rmdir|ri)\b[^\n;&|]*\s-r(?:e(?:c(?:u(?:r(?:s(?:e)?)?)?)?)?)?(?::\$true)?(?=\s|$)'
+      - '\[(?:system\.)?io\.directory\]::delete\s*\([^\n)]*,\s*\$true'
+      - '\.delete\s*\(\s*\$true\s*\)'
+      - '\b(?:get-childitem|gci|ls|dir)\b[^\n;&|]*\s-r(?:e(?:c(?:u(?:r(?:s(?:e)?)?)?)?)?)?\b[^\n;&]*\|\s*(?:remove-item|rm|del|erase|ri)\b'
+radius_floor: 1.25
+question:
+  kind: probability
+  instructions:
+    question: 'Would executing `call.command` delete a directory tree, or delete files recursively or in bulk?'
+    counts_as_yes: 'rm with -r, -R, -rf, -fr or --recursive; rmdir; find ... -delete or find ... -exec rm; xargs rm; shutil.rmtree, os.removedirs or rmtree-style loops in inline python or node code; Remove-Item -Recurse; git rm -r. Any of these still count when wrapped in sudo, bash -c, sh -c, a subshell, &&, ;, ||, a pipe, a for-loop, xargs, or a Makefile/npm script that is being invoked.'
+    counts_as_no: 'Deleting a single file without recursion (rm file.txt); listing or searching (ls -R, find without -delete); the dangerous text only appearing inside data that is never executed: a commit message, a grep/sed/awk pattern, an echo or printf argument, a comment, a heredoc written into a file, documentation text.'
+  criteria:
+    'true': 'Running the command would actually perform recursive or bulk deletion.'
+    'false': 'It would not delete recursively, or the deletion text is only mentioned or quoted and never executed.'
+examples:
+  hit:
+    - {shell: powershell, command: "Remove-Item -Recurse -Force .\\build"}
+    - {shell: powershell, command: "rm -r node_modules"}
+    - {shell: powershell, command: "[System.IO.Directory]::Delete(\"data\", $true)"}
+    - {shell: powershell, command: "Get-ChildItem -Recurse *.log | Remove-Item"}
+    - {shell: posix, command: "rm -rf build"}
+    - {shell: posix, command: "rm -r ./tmp"}
+    - {shell: posix, command: "bash -c \"rm -rf dist\""}
+    - {shell: posix, command: "find . -name '*.pyc' -delete"}
+    - {shell: posix, command: "git ls-files -z | xargs -0 rm -r"}
+    - {shell: posix, command: "python -c \"import shutil; shutil.rmtree('out')\""}
+    - {shell: posix, command: "rmdir empty_dir"}
+  miss:
+    - {shell: powershell, command: "Remove-Item file.txt -Force"}
+    - {shell: powershell, command: "Get-ChildItem -Recurse"}
+    - {shell: posix, command: "rm file.txt"}
+    - {shell: posix, command: "ls -R"}
+    - {shell: posix, command: "find . -name '*.py'"}
+    - {shell: posix, command: "rm -i a.txt"}

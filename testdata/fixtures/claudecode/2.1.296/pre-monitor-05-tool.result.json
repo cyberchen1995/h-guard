@@ -1,0 +1,38 @@
+{
+  "harness": "claudecode",
+  "version": "2.1.296",
+  "scenario": "pre-monitor",
+  "platform": "darwin-arm64",
+  "run_id": "20261013T020955Z",
+  "event": "tool.result",
+  "stdin": {
+    "protocol": "h-guard.ext/v1",
+    "harness": "claudecode",
+    "harness_version": "2.1.296",
+    "hook": "tool.result",
+    "session": {
+      "id": "77d77097-fb48-4685-a23e-247d88608cb5",
+      "cwd": "/tmp/hg-m0/claudecode/pre-monitor"
+    },
+    "data": {
+      "command": "echo hg-m1-monitor",
+      "description": "hg-m1 monitor echo check",
+      "timeout_ms": 60000,
+      "tool": "Monitor",
+      "tool_use_id": "toolu_01B7EYEvxMXVUjEe4HNVY2e8"
+    },
+    "result": {
+      "ref": 1,
+      "result": {
+        "taskId": "bfuxdyh5u",
+        "timeoutMs": 60000,
+        "persistent": false
+      },
+      "text": "Monitor started (task bfuxdyh5u, expires in 1m unless the source ends first; you get one notice at expiry — re-arm if you still need the watch). You will be notified on each event. Keep working — do not poll or sleep. Events may arrive while you are waiting for the user — an event is not their reply."
+    }
+  },
+  "reply": {
+    "protocol": "h-guard.ext/v1",
+    "action": "pass"
+  }
+}

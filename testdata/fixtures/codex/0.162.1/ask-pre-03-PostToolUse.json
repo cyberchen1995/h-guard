@@ -1,0 +1,23 @@
+{
+  "harness": "codex",
+  "version": "0.162.1",
+  "scenario": "ask-pre",
+  "platform": "darwin-arm64",
+  "run_id": "20261012T023347Z",
+  "event": "PostToolUse",
+  "stdin": {
+    "session_id": "01a12dfb-1fbf-74a1-8c7f-e5ba87d906d4",
+    "turn_id": "01a12dfb-2043-7653-a9a9-38d11d1b1054",
+    "transcript_path": "/home/user/.codex/sessions/2026/10/12/rollout-2026-10-12T10-39-54-01a12dfb-1fbf-74a1-8c7f-e5ba87d906d4.jsonl",
+    "cwd": "/tmp/hg-m0/codex/proj",
+    "hook_event_name": "PostToolUse",
+    "model": "gpt-6-astra",
+    "permission_mode": "default",
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cat entry-q.txt"
+    },
+    "tool_response": "HGCANARY-e790816dc081\n",
+    "tool_use_id": "exec-a716f36f-50f2-4118-95f6-845d5b4fedce"
+  }
+}

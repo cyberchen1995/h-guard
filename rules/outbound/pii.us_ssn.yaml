@@ -1,0 +1,13 @@
+schema: 1
+id: pii.us_ssn
+# 美国 SSN（AAA-GG-SSSS）
+category: pii
+on: [prompt, tool_output]
+match:
+  detector: pii.us_ssn
+examples:
+  hit:
+    - "ssn 123-45-6789"
+  miss:
+    - "000-12-3456"
+    - "123456789"

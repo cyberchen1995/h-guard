@@ -1,0 +1,41 @@
+{
+  "harness": "codex",
+  "version": "0.162.1",
+  "scenario": "block-mcp",
+  "platform": "darwin-arm64",
+  "run_id": "20261012T023347Z",
+  "event": "PostToolUse",
+  "stdin": {
+    "session_id": "01a12dfd-f88c-7dc0-846f-e0ff373112eb",
+    "turn_id": "01a12dfd-f903-7440-ba4a-340a1a970e23",
+    "transcript_path": "/home/user/.codex/sessions/2026/10/12/rollout-2026-10-12T10-43-01-01a12dfd-f88c-7dc0-846f-e0ff373112eb.jsonl",
+    "cwd": "/tmp/hg-m0/codex/proj",
+    "hook_event_name": "PostToolUse",
+    "model": "gpt-6-astra",
+    "permission_mode": "default",
+    "tool_name": "mcp__hgm0__hg_m0_report",
+    "tool_input": {},
+    "tool_response": {
+      "content": [
+        {
+          "type": "text",
+          "text": "report code: HGCANARY-709f6d1fe7ca"
+        },
+        {
+          "type": "text",
+          "text": "report end"
+        }
+      ],
+      "structuredContent": {
+        "code": "HGCANARY-709f6d1fe7ca",
+        "parts": 2
+      },
+      "isError": false
+    },
+    "tool_use_id": "exec-9253504d-7836-41c3-a419-1aae97d25443"
+  },
+  "reply": {
+    "decision": "block",
+    "reason": "[h-guard replaced] h-guard M0 test: output blocked"
+  }
+}

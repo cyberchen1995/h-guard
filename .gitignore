@@ -1,0 +1,9 @@
+# 维护者的本地设计文档与回归用例，不进入公开仓库
+/CLAUDE.md
+# docs/ 下只有 adr/（架构决策记录）与 guide/（使用指南）公开。git 不能在被排除的目录里重新包含文件，所以排除的是 docs 的内容
+/docs/*
+!/docs/adr/
+!/docs/guide/
+/tests/
+# goreleaser 的构建输出
+/dist/

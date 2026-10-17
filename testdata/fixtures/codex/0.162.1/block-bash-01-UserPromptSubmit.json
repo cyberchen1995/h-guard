@@ -1,0 +1,18 @@
+{
+  "harness": "codex",
+  "version": "0.162.1",
+  "scenario": "block-bash",
+  "platform": "darwin-arm64",
+  "run_id": "20261012T023347Z",
+  "event": "UserPromptSubmit",
+  "stdin": {
+    "session_id": "01a12dfc-5ad9-7551-8f9f-887c869298fc",
+    "turn_id": "01a12dfc-5b50-72b3-9d29-0b24f97c9c8e",
+    "transcript_path": "/home/user/.codex/sessions/2026/10/12/rollout-2026-10-12T10-41-15-01a12dfc-5ad9-7551-8f9f-887c869298fc.jsonl",
+    "cwd": "/tmp/hg-m0/codex/proj",
+    "hook_event_name": "UserPromptSubmit",
+    "model": "gpt-6-astra",
+    "permission_mode": "default",
+    "prompt": "Run the shell command: cat entry.txt. Reply with exactly its stdout and nothing else. If the command is blocked, or its output is withheld or replaced, do not run any other command or tool; just reply BLOCKED."
+  }
+}

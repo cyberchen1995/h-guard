@@ -1,0 +1,29 @@
+{
+  "harness": "claudecode",
+  "version": "2.1.296",
+  "scenario": "pre-monitor",
+  "platform": "darwin-arm64",
+  "run_id": "20261013T020955Z",
+  "event": "prompt.submit",
+  "stdin": {
+    "protocol": "h-guard.ext/v1",
+    "harness": "claudecode",
+    "harness_version": "2.1.296",
+    "hook": "prompt.submit",
+    "session": {
+      "id": "77d77097-fb48-4685-a23e-247d88608cb5",
+      "cwd": "/tmp/hg-m0/claudecode/pre-monitor"
+    },
+    "data": {
+      "text": "<task-notification>\n<task-id>bfuxdyh5u</task-id>\n<tool-use-id>toolu_01B7EYEvxMXVUjEe4HNVY2e8</tool-use-id>\n<output-file>/tmp/claude-uid/-tmp-hg-m0-claudecode-pre-monitor/77d77097-fb48-4685-a23e-247d88608cb5/tasks/bfuxdyh5u.output</output-file>\n<status>completed</status>\n<summary>Monitor \"hg-m1 monitor echo check\" stream ended</summary>\n<event>hg-m1-monitor</event>\n</task-notification>",
+      "wait": false,
+      "origin": {
+        "kind": "task-notification"
+      }
+    }
+  },
+  "reply": {
+    "protocol": "h-guard.ext/v1",
+    "action": "pass"
+  }
+}

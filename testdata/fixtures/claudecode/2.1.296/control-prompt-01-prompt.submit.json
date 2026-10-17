@@ -1,0 +1,29 @@
+{
+  "harness": "claudecode",
+  "version": "2.1.296",
+  "scenario": "control-prompt",
+  "platform": "darwin-arm64",
+  "run_id": "20261012T023050Z",
+  "event": "prompt.submit",
+  "stdin": {
+    "protocol": "h-guard.ext/v1",
+    "harness": "claudecode",
+    "harness_version": "2.1.296",
+    "hook": "prompt.submit",
+    "session": {
+      "id": "edbe2bf1-152b-41b8-b1ce-20a6ccbf88a8",
+      "cwd": "/tmp/hg-m0/claudecode/control-prompt"
+    },
+    "data": {
+      "text": "Remember this code: HGCANARY-8ce0d17a6370. Reply with exactly the code and nothing else.",
+      "wait": false,
+      "origin": {
+        "kind": "sdk"
+      }
+    }
+  },
+  "reply": {
+    "protocol": "h-guard.ext/v1",
+    "action": "pass"
+  }
+}

@@ -1,0 +1,53 @@
+# h-guard 内置默认配置。用户配置与 --config 依次叠加在它之上。
+version: 1
+judge: {enabled: false, backend: jev}
+action: {tier: 2}
+outbound:
+  tier: 1
+  judge_max_chunks: 4
+  judge_min_chars: 200
+  judge_chunk_chars: 4000
+  # 检测规则在规则包里（rules/outbound），类别只管策略。PII 默认关闭：开发场景里邮箱、公网 IP 常见。
+  categories:
+    credentials: {enabled: true, action: deny}
+    private_key: {enabled: true, action: deny}
+    pii: {enabled: false, action: deny}
+backends:
+  jev: {type: typesafe, model: jev-latest, profile: jev, api_key_env: TYPESAFE_API_KEY}
+  # 推荐后端（名字稳定），都带校准档案，选用时不需要用户校准。
+  claude-haiku: {type: anthropic, model: claude-haiku-5-5, profile: claude-haiku}
+  # Sonnet 5.5 不接受强制工具调用（HTTP 400），所以用结构化输出；思考关不掉、占用 max_tokens，
+  # effort low 控制延迟与用量。
+  claude-sonnet: {type: anthropic, model: claude-sonnet-5-5, answer: structured, effort: low, max_tokens: 4096, profile: claude-sonnet}
+  gemma4-local: {type: openai, base_url: "http://localhost:11434/v1", model: "gemma4:12b-mlx", probability: logprobs, reasoning_effort: none, timeout_ms: 30000, profile: gemma4-local}
+profiles:
+  # 按当前措辞在 113 条语料上用 Jev 校准（2026-10-13）
+  jev:
+    thresholds: {hit: 0.4, veto: 0.1, requested: 0.75, radius_floor: {recursive_delete: 1.25}}
+    fingerprint: {model: jev-latest, probability: native, questions: "sha256:cdd8dab0be5e906b5d5f0fda6c5c60412214db02637af427adcc8e7a9415a5ab"}
+  # 在 113 条语料上用 Claude 校准（2026-10-14，维护者采用 sweep 的建议）。拟合的是同一份语料：
+  # 与保守默认值相比只有 requested 由 0.9 降到 0.85，多放行的几条都是模型对授权恰好答 0.85 的语料。
+  # outbound 门槛在 153 条 outbound 语料上校准（2026-10-16）：扫描的平台是 0.15–0.25（tune 上 6 处错），维护者
+  # 采用中间的 0.2——模型对两条带秘密的 URL 恰好答 0.25，干净文本除一条外都低于 0.15。复测时扫描建议 0.1（只多接住
+  # 一条），与 0.2 的差别在两次运行的波动之内，维护者保持 0.2。模型的命中只提示、不拦。
+  claude-haiku:
+    thresholds: {hit: 0.3, veto: 0.05, requested: 0.85, radius_floor: {recursive_delete: 1.25}, outbound: 0.2}
+    fingerprint: {model: claude-haiku-5-5, probability: verbalized, questions: "sha256:cdd8dab0be5e906b5d5f0fda6c5c60412214db02637af427adcc8e7a9415a5ab",
+      outbound_questions: "sha256:e7ee52fe169a18ddc19689ea73e9bbdec3073f34c5c25f5558cba8db7cdfa91a"}
+  claude-sonnet:
+    thresholds: {hit: 0.3, veto: 0.05, requested: 0.85, radius_floor: {recursive_delete: 1.25}}
+    fingerprint: {model: claude-sonnet-5-5, probability: verbalized-structured-effort-low, questions: "sha256:cdd8dab0be5e906b5d5f0fda6c5c60412214db02637af427adcc8e7a9415a5ab"}
+  # 取自本地模型 gemma4:12b-mlx 的 sweep 建议（2026-10-13）。这些值拟合的是同一份 113 条语料，
+  # 与保守默认值（hit 0.3、veto 0.05、requested 0.9）相比，只有 recursive_delete 的影响范围下限不同。
+  # reasoning_effort 进入指纹，所以 probability 带 -reasoning-effort-none 后缀；发出的请求（含 reasoning_effort: none）
+  # 与校准时逐字节相同，建议值仍然适用。去掉或改动 reasoning_effort 后，这份档案不再匹配（按未校准处理）。
+  gemma4-local:
+    thresholds: {hit: 0.3, veto: 0.05, requested: 0.9, radius_floor: {recursive_delete: 1}}
+    fingerprint: {model: "gemma4:12b-mlx", probability: logprobs-reasoning-effort-none, questions: "sha256:cdd8dab0be5e906b5d5f0fda6c5c60412214db02637af427adcc8e7a9415a5ab"}
+policy:
+  on_unavailable: pass
+  when_ask_unsupported: deny
+  request_window: 3
+  max_command_chars: 8000
+  max_request_chars: 2000
+log: {decisions: false, retention_days: 14}

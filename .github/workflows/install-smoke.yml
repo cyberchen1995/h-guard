@@ -1,0 +1,168 @@
+name: Install smoke
+
+# 发布后的安装冒烟：三平台各自下载本平台的归档，验证 cosign 签名与 sha256，运行解压出的二进制；
+# 另外用 go install 安装同一个标签，正式版再在 macOS 上用 Homebrew 安装。
+# 由 release.yml 在发布后直接调用，也可以手动对某个标签重跑。
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: Release tag to check, e.g. v0.1.0
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to check, e.g. v0.1.0
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  smoke:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    env:
+      TAG: ${{ inputs.tag }}
+      GH_REPO: ${{ github.repository }}
+      GITHUB_TOKEN: ${{ github.token }}
+    steps:
+      - name: resolve names
+        run: |
+          if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "not a release tag: $TAG" >&2
+            exit 1
+          fi
+          version=${TAG#v}
+          case "$RUNNER_OS" in
+            Linux) os=linux; ext=tar.gz; exe=h-guard ;;
+            macOS) os=darwin; ext=tar.gz; exe=h-guard ;;
+            Windows) os=windows; ext=zip; exe=h-guard.exe ;;
+            *) echo "unsupported runner OS: $RUNNER_OS" >&2; exit 1 ;;
+          esac
+          case "$RUNNER_ARCH" in
+            X64) arch=amd64 ;;
+            ARM64) arch=arm64 ;;
+            *) echo "unsupported runner arch: $RUNNER_ARCH" >&2; exit 1 ;;
+          esac
+          prerelease=$(gh release view "$TAG" --json isPrerelease --jq .isPrerelease)
+          {
+            echo "VERSION=$version"
+            echo "ARCHIVE=h-guard_${version}_${os}_${arch}.${ext}"
+            echo "EXE=$exe"
+            echo "PRERELEASE=$prerelease"
+            echo "DL=$RUNNER_TEMP/download"
+            echo "BIN=$RUNNER_TEMP/bin"
+          } >>"$GITHUB_ENV"
+
+      - name: download
+        run: |
+          mkdir -p "$DL"
+          gh release download "$TAG" --dir "$DL" \
+            --pattern "$ARCHIVE" \
+            --pattern checksums.txt \
+            --pattern checksums.txt.sigstore.json
+          ls -l "$DL"
+
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v3.1.3
+
+      - name: verify signature
+        working-directory: ${{ runner.temp }}/download
+        run: |
+          cosign verify-blob \
+            --bundle checksums.txt.sigstore.json \
+            --certificate-identity-regexp '^https://github\.com/cyberchen1995/h-guard/\.github/workflows/release\.yml@refs/tags/v' \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            checksums.txt
+
+      - name: verify sha256
+        working-directory: ${{ runner.temp }}/download
+        run: |
+          want=$(awk -v f="$ARCHIVE" '$2 == f { print $1 }' checksums.txt)
+          if [ -z "$want" ]; then
+            echo "$ARCHIVE is not listed in checksums.txt" >&2
+            exit 1
+          fi
+          if command -v sha256sum >/dev/null; then
+            got=$(sha256sum "$ARCHIVE" | cut -d' ' -f1)
+          else
+            got=$(shasum -a 256 "$ARCHIVE" | cut -d' ' -f1)
+          fi
+          echo "want $want"
+          echo "got  $got"
+          [ "$want" = "$got" ]
+
+      - name: extract
+        run: |
+          mkdir -p "$BIN"
+          if [ "$RUNNER_OS" = Windows ]; then
+            pwsh -NoProfile -Command "Expand-Archive -LiteralPath '$(cygpath -w "$DL/$ARCHIVE")' -DestinationPath '$(cygpath -w "$BIN")'"
+          else
+            tar -xzf "$DL/$ARCHIVE" -C "$BIN"
+          fi
+          ls -l "$BIN"
+          echo "$BIN/$EXE" >>"$RUNNER_TEMP/installed.txt"
+
+      # go install 需要 Go；版本取这个标签的 go.mod。
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.tag }}
+          persist-credentials: false
+          sparse-checkout: go.mod
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: go install
+        run: |
+          gobin="$RUNNER_TEMP/gobin"
+          GOBIN="$gobin" go install "github.com/cyberchen1995/h-guard/cmd/h-guard@$TAG"
+          echo "$gobin/$EXE" >>"$RUNNER_TEMP/installed.txt"
+
+      # 预发布版不更新 tap，只有正式版检查 Homebrew 安装。
+      - name: brew install
+        if: runner.os == 'macOS' && env.PRERELEASE == 'false'
+        run: |
+          brew install cyberchen1995/tap/h-guard
+          echo "$(brew --prefix)/bin/h-guard" >>"$RUNNER_TEMP/installed.txt"
+
+      # 每个安装出的二进制：version 输出 "h-guard <版本>"；check 对 rm -rf / 输出 deny（命令本身以 0 退出）。
+      - name: run installed binaries
+        run: |
+          status=0
+          while IFS= read -r bin; do
+            echo "== $bin"
+            out=$("$bin" version </dev/null | tr -d '\r')
+            echo "$out"
+            if [ "$out" != "h-guard $VERSION" ]; then
+              echo "FAIL: version prints '$out', want 'h-guard $VERSION'"
+              status=1
+            fi
+            code=0
+            "$bin" check 'rm -rf /' --no-judge </dev/null >"$RUNNER_TEMP/check.out" || code=$?
+            out=$(tr -d '\r' <"$RUNNER_TEMP/check.out")
+            echo "$out"
+            if [ "$code" -ne 0 ]; then
+              echo "FAIL: check exited $code, want 0"
+              status=1
+            fi
+            if ! printf '%s\n' "$out" | grep -qx 'decision: deny'; then
+              echo "FAIL: check did not report decision: deny"
+              status=1
+            fi
+          done <"$RUNNER_TEMP/installed.txt"
+          exit "$status"

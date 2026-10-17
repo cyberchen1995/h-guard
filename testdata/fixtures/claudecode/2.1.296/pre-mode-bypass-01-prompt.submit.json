@@ -1,0 +1,29 @@
+{
+  "harness": "claudecode",
+  "version": "2.1.296",
+  "scenario": "pre-mode-bypass",
+  "platform": "darwin-arm64",
+  "run_id": "20261013T020955Z",
+  "event": "prompt.submit",
+  "stdin": {
+    "protocol": "h-guard.ext/v1",
+    "harness": "claudecode",
+    "harness_version": "2.1.296",
+    "hook": "prompt.submit",
+    "session": {
+      "id": "ca4c8806-73b3-422f-9daa-700cdd4a7eb0",
+      "cwd": "/tmp/hg-m0/claudecode/pre-mode-bypass"
+    },
+    "data": {
+      "text": "Use the Bash tool to run exactly: echo hg-m1-bypass. Then reply with its output.",
+      "wait": false,
+      "origin": {
+        "kind": "sdk"
+      }
+    }
+  },
+  "reply": {
+    "protocol": "h-guard.ext/v1",
+    "action": "pass"
+  }
+}

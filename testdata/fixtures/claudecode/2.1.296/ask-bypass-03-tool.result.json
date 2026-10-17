@@ -1,0 +1,34 @@
+{
+  "harness": "claudecode",
+  "version": "2.1.296",
+  "scenario": "ask-bypass",
+  "platform": "darwin-arm64",
+  "run_id": "20261012T023050Z",
+  "event": "tool.result",
+  "stdin": {
+    "protocol": "h-guard.ext/v1",
+    "harness": "claudecode",
+    "harness_version": "2.1.296",
+    "hook": "tool.result",
+    "session": {
+      "id": "8b05f6d4-6f42-4823-83fd-b72b06cbac93",
+      "cwd": "/tmp/hg-m0/claudecode/ask-bypass"
+    },
+    "data": {
+      "command": "cat entry-q.txt",
+      "description": "Print contents of entry-q.txt",
+      "tool": "Bash",
+      "tool_use_id": "toolu_0188ZTZdirYgrjafMaUtyFTi"
+    },
+    "result": {
+      "ref": 1,
+      "result": "Error: Bash needs approval (asked by plugin h-guard: h-guard M0 test: ask)",
+      "text": "Bash needs approval (asked by plugin h-guard: h-guard M0 test: ask)",
+      "isError": true
+    }
+  },
+  "reply": {
+    "protocol": "h-guard.ext/v1",
+    "action": "pass"
+  }
+}

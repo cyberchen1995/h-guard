@@ -1,0 +1,93 @@
+version: "2"
+
+linters:
+  # standard：errcheck、govet、ineffassign、staticcheck、unused
+  default: standard
+  enable:
+    - misspell
+    - bodyclose
+    - gosec
+  exclusions:
+    rules:
+      # gosec 的 G104 与 errcheck 检查的是同一件事：未处理的错误统一由 errcheck 报告，按下面的规则排除。
+      - linters: [gosec]
+        text: "G104:"
+
+      # 测试里准备文件、目录与解码的出错会让随后的断言失败，不必逐个检查返回值。
+      - path: _test\.go$
+        linters: [errcheck]
+        text: "Error return value of"
+
+      # CLI 与报告写到 stdout、stderr 或调用方给的 io.Writer：写失败时没有别的地方可以报告。
+      - path: ^internal/(app|eval)/
+        linters: [errcheck]
+        text: "Error return value of `fmt\\.Fprint(f|ln)?` is not checked"
+
+      # 只读打开的文件在 defer 里关闭；读取的错误已经在读的时候处理。
+      - path: ^(internal/app/migrate|internal/config/secrets|pkg/detect/paths/paths|pkg/harness/internal/jsonl/jsonl)\.go$
+        linters: [errcheck]
+        text: "Error return value of `f\\.Close` is not checked"
+
+      # HTTP 响应体读完后在 defer 里关闭，读取的错误已经处理。
+      - path: ^pkg/judge/internal/httpx/httpx\.go$
+        linters: [errcheck]
+        text: "Error return value of `resp\\.Body\\.Close` is not checked"
+
+      # defer 里清理自己建的临时目录，清理失败不影响结果。
+      - path: ^internal/(app/migrate|fixtures/fixtures)\.go$
+        linters: [errcheck]
+        text: "Error return value of `os\\.RemoveAll` is not checked"
+
+      # 测试替身的 HTTP 服务写回复，写失败时客户端那一侧的断言会失败。
+      - path: ^pkg/judge/judgetest/http\.go$
+        linters: [errcheck]
+        text: "Error return value of `io\\.WriteString` is not checked"
+
+      # 测试替身的 HTTP 服务故意把请求重定向到另一台测试服务，检查客户端不跟随跨主机重定向。
+      - path: ^pkg/judge/judgetest/http\.go$
+        linters: [gosec]
+        text: "G710:"
+
+      # 测试用假的密钥、临时目录里的文件与权限、构建好的测试程序与重新运行的测试二进制、固定种子的随机数与构造好的下标。
+      - path: _test\.go$
+        linters: [gosec]
+        text: "G(101|115|122|204|301|304|306|404|602|702|703):"
+
+      # 命中的是环境变量名与消息键这类常量的名字，不是凭据本身。
+      - path: ^(internal/i18n/keys|pkg/judge/anthropic/anthropic|pkg/judge/typesafe/typesafe)\.go$
+        linters: [gosec]
+        text: "G101:"
+
+      # 读写用户指定的或配置目录、缓存目录下的文件是 CLI 的预期行为，路径来自用户的配置与参数。
+      - path: ^(internal|pkg)/
+        linters: [gosec]
+        text: "G(304|703):"
+
+      # 遍历的是用户自己的配置、规则与录制样本目录，只读其中的文件；能在遍历中途替换符号链接的人本来就能改这些文件。
+      - path: ^internal/(app/migrate|fixtures/fixtures|install/claudecode|install/status|rules/set)\.go$
+        linters: [gosec]
+        text: "G122:"
+
+      # 运行的是用户配置的判定命令与本机 harness 的可执行文件，参数不经过 shell。
+      - path: ^(internal/app/install|pkg/judge/exec/exec)\.go$
+        linters: [gosec]
+        text: "G204:"
+
+      # 录制样本写进仓库的 testdata，目录与文件按普通的仓库文件权限创建。
+      - path: ^internal/fixtures/fixtures\.go$
+        linters: [gosec]
+        text: "G(301|302|306):"
+
+      # 自助抽样用固定种子的伪随机数，结果要可复现，与安全无关。
+      - path: ^internal/eval/bootstrap\.go$
+        linters: [gosec]
+        text: "G404:"
+
+      # 「!(条件)」与要表达的判断一一对应，展开成德摩根形式反而难读。
+      - linters: [staticcheck]
+        text: "QF1001:"
+
+      # 「var _ T = x」是编译期的类型断言，显式写出类型正是目的。
+      - path: ^internal/migrate/migrate_test\.go$
+        linters: [staticcheck]
+        text: "QF1011:"

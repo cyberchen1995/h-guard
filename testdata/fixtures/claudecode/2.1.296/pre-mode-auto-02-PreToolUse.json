@@ -1,0 +1,26 @@
+{
+  "harness": "claudecode",
+  "version": "2.1.296",
+  "scenario": "pre-mode-auto",
+  "platform": "darwin-arm64",
+  "run_id": "20261013T020955Z",
+  "event": "PreToolUse",
+  "stdin": {
+    "session_id": "a0b6326a-bb30-41fa-8072-f35c3b9602f1",
+    "transcript_path": "/home/user/.claude/projects/-tmp-hg-m0-claudecode-pre-mode-auto/a0b6326a-bb30-41fa-8072-f35c3b9602f1.jsonl",
+    "cwd": "/tmp/hg-m0/claudecode/pre-mode-auto",
+    "scratchpad_dir": "/tmp/claude-uid/-tmp-hg-m0-claudecode-pre-mode-auto/a0b6326a-bb30-41fa-8072-f35c3b9602f1/scratchpad",
+    "prompt_id": "5164c283-3dbb-4190-bbfb-24d485cd6807",
+    "permission_mode": "auto",
+    "effort": {
+      "level": "medium"
+    },
+    "hook_event_name": "PreToolUse",
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "echo hg-m1-auto",
+      "description": "Print hg-m1-auto via echo"
+    },
+    "tool_use_id": "toolu_014VYBQYy7JmceQMZjj8qqWy"
+  }
+}

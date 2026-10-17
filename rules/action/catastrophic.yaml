@@ -1,0 +1,98 @@
+schema: 1
+id: catastrophic
+enabled: true
+action: deny
+on: [exec]
+locked: true
+reason:
+  en: 'Catastrophic operation: deleting the root or home directory, overwriting a block device, or formatting a file system'
+  zh-CN: '灾难性操作：删除根目录或家目录、覆写块设备、格式化文件系统'
+match:
+  exec:
+    # any 组沿用 Python 版正则，两种 shell 都适用（不拆分，只收紧）；PowerShell 专有的写法在 powershell 组
+    any:
+      - '^rm(?:\.exe)?\s+(?:-\S+\s+)*-[a-z]*r[a-z]*\s+(?:-\S+\s+)*(?:/|/\*|~|~/|~/\*|\$HOME|\$\{HOME\}|\$HOME/\*)(?:\s|$|[;&|])'
+      - '^rm(?:\.exe)?\s+(?:-\S+\s+)*--recursive\b[^\n]*\s(?:/|/\*|~|~/|~/\*|\$HOME|\$\{HOME\}|\$HOME/\*)(?:\s|$)'
+      # dd 写设备（只拦会破坏数据的设备，不误拦无害设备）：只豁免去向固定、写入无害的设备，名字须完整匹配
+      # ——/dev/null、/dev/zero、/dev/random、/dev/urandom、/dev/tty（控制终端）。目录不豁免（/dev/shm/../sda
+      # 会回到 /dev）；/dev/stdout、/dev/stderr、/dev/fd/N 只是文件描述符的别名，去向取决于 shell 先做的重定向
+      # （同一段、组合命令或前面的 exec），正则确认不了。后两类同样拒绝
+      - '^dd\b[^\n]*\bof=/dev/(?!(?:null|zero|tty|u?random)(?![\w./-]))'
+      - '^(?:mkfs(?:\.\w+)?|mke2fs|mkdosfs|mkntfs)\b[^\n]*/dev/'
+      # 盘符前须是空白或引号：-ErrorAction: SilentlyContinue 里的 n: 不是盘符
+      - '^(?:remove-item|rd|rmdir)\b[^\n]*-(?:recurse|r)\b[^\n]*(?<=[\s''"])[a-z]:\\?(?:\s|$)'
+    # PowerShell：Remove-Item 及其别名递归删除盘符根（含 C:\*.*、C:\..）、主目录或系统目录；参数可以是
+    # -Recurse 的任意前缀与 -Recurse:$true，顺序任意，路径可带引号、可在数组里（C:\,x），-Path 与 -LiteralPath 可用冒号
+    # 绑定（-Path:C:\）；格式化与清空磁盘。
+    # 经管道送来的目标（Get-Item C:\ | Remove-Item -Recurse）不在此列，与 POSIX 的 xargs 一样（已知边界）
+    powershell:
+      - '^(?:remove-item|rm|del|erase|rd|rmdir|ri)\b(?=[^\n]*\s-r(?:e(?:c(?:u(?:r(?:s(?:e)?)?)?)?)?)?(?::\$true)?(?:\s|$))[^\n]*[\s,](?:-(?:pa(?:th?)?|li(?:t(?:e(?:r(?:a(?:l(?:p(?:a(?:th?)?)?)?)?)?)?)?)?|lp|pspath)(?::\s*|\s+))?[''"]?(?:[a-z]:(?:[\\/](?:\*(?:\.\*)?|\.{1,2})?)?|[\\/](?:\*(?:\.\*)?)?|~(?:[\\/]\*?)?|\$home(?:[\\/]\*?)?|\$env:homedrive\$env:homepath(?:[\\/]\*?)?|\$env:(?:userprofile|homedrive|systemdrive|systemroot|windir)(?:[\\/]\*?)?|[a-z]:[\\/](?:windows|users|program files(?: \(x86\))?)(?:[\\/]\*?)?)[''"]?(?:\s|$|,)'
+      - '^(?:format-volume|clear-disk|initialize-disk|remove-partition)\b'
+      - '^format(?:\.com)?\s+[a-z]:'
+    command_position: true
+    # 重定向视图（词法分析给出的「命令词 重定向」）：dd 的输出、或没有命令词的重定向
+    # （组合命令 ( … ) >/dev/sda、bash 的 &>）写到设备时拒绝。of=/dev/null 2>/dev/sda 会把状态信息写进磁盘。
+    # 目标是完整的词，白名单用 $ 锚定（2>"/dev/null"b0 的目标是 /dev/nullb0）；注释与引号里的 > 不是重定向
+    # 循环、条件语句的结尾词（done、fi、esac）带的重定向按组合命令处理；<> 只对 dd（exec 3<>/dev/tcp/… 照常放行）
+    redirects:
+      - '^(?:dd|done|fi|esac)? (?:[0-9]+)?(?:>|>>|>\||>&)/dev/(?!(?:null|zero|tty|u?random|stdout|stderr)$)'
+      - '^dd (?:[0-9]+)?<>/dev/(?!(?:null|zero|tty|u?random|stdout|stderr)$)'
+examples:
+  hit:
+    - {shell: powershell, command: "Remove-Item -Recurse -Force C:\\"}
+    - {shell: powershell, command: "rm -r -fo ~"}
+    - {shell: powershell, command: "Remove-Item -Path \"$env:USERPROFILE\" -Recurse"}
+    - {shell: powershell, command: "R`emove-Item -Recurse 'C:\\'"}
+    - {shell: powershell, command: "Get-Disk 1 | Clear-Disk -RemoveData"}
+    - {shell: powershell, command: "Remove-Item -Recurse -Force C:\\*.*"}
+    - {shell: powershell, command: "Remove-Item -Recurse -Force $env:HOMEDRIVE$env:HOMEPATH"}
+    - {shell: powershell, command: "Remove-Item -Recurse -Force -Path:C:\\"}
+    - {shell: powershell, command: "Remove-Item –Recurse –Force C:\\"}
+    - {shell: powershell, command: "pwsh -c \"Remove-Item -Recurse -Force ~\""}
+    - {shell: posix, command: "rm -rf /"}
+    - {shell: posix, command: "sudo rm -rf ~"}
+    - {shell: posix, command: "rm -rf $HOME/*"}
+    - {shell: posix, command: "dd if=/dev/zero of=/dev/disk2"}
+    - {shell: posix, command: "dd if=img of=/dev/nullb0"}
+    - {shell: posix, command: "dd if=image.bin of=/dev/stdout >/dev/disk2"}
+    - {shell: posix, command: "dd if=image.bin of=/dev/fd/3 3>/dev/disk2"}
+    - {shell: posix, command: "dd if=/dev/zero of=/dev/null 2>/dev/sda"}
+    - {shell: posix, command: "dd if=/dev/zero of=/dev/shm/../sda count=1"}
+    - {shell: posix, command: "dd if='a #b' of=/dev/null 2>/dev/sda"}
+    - {shell: posix, command: "dd if=a\\ #b of=/dev/null 2>/dev/sda"}
+    - {shell: posix, command: "dd if=x of=/dev/null 2>\"/dev/null\"b0"}
+    - {shell: posix, command: "( dd if=x of=/dev/null ) 2>/dev/sda"}
+    - {shell: posix, command: "dd if=x 1<>/dev/sda"}
+    - {shell: posix, command: "for f in a b; do dd if=$f; done >/dev/sda"}
+    # 文件描述符的别名：去向确认不了，保守拒绝（即使同一段把标准输出重定向到普通文件，也同样拒绝）
+    - {shell: posix, command: "dd if=disk.img of=/dev/stdout | gzip > disk.gz"}
+    - {shell: posix, command: "dd if=image.bin of=/dev/stdout >./copy.bin"}
+    - {shell: posix, command: "mkfs.ext4 /dev/sdb1"}
+    - {shell: posix, command: "cd /tmp && rm -rf /"}
+    - {shell: posix, command: "sudo -u root rm -rf /"}
+    - {shell: posix, command: "bash -c 'rm -rf ~'"}
+    - {shell: posix, command: "rm -rf \"$HOME\""}
+    - {shell: posix, command: "/bin/rm -rf /"}
+    - {shell: posix, command: "timeout 5 rm -rf /"}
+  miss:
+    - {shell: powershell, command: "Remove-Item -Recurse -Force .\\build"}
+    - {shell: powershell, command: "Remove-Item -Recurse C:\\proj\\dist"}
+    - {shell: powershell, command: "Write-Output 'Remove-Item -Recurse C:\\'"}
+    - {shell: powershell, command: "Set-Content notes.md @'\nRemove-Item -Recurse -Force C:\\\n'@"}
+    - {shell: powershell, command: "Get-Disk"}
+    - {shell: powershell, command: "$x = 'Format-Volume'"}
+    - {shell: powershell, command: "Remove-Item .\\build # -Recurse C:\\"}
+    - {shell: powershell, command: "Remove-Item -Recurse .\\build -ErrorAction: SilentlyContinue"}
+    - {shell: posix, command: "dd if=/dev/zero of=/dev/null bs=1m count=100"}
+    - {shell: posix, command: "dd if=/dev/zero of=/dev/null 2>/dev/null"}
+    - {shell: posix, command: "dd if=/dev/zero of=/dev/null bs=1M count=1 # example alternative: >/dev/sda"}
+    - {shell: posix, command: "dd if=\">/dev/sda\" count=0"}
+    - {shell: posix, command: "exec 3<>/dev/tcp/example.com/80"}
+    - {shell: posix, command: "rm -rf ./build"}
+    - {shell: posix, command: "rm -rf \"./build\""}
+    - {shell: posix, command: "rm -rf node_modules"}
+    - {shell: posix, command: "rm -rf /home/dev/proj/dist"}
+    - {shell: posix, command: "echo \"rm -rf /\""}
+    - {shell: posix, command: "git commit -m \"docs: why not rm -rf /\""}
+    - {shell: posix, command: "cat > README.md <<'EOF'\nrm -rf /\nEOF"}
+    - {shell: posix, command: "python3 -c \"print('rm -rf /')\""}

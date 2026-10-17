@@ -1,0 +1,108 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: gofmt
+        run: |
+          out=$(git ls-files -z '*.go' | xargs -0 gofmt -l)
+          if [ -n "$out" ]; then
+            echo "gofmt -l reports unformatted files:"
+            echo "$out"
+            exit 1
+          fi
+      - name: go vet
+        run: go vet ./...
+      - name: go vet (GOOS=windows)
+        run: GOOS=windows go vet ./...
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        with:
+          version: v2.14.0
+      - name: govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
+      - name: actionlint
+        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+      - name: release notes script
+        run: bash .github/scripts/release-notes_test.sh
+
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      # 检出前关掉换行转换：golden 对语料文件的原始字节求哈希，CRLF 会让它失败。
+      - name: Keep LF line endings
+        if: runner.os == 'Windows'
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      # -race 需要 cgo；Windows runner 自带 MinGW。
+      - name: go test -race
+        env:
+          CGO_ENABLED: "1"
+        run: go test -race -count=1 -timeout 30m ./...
+      - name: golden
+        env:
+          HG_GOLDEN_REQUIRED: "1"
+        run: go test -count=1 -timeout 30m -run '^TestGolden$' ./internal/check/action/
+      - name: fuzz (10s per target)
+        run: |
+          while read -r name pkg; do
+            echo "== $name $pkg"
+            go test -run '^$' -fuzz "^${name}\$" -fuzztime 10s -timeout 30m "$pkg"
+          done <<'TARGETS'
+          FuzzVerdictNeverLeaks ./internal/check/outbound/
+          FuzzExpand ./pkg/detect/command/
+          FuzzExpandPowerShell ./pkg/detect/command/
+          FuzzFind ./pkg/detect/encoded/
+          FuzzFind ./pkg/detect/pii/
+          FuzzMaskNeverLeaksFoundValues ./pkg/detect/secrets/
+          FuzzPatchActions ./pkg/harness/codex/
+          FuzzEmbeddedPatches ./pkg/harness/codex/
+          TARGETS
+
+  commits:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: check each commit
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: .github/scripts/each-commit.sh "$BASE_SHA" "$HEAD_SHA"

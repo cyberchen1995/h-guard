@@ -1,0 +1,41 @@
+{
+  "harness": "claudecode",
+  "version": "2.1.296",
+  "scenario": "warn-bash",
+  "platform": "darwin-arm64",
+  "run_id": "20261012T023050Z",
+  "event": "tool.result",
+  "stdin": {
+    "protocol": "h-guard.ext/v1",
+    "harness": "claudecode",
+    "harness_version": "2.1.296",
+    "hook": "tool.result",
+    "session": {
+      "id": "2aa83702-eba3-4d3e-ab6d-3dd15a08cc45",
+      "cwd": "/tmp/hg-m0/claudecode/warn-bash"
+    },
+    "data": {
+      "command": "cat entry.txt",
+      "description": "Print contents of entry.txt",
+      "tool": "Bash",
+      "tool_use_id": "toolu_018k4Wm6rT5dYwHndHrbLn1u"
+    },
+    "result": {
+      "ref": 1,
+      "result": {
+        "stdout": "HGCANARY-f99bfd132ad4",
+        "stderr": "",
+        "interrupted": false,
+        "isImage": false,
+        "noOutputExpected": false
+      },
+      "text": "HGCANARY-f99bfd132ad4",
+      "isReadOnly": true
+    }
+  },
+  "reply": {
+    "protocol": "h-guard.ext/v1",
+    "action": "warn",
+    "message": "h-guard M0 test: warn"
+  }
+}

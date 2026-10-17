@@ -1,0 +1,29 @@
+{
+  "harness": "claudecode",
+  "version": "2.1.296",
+  "scenario": "replace-read",
+  "platform": "darwin-arm64",
+  "run_id": "20261012T023050Z",
+  "event": "prompt.submit",
+  "stdin": {
+    "protocol": "h-guard.ext/v1",
+    "harness": "claudecode",
+    "harness_version": "2.1.296",
+    "hook": "prompt.submit",
+    "session": {
+      "id": "bae770f6-d440-4d53-9dc8-53aa44fa91a8",
+      "cwd": "/tmp/hg-m0/claudecode/replace-read"
+    },
+    "data": {
+      "text": "Use the Read tool to read memo.txt. Reply with exactly its contents and nothing else. If the call is blocked, or its result is withheld or replaced, do not use any other tool; just reply BLOCKED.",
+      "wait": false,
+      "origin": {
+        "kind": "sdk"
+      }
+    }
+  },
+  "reply": {
+    "protocol": "h-guard.ext/v1",
+    "action": "pass"
+  }
+}

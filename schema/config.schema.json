@@ -1,0 +1,276 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/cyberchen1995/h-guard/main/schema/config.schema.json",
+  "title": "h-guard configuration",
+  "description": "h-guard configuration file (config schema 1). Layers are merged in order: built-in defaults, the user config, then --config. Every field except version falls back to the layer below. This schema checks the shape; value checks that need context (references between backends and profiles, regular expressions) are done by \"h-guard config validate\", which is authoritative.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version"],
+  "properties": {
+    "version": {
+      "description": "Configuration format version. Every config file must declare it.",
+      "type": "integer",
+      "const": 1
+    },
+    "locale": {
+      "description": "Language of the messages shown to you and the agent: en or zh-CN (forms such as zh_CN.UTF-8 are accepted). Unset or unsupported: taken from LC_ALL or LANG, falling back to en.",
+      "type": "string"
+    },
+    "judge": {
+      "description": "The judge (a model) that decides the dangerous-operation rules.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "description": "Ask the judge. Off by default; \"h-guard init\" picks a backend, asks for consent and turns it on.",
+          "type": "boolean",
+          "default": false
+        },
+        "backend": {
+          "description": "Name of the backend to use (a key under backends). Built-in: claude-haiku, claude-sonnet, gemma4-local, jev.",
+          "type": "string",
+          "default": "jev"
+        }
+      }
+    },
+    "action": {
+      "description": "Checks on the agent's actions (commands and file operations).",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "tier": {
+          "description": "1 = commands; 2 = also file reads, writes, deletes and renames; 3 = also other tool calls and HTTP requests (no rules cover these yet).",
+          "$ref": "#/$defs/tier",
+          "default": 2
+        }
+      }
+    },
+    "outbound": {
+      "description": "Checks on prompts and tool output (credentials, private keys, personal data).",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "tier": {
+          "description": "1 = prompts; 2 = also file contents in tool output; 3 = all tool output.",
+          "$ref": "#/$defs/tier",
+          "default": 1
+        },
+        "judge_max_chunks": {
+          "description": "Maximum number of chunks a long text is split into for the judge.",
+          "type": "integer",
+          "minimum": 1,
+          "default": 4
+        },
+        "judge_min_chars": {
+          "description": "Texts shorter than this many characters are not sent to the judge.",
+          "type": "integer",
+          "minimum": 0,
+          "default": 200
+        },
+        "judge_chunk_chars": {
+          "description": "Maximum number of characters in one chunk sent to the judge.",
+          "type": "integer",
+          "minimum": 500,
+          "default": 4000
+        },
+        "categories": {
+          "description": "Policy per outbound category (the detection rules live in rule packs). Built-in categories: credentials, private_key, pii. Fields not written keep the value from the layer below.",
+          "type": "object",
+          "additionalProperties": {"$ref": "#/$defs/category"}
+        },
+        "judge": {
+          "description": "Use the judge for outbound checks. When false, prompts and tool output are never sent to the backend, and consent does not cover them.",
+          "type": "boolean",
+          "default": true
+        }
+      }
+    },
+    "rules": {
+      "description": "Turn single rules on or off by rule id (\"h-guard config show\" lists them).",
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["enabled"],
+        "properties": {
+          "enabled": {"description": "Whether the rule is active.", "type": "boolean"}
+        }
+      }
+    },
+    "backends": {
+      "description": "Judge backends by name. Built-in: jev, claude-haiku, claude-sonnet, gemma4-local. A backend with the same name as a built-in one replaces it.",
+      "type": "object",
+      "additionalProperties": {"$ref": "#/$defs/backend"}
+    },
+    "profiles": {
+      "description": "Calibration profiles by name, referenced from backends.<name>.profile.",
+      "type": "object",
+      "additionalProperties": {"$ref": "#/$defs/profile"}
+    },
+    "policy": {
+      "description": "Behavior on failures and limits on input size.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "on_unavailable": {
+          "description": "What to do when the judge is needed but unavailable.",
+          "type": "string",
+          "enum": ["pass", "ask", "deny"],
+          "default": "pass"
+        },
+        "when_ask_unsupported": {
+          "description": "What to do when the harness cannot ask the user for confirmation.",
+          "type": "string",
+          "enum": ["pass", "deny"],
+          "default": "deny"
+        },
+        "request_window": {
+          "description": "Number of the user's most recent prompts sent to the judge to decide whether the user asked for the operation.",
+          "type": "integer",
+          "minimum": 1,
+          "default": 3
+        },
+        "max_command_chars": {
+          "description": "Commands longer than this many characters are shortened in the middle before being sent to the judge.",
+          "type": "integer",
+          "minimum": 1,
+          "default": 8000
+        },
+        "max_request_chars": {
+          "description": "User prompts longer than this many characters are shortened in the middle before being sent to the judge.",
+          "type": "integer",
+          "minimum": 1,
+          "default": 2000
+        }
+      }
+    },
+    "harnesses": {
+      "description": "Settings per harness (claudecode, codex, ...).",
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "shell": {
+            "description": "Shell assumed when the harness cannot tell which shell runs a command (default: posix).",
+            "type": "string",
+            "enum": ["posix", "powershell"]
+          }
+        }
+      }
+    },
+    "log": {
+      "description": "Decision log. The health log is always on.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "decisions": {
+          "description": "Write a decision log with the full commands (credentials h-guard recognizes are masked).",
+          "type": "boolean",
+          "default": false
+        },
+        "retention_days": {
+          "description": "Days to keep log files.",
+          "type": "integer",
+          "minimum": 1,
+          "default": 14
+        }
+      }
+    }
+  },
+  "$defs": {
+    "tier": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 3
+    },
+    "category": {
+      "description": "Policy of one outbound category. A category that is not configured is enabled with action deny.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {"description": "Whether the category is checked.", "type": "boolean", "default": true},
+        "action": {
+          "description": "What a hit does: deny blocks, warn only reports (harnesses cannot ask for confirmation on prompts and tool output).",
+          "type": "string",
+          "enum": ["deny", "warn"],
+          "default": "deny"
+        },
+        "ignore": {
+          "description": "Values that are not counted as hits (compared after trimming spaces; email addresses case-insensitively).",
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "question": {
+          "description": "Question sent to the judge (in English): does the text contain this category?",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["question"],
+          "properties": {
+            "question": {"description": "The question.", "type": "string"},
+            "counts_as_yes": {"description": "What counts as yes.", "type": "string"},
+            "counts_as_no": {"description": "What counts as no.", "type": "string"}
+          }
+        }
+      }
+    },
+    "backend": {
+      "description": "A judge backend. Only type and profile are common to all backends; other fields depend on the backend type, see docs/guide/configuration.md. Each backend type rejects fields it does not know.",
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["type"],
+      "properties": {
+        "type": {
+          "description": "Backend type.",
+          "type": "string",
+          "enum": ["anthropic", "exec", "openai", "typesafe"]
+        },
+        "profile": {
+          "description": "Calibration profile (a key under profiles). Without a matching profile, conservative thresholds are used.",
+          "type": "string"
+        }
+      }
+    },
+    "profile": {
+      "description": "Calibration profile of a backend. It is used only when its fingerprint matches the backend's model, probability method and question set.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["thresholds"],
+      "properties": {
+        "thresholds": {
+          "description": "Thresholds. hit, veto and requested must be written together; a profile calibrated only for outbound may write outbound alone.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "hit": {"description": "Probability at or above which a rule question counts as a hit.", "$ref": "#/$defs/probability"},
+            "veto": {"description": "Probability at or below which the judge's no withdraws a local hit.", "$ref": "#/$defs/probability"},
+            "requested": {"description": "Probability at or above which the user is taken to have asked for the operation.", "$ref": "#/$defs/probability"},
+            "radius_floor": {
+              "description": "Lower bound of the blast radius per rule id, overriding the rule pack.",
+              "type": "object",
+              "additionalProperties": {"type": "number", "minimum": 0, "maximum": 3}
+            },
+            "outbound": {"description": "Probability at or above which an outbound category question counts as a hit.", "$ref": "#/$defs/probability"}
+          }
+        },
+        "fingerprint": {
+          "description": "What the profile was calibrated with (written by \"h-guard eval --sweep\").",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["model", "probability"],
+          "properties": {
+            "model": {"description": "Model the profile was calibrated with.", "type": "string"},
+            "probability": {"description": "How the probability was obtained.", "type": "string"},
+            "questions": {"description": "Digest of the action question set: sha256:<64 hex digits>.", "type": "string"},
+            "outbound_questions": {"description": "Digest of the outbound question set: sha256:<64 hex digits>.", "type": "string"}
+          }
+        }
+      }
+    },
+    "probability": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    }
+  }
+}

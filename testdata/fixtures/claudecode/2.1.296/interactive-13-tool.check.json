@@ -1,0 +1,32 @@
+{
+  "harness": "claudecode",
+  "version": "2.1.296",
+  "scenario": "interactive",
+  "platform": "darwin-arm64",
+  "run_id": "20261012T025954Z",
+  "event": "tool.check",
+  "stdin": {
+    "protocol": "h-guard.ext/v1",
+    "harness": "claudecode",
+    "harness_version": "2.1.296",
+    "hook": "tool.check",
+    "session": {
+      "id": "293592bb-6c6a-4777-a27e-950a63282910",
+      "cwd": "/tmp/hg-m0/claudecode/interactive"
+    },
+    "data": {
+      "tool": "Bash",
+      "input": {
+        "command": "echo hg-m0-sub",
+        "description": "Print test string"
+      },
+      "tool_use_id": "toolu_01WLncGyWc1SXVAhsZYkrYNW",
+      "agentId": "a3d2ef1d62fa67900"
+    },
+    "decided": "ask"
+  },
+  "reply": {
+    "protocol": "h-guard.ext/v1",
+    "action": "pass"
+  }
+}

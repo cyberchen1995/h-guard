@@ -1,0 +1,95 @@
+# 发布配置：三平台二进制、校验和、每个归档的 SBOM、对校验和文件的 cosign 无密钥签名，
+# 发布到 GitHub Releases 与 Homebrew tap。由 .github/workflows/release.yml 在推送 v* 标签时运行。
+version: 2
+
+project_name: h-guard
+
+builds:
+  - id: h-guard
+    main: ./cmd/h-guard
+    binary: h-guard
+    env:
+      - CGO_ENABLED=0
+    goos: [darwin, linux, windows]
+    goarch: [amd64, arm64]
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X github.com/cyberchen1995/h-guard/internal/app.Version={{.Version}}
+    # 用提交时间作为文件时间，同一提交构建出的归档逐字节一致。
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - id: h-guard
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    name_template: "h-guard_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - LICENSE
+      - NOTICE
+      - README.md
+      - README.zh-CN.md
+      - CHANGELOG.md
+
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+
+sboms:
+  - artifacts: archive
+
+# 在 GitHub Actions 里经 OIDC 无密钥签名，签名与证书写进同一个 bundle。
+signs:
+  - cmd: cosign
+    artifacts: checksum
+    signature: "${artifact}.sigstore.json"
+    args:
+      - sign-blob
+      - "--bundle=${signature}"
+      - "${artifact}"
+      - --yes
+
+homebrew_casks:
+  - name: h-guard
+    repository:
+      owner: cyberchen1995
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    directory: Casks
+    homepage: https://github.com/cyberchen1995/h-guard
+    description: Safety guardrail for agent harnesses
+    license: Apache-2.0
+    # 预发布版不更新 tap。
+    skip_upload: auto
+    # macOS 二进制没有公证：安装后去掉隔离属性，否则 Gatekeeper 拒绝运行。
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/h-guard"]
+          end
+
+# 发布说明由 --release-notes 给出（取自 CHANGELOG）。不要关掉 changelog：
+# goreleaser 只在 changelog 这一步读 --release-notes 的文件，关掉后发布页只剩 footer。
+release:
+  github:
+    owner: cyberchen1995
+    name: h-guard
+  prerelease: auto
+  footer: |
+    ## Verifying the download
+
+    `checksums.txt` is signed with [cosign](https://github.com/sigstore/cosign) keyless signing from this repository's release workflow. Verify the signature, then the archive:
+
+    ```sh
+    cosign verify-blob \
+      --bundle checksums.txt.sigstore.json \
+      --certificate-identity-regexp '^https://github\.com/cyberchen1995/h-guard/\.github/workflows/release\.yml@refs/tags/v' \
+      --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+      checksums.txt
+    sha256sum --check --ignore-missing checksums.txt
+    ```
+
+    On macOS use `shasum -a 256 --check --ignore-missing checksums.txt`.

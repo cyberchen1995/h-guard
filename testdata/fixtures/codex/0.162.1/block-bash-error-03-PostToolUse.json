@@ -1,0 +1,27 @@
+{
+  "harness": "codex",
+  "version": "0.162.1",
+  "scenario": "block-bash-error",
+  "platform": "darwin-arm64",
+  "run_id": "20261012T025748Z",
+  "event": "PostToolUse",
+  "stdin": {
+    "session_id": "01a12e0c-5345-7f01-9977-79262bf8823a",
+    "turn_id": "01a12e0c-53bc-7771-9418-25498f082b64",
+    "transcript_path": "/home/user/.codex/sessions/2026/10/12/rollout-2026-10-12T10-58-42-01a12e0c-5345-7f01-9977-79262bf8823a.jsonl",
+    "cwd": "/tmp/hg-m0/codex/proj",
+    "hook_event_name": "PostToolUse",
+    "model": "gpt-6-astra",
+    "permission_mode": "default",
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "cat entry.txt missing.txt"
+    },
+    "tool_response": "cat: missing.txt: No such file or directory\nHGCANARY-7543fb4d8b54\n",
+    "tool_use_id": "exec-67fe3392-bc22-4ab1-95b6-a70d38f64709"
+  },
+  "reply": {
+    "decision": "block",
+    "reason": "[h-guard replaced] h-guard M0 test: output blocked"
+  }
+}

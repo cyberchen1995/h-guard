@@ -1,0 +1,29 @@
+{
+  "harness": "claudecode",
+  "version": "2.1.296",
+  "scenario": "pre-mcp",
+  "platform": "darwin-arm64",
+  "run_id": "20261013T020955Z",
+  "event": "prompt.submit",
+  "stdin": {
+    "protocol": "h-guard.ext/v1",
+    "harness": "claudecode",
+    "harness_version": "2.1.296",
+    "hook": "prompt.submit",
+    "session": {
+      "id": "d553115a-4bcc-4ced-a0ab-c6383b3ca6d8",
+      "cwd": "/tmp/hg-m0/claudecode/pre-mcp"
+    },
+    "data": {
+      "text": "Call the hg_m0_report tool of the hgm0 MCP server. Reply with exactly the value of its code field and nothing else.",
+      "wait": false,
+      "origin": {
+        "kind": "sdk"
+      }
+    }
+  },
+  "reply": {
+    "protocol": "h-guard.ext/v1",
+    "action": "pass"
+  }
+}

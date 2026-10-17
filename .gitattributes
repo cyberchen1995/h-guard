@@ -1,0 +1,8 @@
+# 检出时一律用 LF：Windows 上 CRLF 会改变按字节内嵌或按哈希钉住的数据。
+* text=auto eol=lf
+
+# 逐字节内嵌或按哈希钉住的数据，检出时不做任何转换。
+testdata/** -text
+corpus/** -text
+rules/** -text
+locales/** -text

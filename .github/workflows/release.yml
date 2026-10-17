@@ -1,0 +1,69 @@
+name: Release
+
+# 推送 v* 标签时构建并发布：三平台二进制、checksums.txt、每个归档的 SBOM、
+# 对 checksums.txt 的 cosign 无密钥签名，更新 Homebrew tap（预发布版不更新），最后做安装冒烟。
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write # 创建 Release 并上传产物
+      id-token: write # cosign 无密钥签名经 OIDC 取证书
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - uses: anchore/sbom-action/download-syft@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
+        with:
+          syft-version: v1.52.0
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v3.1.3
+      - name: go test
+        run: go test -count=1 -timeout 30m ./...
+      # 发布说明取自 CHANGELOG 里这个版本的一节；正式版的日期仍是 unreleased 时在这里失败。
+      - name: release notes
+        run: .github/scripts/release-notes.sh "${GITHUB_REF_NAME#v}" > "$RUNNER_TEMP/notes.md"
+      - uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
+        with:
+          distribution: goreleaser
+          version: v2.18.2
+          args: release --clean --release-notes ${{ runner.temp }}/notes.md
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+      # 预发布版不更新 tap；生成的 cask 留作 artifact，维护者可以手动试装。
+      - name: upload cask
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: homebrew-cask
+          path: dist/homebrew/Casks/h-guard.rb
+          if-no-files-found: error
+
+  # 用 GITHUB_TOKEN 建的 Release 不会触发 release: published 的 workflow，所以冒烟在这里直接调用。
+  smoke:
+    needs: release
+    permissions:
+      contents: read
+    uses: ./.github/workflows/install-smoke.yml
+    with:
+      tag: ${{ github.ref_name }}

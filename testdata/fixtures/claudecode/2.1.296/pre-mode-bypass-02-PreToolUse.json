@@ -1,0 +1,26 @@
+{
+  "harness": "claudecode",
+  "version": "2.1.296",
+  "scenario": "pre-mode-bypass",
+  "platform": "darwin-arm64",
+  "run_id": "20261013T020955Z",
+  "event": "PreToolUse",
+  "stdin": {
+    "session_id": "ca4c8806-73b3-422f-9daa-700cdd4a7eb0",
+    "transcript_path": "/home/user/.claude/projects/-tmp-hg-m0-claudecode-pre-mode-bypass/ca4c8806-73b3-422f-9daa-700cdd4a7eb0.jsonl",
+    "cwd": "/tmp/hg-m0/claudecode/pre-mode-bypass",
+    "scratchpad_dir": "/tmp/claude-uid/-tmp-hg-m0-claudecode-pre-mode-bypass/ca4c8806-73b3-422f-9daa-700cdd4a7eb0/scratchpad",
+    "prompt_id": "f258dc53-47fa-4c23-be87-825fa03f4e90",
+    "permission_mode": "bypassPermissions",
+    "effort": {
+      "level": "medium"
+    },
+    "hook_event_name": "PreToolUse",
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "echo hg-m1-bypass",
+      "description": "Echo the requested string"
+    },
+    "tool_use_id": "toolu_01V4SzC5ZSDfyw46dz3Hy4yB"
+  }
+}

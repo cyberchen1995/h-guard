@@ -1,0 +1,40 @@
+{
+  "harness": "claudecode",
+  "version": "2.1.296",
+  "scenario": "control-cat",
+  "platform": "darwin-arm64",
+  "run_id": "20261012T023050Z",
+  "event": "tool.result",
+  "stdin": {
+    "protocol": "h-guard.ext/v1",
+    "harness": "claudecode",
+    "harness_version": "2.1.296",
+    "hook": "tool.result",
+    "session": {
+      "id": "81c4a354-f848-4c32-a26c-5a024b229507",
+      "cwd": "/tmp/hg-m0/claudecode/control-cat"
+    },
+    "data": {
+      "command": "cat entry.txt",
+      "description": "Print contents of entry.txt",
+      "tool": "Bash",
+      "tool_use_id": "toolu_01KnjuR77aBCjuLsH3mrpC2B"
+    },
+    "result": {
+      "ref": 1,
+      "result": {
+        "stdout": "HGCANARY-acb9fa955fb9",
+        "stderr": "",
+        "interrupted": false,
+        "isImage": false,
+        "noOutputExpected": false
+      },
+      "text": "HGCANARY-acb9fa955fb9",
+      "isReadOnly": true
+    }
+  },
+  "reply": {
+    "protocol": "h-guard.ext/v1",
+    "action": "pass"
+  }
+}
