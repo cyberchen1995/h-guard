@@ -4,6 +4,8 @@
 
 h-guard 是 agent harness 的安全护栏。它检查 agent 将要执行的操作（shell 命令与文件操作）和经过它的内容（你的提示词与工具输出），在破坏性操作执行或秘密外泄之前拒绝、请求确认或提示。目前接入 Claude Code 与 Codex，其他 agent harness 可以通过 generic JSON 契约接入。
 
+<p align="center"><img src=".github/assets/how-it-works.zh-CN.svg" alt="h-guard 工作原理" width="720"></p>
+
 **建议搭配判断模型使用。** 本地规则只处理界限分明的情况。常见的危险操作（递归删除、破坏性 git、发布等）要由模型判断是不是你要求的、会造成多大损失，h-guard 才能只在真正危险时打断你。运行 `h-guard init`，选择 `claude-haiku`（推荐：快、已校准）或 `gemma4-local`（在本机运行、不外发，但较慢）。
 
 > **模型默认关闭。** 模型关闭时，h-guard 只运行本地规则，不向任何地方发送数据，也不需要 API key。模型关闭时仍然生效的有：
