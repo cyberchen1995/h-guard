@@ -3,7 +3,8 @@
 // 回复翻译成扩展的返回值（block、替换 content、handled）与界面上的确认和提示。
 //
 // 请求的 data 是事件本身：tool_call 为 {toolCallId, toolName, input}；tool_result 为 {toolCallId, toolName, input,
-// isError}，result 是 {content}；input 为 {text, source}。
+// isError}，result 是 {content}；input 为 {text, source}。omp 只在交互界面与 RPC 模式里触发 input，扩展在每次请求模型
+// 之前的 context 事件里补查其余的提示词，同样以 input 发来（source 为 context）。
 //
 // 导入本包即注册名为 pi 与 omp 的 adapter。
 package pi
@@ -175,8 +176,8 @@ func (a Adapter) Parse(raw []byte) (guard.Event, error) {
 	return ev, nil
 }
 
-// SourceOf 按 input 事件的 source 判定指令来源：extension 是扩展用 sendUserMessage 发出的消息；interactive、rpc
-// 与认不出的取值按用户本人（-p 与 SDK 的提示词也报告为 interactive）。
+// SourceOf 按 input 事件的 source 判定指令来源：extension 是扩展用 sendUserMessage 发出的消息；interactive、rpc、
+// context（omp 的扩展在 context 事件里补查的提示词）与认不出的取值按用户本人（pi 的 -p 与 SDK 的提示词也报告为 interactive）。
 func SourceOf(source string) guard.Source {
 	if source == "extension" {
 		return guard.SourceAutomated

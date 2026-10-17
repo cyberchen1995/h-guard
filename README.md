@@ -248,14 +248,16 @@ the [rule pack guide](docs/guide/rules.md) for writing rules.
 |---|---|---|
 | Claude Code | 2.1.290 or later (needs mods for tool output and prompts) | 2.1.296 |
 | Codex | the version verified, or later | 0.162.1 |
-| opencode | 1.x (opencode 2.x has a different plugin API and is not supported) | not yet; written for 1.19.3 |
-| pi | written for 1.3.0, or later | not yet |
-| oh-my-pi | written for 18.11.3, or later | not yet |
-| DeepSeek Harness | written for 0.2.1-rc.2, or later | not yet |
+| opencode | 1.x (opencode 2.x has a different plugin API and is not supported) | 1.19.3 (smoke test) |
+| pi | the version tested, or later | 1.3.0 (smoke test) |
+| oh-my-pi | the version tested, or later | 18.11.3 (smoke test) |
+| DeepSeek Harness | the version tested, or later | 0.2.1-rc.2 (smoke test) |
 
 The opencode, pi, oh-my-pi and DeepSeek Harness extensions were written against
-each harness's source code and are tested against simulated harness APIs, but
-they have not yet been verified with recorded sessions of the real harnesses.
+each harness's source code, are tested in CI against simulated harness APIs,
+and were smoke-tested in the real harnesses with a simulated model server
+(blocking, asking, replacing tool output, blocking prompts). There are no
+recorded sessions of them yet.
 
 `install` and `status` say when a harness version has not been verified; they
 do not refuse it. Other agent harnesses can call h-guard through the

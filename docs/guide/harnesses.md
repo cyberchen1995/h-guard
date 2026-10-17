@@ -139,7 +139,7 @@ Codex differences:
 ## opencode
 
 Supported: opencode 1.x; the plugin was written against opencode 1.19.3 and
-has not yet been verified with a recorded session. opencode 2.x has a
+smoke-tested with it (no recorded sessions yet). opencode 2.x has a
 different plugin API and does not load this plugin; `install` and `status`
 say so.
 
@@ -155,7 +155,7 @@ all external plugins, h-guard's included.
 |---|---|
 | `tool.execute.before` | checks the actions (`bash` commands; `read`, `grep`, `write`, `edit`; the files in an `apply_patch`); on `deny` the plugin throws, the tool does not run and the model reads h-guard's reason |
 | `tool.execute.after` | scans the output; on `deny` the output the model sees (and the tool's own copy shown in the interface) is replaced with h-guard's reason |
-| `chat.message` | scans the message, including the text of attached files; on `deny` the message is neither saved nor sent, and a toast shows the reason |
+| `chat.message` | scans the message, including the text of attached files; on `deny` the message is neither saved nor sent, and a toast shows the reason (`opencode run` only reports a generic server error) |
 
 opencode differences:
 
@@ -180,9 +180,9 @@ did not run.
 
 ## pi and oh-my-pi
 
-Supported: pi (`pi`, written against 1.3.0) and oh-my-pi (`omp`, a fork of pi,
-written against 18.11.3); neither has yet been verified with a recorded
-session.
+Supported: pi (`pi`, written against and smoke-tested with 1.3.0) and oh-my-pi
+(`omp`, a fork of pi, written against and smoke-tested with 18.11.3); there are
+no recorded sessions of them yet.
 
 oh-my-pi keeps pi's extension API, so one extension serves both, but it
 manages extensions differently. Install for the one you use:
@@ -210,9 +210,15 @@ or restart after installing.
 | `tool_call` | checks the actions (`bash`, pi's `powershell` on Windows; `read`, `grep`, `write`, `edit`; oh-my-pi's patch-style `edit`, `ast_edit` and `eval`); `deny` blocks the call and the model reads the reason; `ask` opens a confirmation dialog |
 | `tool_result` | scans the output; `deny` replaces the content the model sees |
 | `input` | scans the prompt; `deny` drops it and shows the reason |
+| `context` (oh-my-pi only) | scans user messages that did not go through `input`; `deny` replaces the message the model receives with h-guard's reason |
 
 Differences:
 
+- **oh-my-pi's `-p` and SDK prompts.** oh-my-pi fires `input` only in its
+  interface and in RPC mode. Other prompts are checked on `context`, just
+  before each model request: a denied prompt reaches the model only as
+  h-guard's reason and the model still answers it, and the session file keeps
+  the original text.
 - **Ask without a user.** In print (`-p`) and JSON mode there is no dialog;
   `ask` blocks the call, which is the safe direction. In RPC mode the dialog
   goes to the RPC client.
@@ -234,8 +240,8 @@ without a user), and lets tool output and prompts through with a notification.
 
 ## DeepSeek Harness
 
-Supported: DeepSeek Harness (`dsh`), written against 0.2.1-rc.2; not yet
-verified with a recorded session.
+Supported: DeepSeek Harness (`dsh`), written against and smoke-tested with
+0.2.1-rc.2; no recorded sessions yet.
 
 `install dsh --write`:
 

@@ -182,12 +182,12 @@ rules:
 |---|---|---|
 | Claude Code | 2.1.290 及以上（工具输出与提示词的检查依赖 mods） | 2.1.296 |
 | Codex | 经过验证的版本及以上 | 0.162.1 |
-| opencode | 1.x（opencode 2.x 的插件 API 不同，不支持） | 尚未验证；按 1.19.3 编写 |
-| pi | 按 1.3.0 编写，及以上 | 尚未验证 |
-| oh-my-pi | 按 18.11.3 编写，及以上 | 尚未验证 |
-| DeepSeek Harness | 按 0.2.1-rc.2 编写，及以上 | 尚未验证 |
+| opencode | 1.x（opencode 2.x 的插件 API 不同，不支持） | 1.19.3（冒烟测试） |
+| pi | 测试过的版本及以上 | 1.3.0（冒烟测试） |
+| oh-my-pi | 测试过的版本及以上 | 18.11.3（冒烟测试） |
+| DeepSeek Harness | 测试过的版本及以上 | 0.2.1-rc.2（冒烟测试） |
 
-opencode、pi、oh-my-pi 与 DeepSeek Harness 的扩展按各 harness 的源码编写，并用模拟的 harness API 测试过，但还没有用真实 harness 的录制会话验证。
+opencode、pi、oh-my-pi 与 DeepSeek Harness 的扩展按各 harness 的源码编写，在 CI 里用模拟的 harness API 测试，并在真实 harness 里配合模拟的模型服务做过冒烟测试（拒绝、请求确认、替换工具输出、拦下提示词）。它们还没有录制会话。
 
 harness 版本未经验证时，`install` 与 `status` 会说明，但不拒绝。其他 agent harness 可以通过 [generic 契约](docs/guide/protocols.md#generic-harness-contract-v1)调用 h-guard。各 harness 的接入方式、能做与不能做的事见 [harness 指南](docs/guide/harnesses.md)。
 

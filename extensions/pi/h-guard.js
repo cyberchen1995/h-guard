@@ -56,19 +56,66 @@ export default function (pi) {
 
   // 提示词：发送之前检查；deny 时不发送，并告诉用户原因。接入层故障放行并提示用户
   pi.on('input', async (event, ctx) => {
-    try {
-      const reply = await callGuard('input', ctx, { data: { text: event.text, source: event.source } })
-      if (reply.action === 'deny' || reply.action === 'ask') {
-        notify(ctx, 'error', messageOf(reply))
-        return { action: 'handled', handled: true }
-      }
-      if (reply.action === 'warn') notify(ctx, 'warning', messageOf(reply))
-      if (reply.action === 'error') notify(ctx, 'warning', reply.message)
-    } catch (err) {
-      notify(ctx, 'warning', FAILED)
-    }
+    const verdict = await checkPrompt(ctx, event.text, event.source)
+    checked.set(event.text, verdict)
+    if (verdict !== null) return { action: 'handled', handled: true }
     return undefined
   })
+
+  // omp 只在交互界面与 RPC 模式里触发 input，-p 与 SDK 的提示词不经过它。每次请求模型之前的 context 事件补上：
+  // 没检查过的用户消息照样交给 h-guard，被拒的消息换成说明再交给模型（只改这一次请求，不改会话记录，所以每次都要换）
+  if (HARNESS === 'omp') {
+    pi.on('context', async (event, ctx) => {
+      const messages = Array.isArray(event.messages) ? event.messages : []
+      let changed = false
+      const out = []
+      for (const m of messages) {
+        const text = m && m.role === 'user' ? userText(m.content) : ''
+        if (text === '') {
+          out.push(m)
+          continue
+        }
+        if (!checked.has(text)) checked.set(text, await checkPrompt(ctx, text, 'context'))
+        const verdict = checked.get(text)
+        if (verdict === null) {
+          out.push(m)
+          continue
+        }
+        out.push({ ...m, content: [{ type: 'text', text: verdict }] })
+        changed = true
+      }
+      return changed ? { messages: out } : undefined
+    })
+  }
+}
+
+// checked 记下检查过的提示词（文本 → null 放行，或代替它的说明），同一段文本不重复检查
+const checked = new Map()
+
+// checkPrompt 检查一段提示词：deny 时提示用户并返回写给模型的说明，其余返回 null。接入层故障放行并提示用户
+async function checkPrompt(ctx, text, source) {
+  try {
+    const reply = await callGuard('input', ctx, { data: { text, source } })
+    if (reply.action === 'deny' || reply.action === 'ask') {
+      notify(ctx, 'error', messageOf(reply))
+      return textOf(reply) + ' The prompt was withheld.'
+    }
+    if (reply.action === 'warn') notify(ctx, 'warning', messageOf(reply))
+    if (reply.action === 'error') notify(ctx, 'warning', reply.message)
+  } catch (err) {
+    notify(ctx, 'warning', FAILED)
+  }
+  return null
+}
+
+// userText 返回用户消息的文本：字符串原样，内容块取各文本块以换行连接
+function userText(content) {
+  if (typeof content === 'string') return content
+  if (!Array.isArray(content)) return ''
+  return content
+    .filter((b) => b && b.type === 'text' && typeof b.text === 'string')
+    .map((b) => b.text)
+    .join('\n')
 }
 
 // notify 尽力提示用户：有界面时用 ctx.ui.notify，没有时写到 stderr（json 模式的 stdout 是事件流）

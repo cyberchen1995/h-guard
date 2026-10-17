@@ -264,7 +264,7 @@ The built-in extensions send these hooks:
 | `opencode` | `tool.execute.before`, `tool.execute.after` | `{tool, sessionID, callID, args}` | `{output, content}` (`tool.execute.after`) |
 | `opencode` | `chat.message` | `{sessionID, agent, parts, parentID}` | |
 | `pi`, `omp` | `tool_call`, `tool_result` | `{toolCallId, toolName, input}` | `{content}` (`tool_result`) |
-| `pi`, `omp` | `input` | `{text, source}` | |
+| `pi`, `omp` | `input` | `{text, source}`; oh-my-pi also sends prompts found on its `context` event, with `source: "context"` | |
 | `dsh` | `tools/pre-execute`, `tools/post-execute` | `{name, callId, arguments, nested}` | `{isError, content}` (`tools/post-execute`) |
 | `dsh` | `agent/pre-step` | `{messages: [{source: {kind}, content}], session: {origin, delegationDepth}}` | |
 

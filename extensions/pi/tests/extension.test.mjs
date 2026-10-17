@@ -110,6 +110,31 @@ test('input: a prompt with a credential is handled (not sent) in both pi and omp
   assert.equal(await handlers.input({ text: 'fix the test', source: 'interactive' }, ctx()), undefined)
 })
 
+test('context (omp): a prompt that did not go through input is checked once; a denied one is replaced for the model', { skip: !haveGuard }, async () => {
+  const { handlers, ctx } = await extension(guard('omp'), 'omp')
+  const user = (text) => ({ role: 'user', content: [{ type: 'text', text }] })
+  const msgs = [user('fix the test'), { role: 'assistant', content: [{ type: 'text', text: 'ok' }] }, user(KEY)]
+  const r = await handlers.context({ messages: msgs }, ctx({ hasUI: false }))
+  assert.equal(r.messages.length, 3)
+  assert.equal(r.messages[0], msgs[0])
+  assert.match(r.messages[2].content[0].text, /^h-guard: Contains credentials.*The prompt was withheld\.$/)
+  assert.ok(!JSON.stringify(r.messages).includes('AKIA'))
+  assert.equal(await handlers.context({ messages: [user('fix the test')] }, ctx()), undefined)
+})
+
+test('context: pi checks prompts through input only', async () => {
+  const { handlers } = await extension(missing, 'pi')
+  assert.equal(handlers.context, undefined)
+})
+
+test('context (omp): a prompt already checked through input is not checked again', async () => {
+  const { command, record } = await fake({ action: 'pass' })
+  const { handlers, ctx } = await extension(command, 'omp')
+  await handlers.input({ text: 'hello there', source: 'interactive' }, ctx())
+  await handlers.context({ messages: [{ role: 'user', content: 'hello there' }] }, ctx())
+  assert.equal((await recorded(record)).length, 1)
+})
+
 test('input: a guard that cannot run sends the prompt; without a UI the note goes to stderr', async () => {
   const { handlers, ctx, notes } = await extension(missing)
   assert.equal(await handlers.input({ text: 'hi', source: 'interactive' }, ctx({ hasUI: false })), undefined)
