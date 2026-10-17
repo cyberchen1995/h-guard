@@ -368,8 +368,10 @@ func TestOMPPaths(t *testing.T) {
 	if ev, err := pi.OMP.Parse(result("omp", "lsp", map[string]any{"action": "references", "file": "a.go"}, "K=V")); err != nil || !ev.FileContent {
 		t.Errorf("lsp result: %+v %v", ev, err)
 	}
-	if ev, err := pi.OMP.Parse(result("omp", "ast_grep", map[string]any{"pat": "x"}, "K=V")); err != nil || !ev.FileContent {
-		t.Errorf("ast_grep result: %+v %v", ev, err)
+	for _, tool := range []string{"ast_grep", "ast_edit"} {
+		if ev, err := pi.OMP.Parse(result("omp", tool, map[string]any{"pat": "x"}, "K=V")); err != nil || !ev.FileContent {
+			t.Errorf("%s result: %+v %v", tool, ev, err)
+		}
 	}
 	var ut *harness.UnknownToolError
 	if _, err := pi.OMP.Parse(call("omp", "security_scan", map[string]any{"action": "start"})); !errors.As(err, &ut) {

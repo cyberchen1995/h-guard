@@ -601,7 +601,7 @@ func (a Adapter) fileContent(tool string, in toolInput) bool {
 	switch tool {
 	case "read", "grep", "search": // search 是 omp 的 grep 的旧名
 		return true
-	case "ast_grep": // omp 的结构化搜索，结果是源文件里的片段
+	case "ast_grep", "ast_edit": // omp 的结构化搜索与改写的预览，结果是源文件里的片段
 		return a.omp
 	case "lsp": // definition、references、implementation 等的结果带着被引用文件的源码
 		return a.omp

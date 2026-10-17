@@ -105,6 +105,10 @@ func TestExtPaths(t *testing.T) {
 	if PiExtension(tg) != filepath.Join("/a", "extensions", "h-guard.js") || OMPExtension(tg) != filepath.Join("/a", "extensions", "h-guard-omp.js") {
 		t.Errorf("PI_CODING_AGENT_DIR: %s %s", PiExtension(tg), OMPExtension(tg))
 	}
+	tg.Getenv = env(map[string]string{"PI_CODING_AGENT_DIR": "~/agents/pi"}) // pi 展开开头的 ~
+	if got := PiExtension(tg); got != filepath.Join(tg.Home, "agents", "pi", "extensions", "h-guard.js") {
+		t.Errorf("PI_CODING_AGENT_DIR with ~: %s", got)
+	}
 }
 
 // TestExtRemove：移除删掉扩展（备份原文件）；没有安装时移除不改动。
