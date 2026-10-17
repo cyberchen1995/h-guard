@@ -294,3 +294,18 @@ func TestDSHModule(t *testing.T) {
 		t.Errorf("linux path: %s", got)
 	}
 }
+
+// TestDSHRemoveForeignPlugin：插件文件被换掉时，移除照样删掉补丁里本项目的那一行，换上的文件不动。
+func TestDSHRemoveForeignPlugin(t *testing.T) {
+	tg := target(t, "linux")
+	apply(t, plan(t, tg, "dsh", false))
+	os.WriteFile(DSHPlugin(tg), []byte("export function apply() {}\n"), 0o600)
+	apply(t, plan(t, tg, "dsh", true))
+	b, _ := os.ReadFile(DSHPatch(tg))
+	if found, _, _ := dshMounted(b); found != 0 {
+		t.Errorf("the row is still mounted:\n%s", b)
+	}
+	if b, _ := os.ReadFile(DSHPlugin(tg)); string(b) != "export function apply() {}\n" {
+		t.Errorf("the foreign plugin file was changed: %q", b)
+	}
+}

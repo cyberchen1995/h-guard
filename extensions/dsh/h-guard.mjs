@@ -20,7 +20,7 @@ export function apply(ctx) {
   // 动作：工具执行之前检查。deny 阻止工具调用，模型读到说明；ask 交给 dsh 的确认服务（没有能回答的界面时 dsh
   // 自己拒绝）；h-guard 无法运行时按 ask 处理。pass 与 warn 交给后面的监听者，h-guard 从不放行
   ctx.on('tools/pre-execute', async (exec, next) => {
-    const reply = await callGuard('tools/pre-execute', exec.agent, {
+    const reply = await callGuard(ctx, 'tools/pre-execute', exec.agent, {
       data: { name: exec.name, callId: exec.callId, arguments: exec.arguments, nested: exec.parent !== undefined },
     }, exec.signal)
     if (reply.action === 'deny') return { kind: 'deny', reason: textOf(reply) }
@@ -35,7 +35,7 @@ export function apply(ctx) {
   // 工具结果：交给模型之前检查；deny 用说明代替结果（结果标为出错）。接入层故障放行结果并记一行日志
   ctx.on('tools/post-execute', async (exec, result, next) => {
     try {
-      const reply = await callGuard('tools/post-execute', exec.agent, {
+      const reply = await callGuard(ctx, 'tools/post-execute', exec.agent, {
         data: { name: exec.name, callId: exec.callId, arguments: exec.arguments, nested: exec.parent !== undefined },
         result: { isError: !!(result && result.isError), content: textBlocks(result && result.content) },
       }, exec.signal)
@@ -54,7 +54,7 @@ export function apply(ctx) {
     if (messages.length === 0) return next()
     try {
       const header = headerOf(step.agent)
-      const reply = await callGuard('agent/pre-step', step.agent, {
+      const reply = await callGuard(ctx, 'agent/pre-step', step.agent, {
         data: {
           messages: messages.map((m) => ({ source: { kind: m && m.source ? m.source.kind : undefined }, content: textBlocks(m && m.content) })),
           session: { origin: header.origin, delegationDepth: header.delegationDepth },
@@ -82,6 +82,18 @@ function log(ctx, text) {
   }
 }
 
+// cwdOf 返回会话当前的工作目录（working_directory 工具会改它）；dsh 没有提供时为空，调用方退回会话创建时的目录。
+// 用 ctx.get 读服务：不声明 inject，没有这个服务时插件照样加载
+function cwdOf(ctx, agent) {
+  try {
+    const wd = typeof ctx.get === 'function' ? ctx.get('workingDirectory') : undefined
+    const dir = wd && agent && agent.session ? wd.get(agent.session) : undefined
+    return typeof dir === 'string' ? dir : ''
+  } catch (err) {
+    return ''
+  }
+}
+
 function headerOf(agent) {
   try {
     const h = agent && agent.session && agent.session.header
@@ -106,7 +118,7 @@ function textBlocks(content) {
 
 // callGuard 按协议组装请求、运行 h-guard、校验回复。任何失败都返回 { action: 'error' }，由各事件按固定规则处理。
 // dsh 取消这次调用时（signal）立即结束 h-guard：dsh 要等这里返回才处理取消
-async function callGuard(hook, agent, extra, signal) {
+async function callGuard(ctx, hook, agent, extra, signal) {
   try {
     const config = CONFIG || { command: ['h-guard', 'hook', HARNESS], timeout_ms: DEFAULT_TIMEOUT_MS }
     const header = headerOf(agent)
@@ -114,7 +126,7 @@ async function callGuard(hook, agent, extra, signal) {
       protocol: PROTOCOL,
       harness: HARNESS,
       hook,
-      session: { id: header.id || HARNESS + '-' + process.pid, cwd: header.cwd || process.cwd() },
+      session: { id: header.id || HARNESS + '-' + process.pid, cwd: cwdOf(ctx, agent) || header.cwd || process.cwd() },
       ...extra,
     }
     const out = await run([...config.command, '--event', hook], JSON.stringify(request), config.timeout_ms || DEFAULT_TIMEOUT_MS, signal)

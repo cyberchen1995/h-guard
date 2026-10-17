@@ -69,8 +69,13 @@ func DSH(t Target, remove bool) ([]Step, error) {
 		return nil, err
 	}
 	file, err := extFileStep(t, plugin, "dsh-plugin", data, remove)
+	keepFile := false
 	if err != nil {
-		return nil, err
+		if !remove {
+			return nil, err
+		}
+		// 插件文件被换成了别的内容：不删它，但补丁里本项目的那一行照样删掉，dsh 不再加载它
+		keepFile = true
 	}
 	if !remove {
 		file.Summary = "write h-guard's DeepSeek Harness plugin"
@@ -101,6 +106,9 @@ func DSH(t Target, remove bool) ([]Step, error) {
 			return nil
 		}}
 	if remove {
+		if keepFile {
+			return []Step{set}, nil
+		}
 		return []Step{set, file}, nil
 	}
 	return []Step{file, set}, nil

@@ -295,13 +295,13 @@ func (a Adapter) actions(tool string, in toolInput) ([]guard.Action, error) {
 }
 
 // ompReadOnly 是 omp 自带的、不执行命令也不改动用户文件的工具（omp 18.11.3 的 BUILTIN_TOOL_NAMES 与 HIDDEN_TOOL_NAMES）：
-// 搜索与查询、提问、子 agent 与等待（子 agent 的工具调用各自经过检查）、待办、上下文与检查点、长期记忆、安全扫描。
-// 其余 omp 自带的工具（debug、ida、github、learn、manage_skill）与扩展提供的工具 h-guard 不认识，请求确认；
+// 搜索与查询、提问、子 agent 与等待（子 agent 的工具调用各自经过检查）、待办、上下文与检查点、长期记忆的查询、安全扫描。
+// 其余 omp 自带的工具（debug、ida、github、写长期记忆的 retain、memory_edit、learn、manage_skill）与扩展提供的工具 h-guard 不认识，请求确认；
 // 用户可以在 harnesses.omp.read_only_tools 里补充只读的工具。MCP 工具（mcp__ 开头）与其他 harness 一样不检查。
 var ompReadOnly = map[string]bool{
 	"ast_grep": true, "ask": true, "glob": true, "find": true, "task": true, "wait": true, "todo": true,
 	"web_search": true, "checkpoint": true, "rewind": true, "context_notes": true, "new_context": true,
-	"security_scan": true, "memory_edit": true, "retain": true, "recall": true, "reflect": true,
+	"security_scan": true, "recall": true, "reflect": true,
 	"yield": true, "goal": true, "think": true,
 }
 
@@ -400,15 +400,15 @@ func ompLSP(in toolInput) ([]guard.Action, error) {
 }
 
 // ompWriteTarget 返回 omp 的 write 实际改动的文件：复制来的 [路径#标签] 外壳去掉；归档里的条目（a.zip:inner）与 SQLite
-// 的行（app.sqlite:users:42）是对所在文件的改写；xd://reject 与 proc://<id>/kill 不改动文件（ErrNoAction）；xd://resolve
-// （应用 ast_edit 等预览过的改动）、其余 xd:// 设备、conflict:// 与其他内部 URL 改动的文件读不出，请求确认（errUnparsed）。
+// 的行（app.sqlite:users:42）是对所在文件的改写；xd://reject 不改动文件（ErrNoAction）；xd://resolve（应用 ast_edit 等预览
+// 过的改动）、其余 xd:// 设备、conflict://、结束进程的 proc://<id>/kill 与其他内部 URL 请求确认（errUnparsed）。
 func ompWriteTarget(p string) (string, error) {
 	if h, ok := hashlineHeader(strings.TrimSpace(p)); ok {
 		p = h
 	}
 	if i := strings.Index(p, "://"); i > 0 && !strings.ContainsAny(p[:i], `/\.`) {
 		scheme, rest := strings.ToLower(p[:i]), p[i+3:]
-		if (scheme == "xd" && rest == "reject") || (scheme == "proc" && strings.HasSuffix(rest, "/kill")) {
+		if scheme == "xd" && rest == "reject" {
 			return "", ErrNoAction
 		}
 		return "", errUnparsed
@@ -460,14 +460,18 @@ func unquote(s string) string {
 	return s
 }
 
-// readSelector 是 omp 的 read 写在路径末尾的行选择（path:10-20、path:-5、path:3,8-9），盘符的冒号不算。
-var readSelector = regexp.MustCompile(`:[-+0-9,]+$`)
+// readSelector 是 omp 的 read 写在路径末尾的选择：行（:10-20、:-5、:3,8-9、:5+3）、:raw、:conflicts，可以连着写
+// （:1-20:raw、:raw:1-20）。盘符的冒号不算。
+var readSelector = regexp.MustCompile(`(?i):(?:[-+0-9,]+|raw|conflicts)$`)
 
 func stripSelector(p string) string {
-	if loc := readSelector.FindStringIndex(p); loc != nil && loc[0] > 1 {
-		return p[:loc[0]]
+	for {
+		loc := readSelector.FindStringIndex(p)
+		if loc == nil || loc[0] <= 1 {
+			return p
+		}
+		p = p[:loc[0]]
 	}
-	return p
 }
 
 // fileContent 报告工具结果是不是文件内容：读文件的工具，或读文件的命令。

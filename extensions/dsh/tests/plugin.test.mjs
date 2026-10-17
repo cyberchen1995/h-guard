@@ -98,3 +98,14 @@ test('tools/pre-execute: a cancelled call stops waiting for the guard', async ()
   pre.abort()
   assert.equal((await handlers['tools/pre-execute']({ ...exec('bash', { command: 'ls' }), signal: pre.signal }, next)).kind, 'ask')
 })
+
+test('request: cwd follows the session working directory when dsh provides it', async () => {
+  const { command, record } = await fake({ action: 'pass' })
+  const mod = await load(file, 'dsh', command)
+  const handlers = {}
+  const wd = { get: (session) => (session.header.id === 'ses-1' ? '/w/sub' : undefined) }
+  mod.apply({ on: (name, fn) => (handlers[name] = fn), logger: { warn: () => {} }, get: (name) => (name === 'workingDirectory' ? wd : undefined) })
+  await handlers['tools/pre-execute'](exec('bash', { command: 'ls' }), next)
+  const [r] = await recorded(record)
+  assert.equal(r.request.session.cwd, '/w/sub')
+})

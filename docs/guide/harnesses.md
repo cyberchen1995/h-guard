@@ -283,8 +283,8 @@ DeepSeek Harness differences:
 - **Prompt origin.** Each message's `source.kind` is used: `user` is yours,
   anything else (schedules, sub-agent results, injected context) is automated;
   every message in a sub-agent's session counts as automated.
-- **Working directory.** The session's starting directory, or the command's
-  `workdir`; a later change through the `working_directory` tool is not seen.
+- **Working directory.** The session's current directory (it follows the
+  `working_directory` tool), or the command's `workdir`.
 - **Code tools.** Calls made from `run_code` are checked one by one as they
   reach the tool pipeline; `run_code` itself is not.
 - **Terminals.** Text sent to a persistent terminal (`terminal_send`) is

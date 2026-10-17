@@ -95,7 +95,8 @@ func TestOMPTools(t *testing.T) {
 	if ev.Cwd != "/w/sub" || got[0].Exec.Command != "make" {
 		t.Errorf("bash: %+v cwd %q", got, ev.Cwd)
 	}
-	for in, want := range map[string]string{"src/a.go:10-20": "src/a.go", "a.go:-5": "a.go", `C:\x\a.go`: `C:\x\a.go`, "notes:": "notes:"} {
+	for in, want := range map[string]string{"src/a.go:10-20": "src/a.go", "a.go:-5": "a.go", `C:\x\a.go`: `C:\x\a.go`, "notes:": "notes:",
+		".env:raw": ".env", "~/.ssh/id_rsa:conflicts": "~/.ssh/id_rsa", ".env:10-": ".env", "a.go:1-20:raw": "a.go", "a.go:raw:5+3": "a.go"} {
 		got, _ := actions(t, pi.OMP, "read", map[string]any{"path": in})
 		if got[0].File.Path != want {
 			t.Errorf("read %q: %q, want %q", in, got[0].File.Path, want)
@@ -228,7 +229,7 @@ func TestOMPToolLists(t *testing.T) {
 		}
 	}
 	var ut *harness.UnknownToolError
-	for _, tool := range []string{"debug", "github", "ida", "manage_skill", "my_extension_tool"} {
+	for _, tool := range []string{"debug", "github", "ida", "manage_skill", "retain", "memory_edit", "my_extension_tool"} {
 		_, err := pi.OMP.Parse(call("omp", tool, map[string]any{"x": 1}))
 		if !errors.As(err, &ut) || ut.Event.Tool != tool || ut.Event.Harness != "omp" || ut.Event.SessionID != "s1" {
 			t.Errorf("%s: %v, want UnknownToolError", tool, err)
@@ -264,7 +265,10 @@ func TestOMPWriteTargets(t *testing.T) {
 			t.Errorf("write %q: %v, want TargetUnparsedError", in, err)
 		}
 	}
-	for _, in := range []string{"xd://reject", "proc://12/kill"} {
+	if _, err := pi.OMP.Parse(call("omp", "write", map[string]any{"path": "proc://12/kill"})); !errors.As(err, &tu) {
+		t.Errorf("write proc kill: %v, want TargetUnparsedError", err)
+	}
+	for _, in := range []string{"xd://reject"} {
 		if _, err := pi.OMP.Parse(call("omp", "write", map[string]any{"path": in})); !errors.Is(err, harness.ErrNoAction) {
 			t.Errorf("write %q: %v, want ErrNoAction", in, err)
 		}
