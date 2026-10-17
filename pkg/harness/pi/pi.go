@@ -556,8 +556,9 @@ func sloppyEdit(input string) (acts []guard.Action, ok bool) {
 const sloppyHeader = "*** Edit File:"
 
 // ompPath 按 omp 的 expandPath 规范化路径：去掉误加在路径前的 :（:/abs、:~/x、:./x、:C:\x），去掉表示路径的 @ 前缀
-// （@/abs、@~/x、@C:\x、@\\server、@<内部 URL>），file:// URL 换成它指向的文件，~x 写成 ~/x。其余原样返回。
+// （@/abs、@~/x、@C:\x、@\\server、@<内部 URL>），file:// URL 换成它指向的文件，~x 写成 ~/x，Unicode 空格换成普通空格。其余原样返回。
 func ompPath(p string) string {
+	p = unicodeSpaces.ReplaceAllString(p, " ")
 	if len(p) > 1 && p[0] == ':' && pathStart(p[1:], true) {
 		p = p[1:]
 	}
@@ -578,6 +579,9 @@ func ompPath(p string) string {
 	}
 	return p
 }
+
+// unicodeSpaces 是 omp 在路径里换成普通空格的 Unicode 空格（不换行空格、各种宽度的空格、全角空格）。
+var unicodeSpaces = regexp.MustCompile("[\u00A0\u2000-\u200A\u202F\u205F\u3000]")
 
 // pathStart 报告 s 是否以绝对路径、~ 或（relative 为真时）./、../ 开头。
 func pathStart(s string, relative bool) bool {
@@ -646,7 +650,7 @@ func (a Adapter) fileContent(tool string, in toolInput) bool {
 		return true
 	case "ast_grep", "ast_edit": // omp 的结构化搜索与改写的预览，结果是源文件里的片段
 		return a.omp
-	case "recall": // omp 的长期记忆里存下的原文
+	case "recall", "reflect": // omp 的长期记忆里存下的原文（reflect 可以原样列出取回的记忆）
 		return a.omp
 	case "eval": // omp 的 eval 能用 read() 直接读文件并打印
 		return a.omp

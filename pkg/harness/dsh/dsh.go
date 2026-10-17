@@ -289,6 +289,8 @@ func fileContent(tool string, raw json.RawMessage, in arguments) bool {
 		return true
 	case "read_mcp_resource": // MCP 服务提供的资源（文件、仓库里的文档等）
 		return true
+	case "lsp": // hover 等的结果带着源码
+		return true
 	}
 	return false
 }

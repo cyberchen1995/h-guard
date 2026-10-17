@@ -309,7 +309,8 @@ func TestOMPPaths(t *testing.T) {
 		":./.env":                    "./.env",
 		"@my-file.txt":               "@my-file.txt",
 		"~.omp/agent/config.yml":     "~/.omp/agent/config.yml",
-		"a:b":                        "a:b",
+		"~/Library/Application\u00a0Support/h-guard/config.yaml": "~/Library/Application Support/h-guard/config.yaml",
+		"a:b": "a:b",
 	} {
 		got, _ := actions(t, pi.OMP, "read", map[string]any{"path": in})
 		if len(got) == 0 || got[0].File.Path != want { // 第一个动作是整串路径
@@ -390,7 +391,7 @@ func TestOMPPaths(t *testing.T) {
 	if !slices.Contains(paths, "~/.ssh/id_rsa") || !slices.Contains(paths, "README.md") || !slices.Contains(paths, "notes.txt") {
 		t.Errorf("delimited read: %q", paths)
 	}
-	for _, tool := range []string{"ast_grep", "ast_edit", "eval", "recall"} {
+	for _, tool := range []string{"ast_grep", "ast_edit", "eval", "recall", "reflect"} {
 		if ev, err := pi.OMP.Parse(result("omp", tool, map[string]any{"pat": "x"}, "K=V")); err != nil || !ev.FileContent {
 			t.Errorf("%s result: %+v %v", tool, ev, err)
 		}
