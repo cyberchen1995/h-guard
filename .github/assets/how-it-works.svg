@@ -19,7 +19,7 @@ text{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans","PingFa
 .hk{fill:var(--warn);fill-opacity:.15;stroke:var(--warn);stroke-width:2}
 .hd{fill:var(--bad);fill-opacity:.15;stroke:var(--bad);stroke-width:2}
 .op{fill:var(--ok)}.ok{fill:var(--warn)}.od{fill:var(--bad)}
-@keyframes d0{0%{opacity:0;transform:translate(140px,130px)} 2%{opacity:1;transform:translate(140px,130px)} 7%{opacity:1;transform:translate(265px,130px)} 10%{opacity:1;transform:translate(265px,130px)} 12%{opacity:1;transform:translate(265px,82px)} 17%{opacity:1;transform:translate(545px,82px)} 19%{opacity:1;transform:translate(580px,72px)} 21%{opacity:0;transform:translate(580px,72px)} 100%{opacity:0;transform:translate(580px,72px)}}
+@keyframes d0{0%{opacity:0;transform:translate(140px,130px)} 2%{opacity:1;transform:translate(140px,130px)} 7%{opacity:1;transform:translate(265px,130px)} 10%{opacity:1;transform:translate(265px,130px)} 13%{opacity:1;transform:translate(435px,130px)} 16%{opacity:1;transform:translate(435px,130px)} 19%{opacity:1;transform:translate(580px,72px)} 21%{opacity:0;transform:translate(580px,72px)} 100%{opacity:0;transform:translate(580px,72px)}}
 .d0{animation:d0 16s linear infinite;opacity:0}
 @keyframes c0{0%{opacity:0} 1%{opacity:1} 23.5%{opacity:1} 24.5%{opacity:0} 100%{opacity:0}}
 .c0{animation:c0 16s linear infinite;opacity:0}
@@ -37,7 +37,7 @@ text{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans","PingFa
 .c3{animation:c3 16s linear infinite;opacity:0}
 @keyframes hl{0%{opacity:0} 6.2%{opacity:0} 7%{opacity:1} 10.5%{opacity:1} 11.3%{opacity:0} 31.2%{opacity:0} 32%{opacity:1} 35.5%{opacity:1} 36.3%{opacity:0} 56.2%{opacity:0} 57%{opacity:1} 60.5%{opacity:1} 61.3%{opacity:0} 81.2%{opacity:0} 82%{opacity:1} 85.5%{opacity:1} 86.3%{opacity:0} 100%{opacity:0}}
 .hl{animation:hl 16s linear infinite;opacity:0}
-@keyframes hj{0%{opacity:0} 62.2%{opacity:0} 63%{opacity:1} 66.5%{opacity:1} 67.3%{opacity:0} 87.2%{opacity:0} 88%{opacity:1} 91.5%{opacity:1} 92.3%{opacity:0} 100%{opacity:0}}
+@keyframes hj{0%{opacity:0} 12.2%{opacity:0} 13%{opacity:1} 16.5%{opacity:1} 17.3%{opacity:0} 62.2%{opacity:0} 63%{opacity:1} 66.5%{opacity:1} 67.3%{opacity:0} 87.2%{opacity:0} 88%{opacity:1} 91.5%{opacity:1} 92.3%{opacity:0} 100%{opacity:0}}
 .hj{animation:hj 16s linear infinite;opacity:0}
 @keyframes hp{0%{opacity:0} 18.2%{opacity:0} 19%{opacity:1} 24%{opacity:1} 24.8%{opacity:0} 93.2%{opacity:0} 94%{opacity:1} 99%{opacity:1} 99.8%{opacity:0} 100%{opacity:0}}
 .hp{animation:hp 16s linear infinite;opacity:0}
@@ -49,9 +49,8 @@ text{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans","PingFa
 </style>
 <!-- connectors -->
 <path class="ln" d="M140 130H190M340 130H360M510 130H580"/>
-<path class="lane" d="M265 95V82H545L580 72M265 165V182H545L580 188M510 120L580 72"/>
-<text x="400" y="76" class="st">no match</text>
-<text x="400" y="176" class="st">locked rule</text>
+<path class="lane" d="M265 165V182H545L580 188M510 120L580 72"/>
+<text x="400" y="195" class="st">deny rule</text>
 <!-- agent -->
 <rect class="b" x="12" y="95" width="128" height="70" rx="10"/>
 <text x="76" y="122" class="t">Agent</text>
@@ -72,6 +71,7 @@ text{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans","PingFa
 <text x="640" y="77" class="t op">✓ pass</text>
 <rect class="b" x="580" y="110" width="120" height="40" rx="20"/><rect class="hk" x="580" y="110" width="120" height="40" rx="20"/>
 <text x="640" y="135" class="t ok">? ask</text>
+<text x="640" y="162" class="st" style="font-size:10.5px">Codex: ask → deny</text>
 <rect class="b" x="580" y="168" width="120" height="40" rx="20"/><rect class="hd" x="580" y="168" width="120" height="40" rx="20"/>
 <text x="640" y="193" class="t od">✕ deny</text>
 <!-- moving checks -->
@@ -80,12 +80,12 @@ text{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans","PingFa
 <g class="c0">
   <text x="20" y="30" class="mono">$ git status</text>
   
-  <text x="360" y="238" class="cap" text-anchor="middle">No rule matches → pass</text>
+  <text x="360" y="238" class="cap" text-anchor="middle">No rule matches, judge sees no risk → pass</text>
 </g>
 <g class="c1">
   <text x="20" y="30" class="mono">$ rm -rf /</text>
   
-  <text x="360" y="238" class="cap" text-anchor="middle">Catastrophic, locked rule → deny, no model needed</text>
+  <text x="360" y="238" class="cap" text-anchor="middle">catastrophic is a deny rule → deny, no model needed</text>
 </g>
 <g class="c2">
   <text x="20" y="30" class="mono">$ git push origin main</text>
