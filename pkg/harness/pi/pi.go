@@ -114,6 +114,11 @@ type toolInput struct {
 	File    string `json:"file"`
 	NewName string `json:"new_name"`
 	Apply   *bool  `json:"apply"`
+	// omp 的 task：isolated 的子 agent 在隔离的工作区里改动，结束时把改动合回父工作区
+	Isolated bool `json:"isolated"`
+	Tasks    []struct {
+		Isolated bool `json:"isolated"`
+	} `json:"tasks"`
 }
 
 type inputData struct {
@@ -295,6 +300,15 @@ func (a Adapter) actions(tool string, in toolInput) ([]guard.Action, error) {
 		return acts, nil
 	case "eval":
 		return nil, errUnparsed
+	case "task":
+		// 隔离的子 agent 的改动在结束时合回父工作区（task.isolation.apply），这一步不经过工具调用，请求确认
+		isolated := in.Isolated
+		for _, t := range in.Tasks {
+			isolated = isolated || t.Isolated
+		}
+		if isolated {
+			return nil, errUnparsed
+		}
 	}
 	if ompReadOnly[tool] || strings.HasPrefix(tool, "mcp__") {
 		return nil, ErrNoAction
@@ -322,6 +336,20 @@ var ompReadOnly = map[string]bool{
 // 文本，不找 hashline 补丁头）；补丁形式（hashline）的文件在 [路径#标签] 补丁头里，
 // 段内的 REM 删除这个文件、MV <目标> 把它改名；apply_patch 模式的补丁按 apply_patch 的格式读。补丁里读不出文件时，用 omp 派生的 path、paths；都没有时请求确认。
 func ompEdit(in toolInput) ([]guard.Action, error) {
+	acts, err := ompEditTargets(in)
+	if err != nil {
+		return acts, err
+	}
+	// 内部 URL（local://、vault:// 等）背后的文件 h-guard 找不到，请求确认
+	for _, act := range acts {
+		if internalURL(act.File.Path) || internalURL(act.File.To) {
+			return acts, errUnparsed
+		}
+	}
+	return acts, nil
+}
+
+func ompEditTargets(in toolInput) ([]guard.Action, error) {
 	if strings.TrimSpace(in.Input) == "" {
 		act, ok := extadapter.File(guard.ActionFileWrite, in.Path)
 		if !ok {

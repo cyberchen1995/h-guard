@@ -140,6 +140,10 @@ func TestTerminalSend(t *testing.T) {
 	if _, err := a.Parse(pre("terminal_send", map[string]any{"session_id": "t1", "text": ""})); !errors.Is(err, harness.ErrNoAction) {
 		t.Errorf("empty text: %v", err)
 	}
+	ev, err := a.Parse(post("terminal_send", map[string]any{"session_id": "t1", "text": "cat ~/.ssh/id_rsa\n"}, "KEY"))
+	if err != nil || !ev.FileContent {
+		t.Errorf("terminal_send output: %+v %v", ev, err)
+	}
 }
 
 // TestDriveRootedWorkdir：Windows 上 \repo 从当前盘的根开始，不拼到会话目录后面。
@@ -158,7 +162,7 @@ func TestToolLists(t *testing.T) {
 		}
 	}
 	var ut *harness.UnknownToolError
-	for _, tool := range []string{"plugin_manager", "schedule_create", "create_worktree", "lsp", "terminal_signal", "job_kill", "some_plugin_tool"} {
+	for _, tool := range []string{"plugin_manager", "schedule_create", "create_worktree", "lsp", "terminal_signal", "terminal_close", "job_kill", "some_plugin_tool"} {
 		if _, err := a.Parse(pre(tool, map[string]any{"x": 1})); !errors.As(err, &ut) || ut.Event.Tool != tool {
 			t.Errorf("%s: %v, want UnknownToolError", tool, err)
 		}

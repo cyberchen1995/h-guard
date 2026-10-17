@@ -327,6 +327,27 @@ func TestOMPPaths(t *testing.T) {
 	if asJSON(got) != asJSON(want) {
 		t.Errorf("sloppy edit: %s, want %s", asJSON(got), asJSON(want))
 	}
+	var tu *harness.TargetUnparsedError
+	for name, in := range map[string]map[string]any{
+		"hashline local URL": {"input": "[local://plan.md#1a2b]\n+ x\n"},
+		"sloppy vault URL":   {"input": "*** Edit File: vault://notes/a.md\n*** Find\nx\n*** Replace\ny\n"},
+		"replace URL":        {"path": "local://plan.md", "old_string": "a", "new_string": "b"},
+	} {
+		if _, err := pi.OMP.Parse(call("omp", "edit", in)); !errors.As(err, &tu) {
+			t.Errorf("edit %s: %v, want TargetUnparsedError", name, err)
+		}
+	}
+	for name, in := range map[string]map[string]any{
+		"single": {"task": "x", "isolated": true},
+		"batch":  {"context": "c", "tasks": []map[string]any{{"task": "a"}, {"task": "b", "isolated": true}}},
+	} {
+		if _, err := pi.OMP.Parse(call("omp", "task", in)); !errors.As(err, &tu) {
+			t.Errorf("isolated task %s: %v, want TargetUnparsedError", name, err)
+		}
+	}
+	if _, err := pi.OMP.Parse(call("omp", "task", map[string]any{"context": "c", "tasks": []map[string]any{{"task": "a"}}})); !errors.Is(err, harness.ErrNoAction) {
+		t.Errorf("task: %v, want ErrNoAction", err)
+	}
 	var ut *harness.UnknownToolError
 	if _, err := pi.OMP.Parse(call("omp", "security_scan", map[string]any{"action": "start"})); !errors.As(err, &ut) {
 		t.Errorf("security_scan: %v, want UnknownToolError", err)

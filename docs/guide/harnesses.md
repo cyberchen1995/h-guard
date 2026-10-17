@@ -236,7 +236,9 @@ Differences:
   really changes: an archive entry (`a.zip:inner`) or SQLite row
   (`app.sqlite:users:42`) counts as a write to the archive or database, and
   `xd://resolve` (which applies a previewed `ast_edit` or edit), other `xd://`
-  devices, `conflict://` and other internal URLs ask.
+  devices, `conflict://` and other internal URLs ask; so does an `edit` of an
+  internal URL. A `task` with `isolated: true` asks, because its changes are
+  merged back into your workspace without a tool call.
 - **Shell.** Both run `bash` commands with a bash-compatible shell on every
   platform (pi uses Git Bash on Windows; oh-my-pi has its own), so they are
   checked as POSIX commands.
@@ -291,7 +293,9 @@ DeepSeek Harness differences:
   reach the tool pipeline; `run_code` itself is not.
 - **Terminals.** Text sent to a persistent terminal (`terminal_send`) is
   checked as a POSIX command and always asks, because the terminal's shell is
-  not known.
+  not known; its output is scanned as file content when the text reads files.
+  `terminal_signal`, `terminal_close` and `job_kill` end processes, so they
+  ask.
 
 When h-guard cannot run, the plugin asks before a tool call and lets tool
 output and prompts through with a line in dsh's log.

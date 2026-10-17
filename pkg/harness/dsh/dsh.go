@@ -188,14 +188,14 @@ func SourceOf(kind string) guard.Source {
 
 // dshReadOnly 是 dsh 自带的、不执行命令也不改动用户文件的工具（docs/tool-catalog.md，0.2.1-rc.2）：查询与搜索、提问、
 // 计划与目标、子 agent 与团队（子 agent 的工具调用各自经过检查）、run_code（其中的工具调用同样各自经过检查）、后台任务的查看、
-// 终端的打开、读取与关闭（发送内容的 terminal_send 单独检查）、网页、MCP 资源、会话记录、待办与工作目录。
-// 其余 dsh 自带的工具（向进程发信号的 terminal_signal、job_kill，plugin_manager、plugin_market、schedule_create 等定时任务的改动、create_worktree、lsp、
+// 终端的打开与读取（发送内容的 terminal_send 单独检查）、网页、MCP 资源、会话记录、待办与工作目录。
+// 其余 dsh 自带的工具（向进程发信号或结束进程的 terminal_signal、terminal_close、job_kill，plugin_manager、plugin_market、schedule_create 等定时任务的改动、create_worktree、lsp、
 // load_workspace_dependencies、stagehand_act）与插件提供的工具 h-guard 不认识，请求确认；用户可以在
 // harnesses.dsh.read_only_tools 里补充只读的工具。MCP 工具（mcp__ 开头）与其他 harness 一样不检查。
 var dshReadOnly = map[string]bool{
 	"glob": true, "ask_user_question": true, "exit_plan_mode": true, "run_code": true, "present": true,
 	"cordis_inspect_list": true, "cordis_inspect_query": true,
-	"terminal_close": true, "terminal_list": true, "terminal_open": true, "terminal_read": true,
+	"terminal_list": true, "terminal_open": true, "terminal_read": true,
 	"create_goal": true, "get_goal": true, "update_goal": true, "schedule_list": true, "skill": true, "ralph": true, "workflow": true,
 	"session_event_read": true, "session_event_search": true, "session_event_trace": true, "session_search": true, "session_trace": true,
 	"list_subagent_models": true, "subagent": true, "interrupt_agent": true, "list_agents": true, "send_message": true,
@@ -273,6 +273,8 @@ func fileContent(tool string, raw json.RawMessage, in arguments) bool {
 		return command.ReadsFiles(in.Command, guard.ShellPOSIX)
 	case "pwsh":
 		return command.ReadsFiles(in.Command, guard.ShellPowerShell)
+	case "terminal_send": // 结果里有终端的新输出；与动作一样按 POSIX 命令看
+		return command.ReadsFiles(in.Text, guard.ShellPOSIX)
 	}
 	return false
 }
