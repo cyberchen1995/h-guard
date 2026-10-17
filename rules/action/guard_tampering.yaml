@@ -49,8 +49,8 @@ match:
       - '(?<![\w.])(?<![^\w]-)(?<!^-)[a-z]?(?:rm|unlink|mv|cp|install|ln|truncate|tee|chmod|chown|shred|sed\s+-i|perl\s+-[a-z]*i|python[0-9.]*\s+-c|node\s+-e|jq\b[^\n;&|]*>)\b[^\n;&|]*(?:\.config/opencode/plugins?/h-guard\.js|\.pi/agent/(?:extensions/h-guard\.js|settings\.json)|\.omp/(?:profiles/[^\n;&|/]+/)?agent/(?:extensions/h-guard-omp\.js|config\.ya?ml|settings\.json)|\.dsh/(?:profiles/[^\n;&|/]+/)?cordis\.patch\.yml)'
       - '>>?\s*[^\n;&|]*(?:\.config/opencode/plugins?/h-guard\.js|\.pi/agent/(?:extensions/h-guard\.js|settings\.json)|\.omp/(?:profiles/[^\n;&|/]+/)?agent/(?:extensions/h-guard-omp\.js|config\.ya?ml|settings\.json)|\.dsh/(?:profiles/[^\n;&|/]+/)?cordis\.patch\.yml)'
       - '(?:\.config/opencode/plugins?/h-guard\.js|\.pi/agent/(?:extensions/h-guard\.js|settings\.json)|\.omp/(?:profiles/[^\n;&|/]+/)?agent/(?:extensions/h-guard-omp\.js|config\.ya?ml|settings\.json)|\.dsh/(?:profiles/[^\n;&|/]+/)?cordis\.patch\.yml)[^\n;&|]*\|\s*(?:tee|sponge)\b'
-      - '(?<![\w.])(?<![^\w]-)(?<!^-)[a-z]?(?:rm|unlink|mv|cp|install|ln|truncate|tee|chmod|chown|shred|sed\s+-i|perl\s+-[a-z]*i|python[0-9.]*\s+-c|node\s+-e|jq\b[^\n;&|]*>)\b[^\n;&|]*\$\{?(?:XDG_CONFIG_HOME\}?[/\\]opencode[/\\]plugins?[/\\]h-guard\.js|PI_CODING_AGENT_DIR\}?[/\\](?:extensions[/\\]h-guard(?:-omp)?\.js|settings\.json|config\.ya?ml)|DSH_HOME\}?[/\\](?:profiles[/\\][^\n;&|/\\]+[/\\])?cordis\.patch\.yml)'
-      - '>>?\s*[^\n;&|]*\$\{?(?:XDG_CONFIG_HOME\}?[/\\]opencode[/\\]plugins?[/\\]h-guard\.js|PI_CODING_AGENT_DIR\}?[/\\](?:extensions[/\\]h-guard(?:-omp)?\.js|settings\.json|config\.ya?ml)|DSH_HOME\}?[/\\](?:profiles[/\\][^\n;&|/\\]+[/\\])?cordis\.patch\.yml)'
+      - '(?<![\w.])(?<![^\w]-)(?<!^-)[a-z]?(?:rm|unlink|mv|cp|install|ln|truncate|tee|chmod|chown|shred|sed\s+-i|perl\s+-[a-z]*i|python[0-9.]*\s+-c|node\s+-e|jq\b[^\n;&|]*>)\b[^\n;&|]*\$\{?(?:XDG_CONFIG_HOME\}?[/\\]opencode[/\\]plugins?[/\\]h-guard\.js|PI_CODING_AGENT_DIR\}?[/\\](?:extensions[/\\]h-guard(?:-omp)?\.js|settings\.json|config\.ya?ml)|DSH_HOME\}?[/\\](?:profiles[/\\][^\n;&|/\\]+[/\\])?cordis\.patch\.yml|PI_CONFIG_DIR\}?[/\\](?:profiles[/\\][^\n;&|/\\]+[/\\])?agent[/\\](?:extensions[/\\]h-guard-omp\.js|config\.ya?ml|settings\.json))'
+      - '>>?\s*[^\n;&|]*\$\{?(?:XDG_CONFIG_HOME\}?[/\\]opencode[/\\]plugins?[/\\]h-guard\.js|PI_CODING_AGENT_DIR\}?[/\\](?:extensions[/\\]h-guard(?:-omp)?\.js|settings\.json|config\.ya?ml)|DSH_HOME\}?[/\\](?:profiles[/\\][^\n;&|/\\]+[/\\])?cordis\.patch\.yml|PI_CONFIG_DIR\}?[/\\](?:profiles[/\\][^\n;&|/\\]+[/\\])?agent[/\\](?:extensions[/\\]h-guard-omp\.js|config\.ya?ml|settings\.json))'
     # PowerShell：写入、删除、移动、复制到受保护路径的 cmdlet 及其别名，.NET 的文件写入，重定向；
     # 路径可用 \ 或 /，也可拆在 Join-Path 的几个参数里；另覆盖 Windows 的配置与缓存目录（$env:APPDATA、${env:APPDATA}、
     # %LOCALAPPDATA% 下的 h-guard）与 macOS 上 PowerShell 用的 ~/Library 目录。
@@ -63,6 +63,10 @@ match:
       - '(?<![\w.-])(?:set-content|sc|add-content|ac|out-file|clear-content|clc|remove-item|rm|ri|del|erase|rd|rmdir|move-item|mi|mv|move|copy-item|cpi|cp|copy|rename-item|rni|ren|new-item|ni|set-item|si|set-itemproperty|sp|tee-object|tee)\b[^\n;&|]*(?:\.config[\\/]opencode[\\/]plugins?[\\/]h-guard\.js|\.pi[\\/]agent[\\/](?:extensions[\\/]h-guard\.js|settings\.json)|\.omp[\\/](?:profiles[\\/][^\n;&|\\/]+[\\/])?agent[\\/](?:extensions[\\/]h-guard-omp\.js|config\.ya?ml|settings\.json)|\.dsh[\\/](?:profiles[\\/][^\n;&|\\/]+[\\/])?cordis\.patch\.yml)'
       - '\[(?:system\.)?io\.file\]::(?:write|append|delete|move|copy|replace|create|open)\w*\s*\([^\n]*(?:\.config[\\/]opencode[\\/]plugins?[\\/]h-guard\.js|\.pi[\\/]agent[\\/](?:extensions[\\/]h-guard\.js|settings\.json)|\.omp[\\/](?:profiles[\\/][^\n;&|\\/]+[\\/])?agent[\\/](?:extensions[\\/]h-guard-omp\.js|config\.ya?ml|settings\.json)|\.dsh[\\/](?:profiles[\\/][^\n;&|\\/]+[\\/])?cordis\.patch\.yml)'
       - '>>?\s*[^\n;&|]*(?:\.config[\\/]opencode[\\/]plugins?[\\/]h-guard\.js|\.pi[\\/]agent[\\/](?:extensions[\\/]h-guard\.js|settings\.json)|\.omp[\\/](?:profiles[\\/][^\n;&|\\/]+[\\/])?agent[\\/](?:extensions[\\/]h-guard-omp\.js|config\.ya?ml|settings\.json)|\.dsh[\\/](?:profiles[\\/][^\n;&|\\/]+[\\/])?cordis\.patch\.yml)'
+      # $env:XDG_CONFIG_HOME、$env:PI_CODING_AGENT_DIR、$env:PI_CONFIG_DIR、$env:DSH_HOME 指定的目录
+      - '(?<![\w.-])(?:set-content|sc|add-content|ac|out-file|clear-content|clc|remove-item|rm|ri|del|erase|rd|rmdir|move-item|mi|mv|move|copy-item|cpi|cp|copy|rename-item|rni|ren|new-item|ni|set-item|si|set-itemproperty|sp|tee-object|tee)\b[^\n;&|]*\$(?:\{env:|env:)(?:xdg_config_home\}?[\\/]opencode[\\/]plugins?[\\/]h-guard\.js|pi_coding_agent_dir\}?[\\/](?:extensions[\\/]h-guard(?:-omp)?\.js|settings\.json|config\.ya?ml)|dsh_home\}?[\\/](?:profiles[\\/][^\n;&|\\/]+[\\/])?cordis\.patch\.yml|pi_config_dir\}?[\\/](?:profiles[\\/][^\n;&|\\/]+[\\/])?agent[\\/](?:extensions[\\/]h-guard-omp\.js|config\.ya?ml|settings\.json))'
+      - '\[(?:system\.)?io\.file\]::(?:write|append|delete|move|copy|replace|create|open)\w*\s*\([^\n]*\$(?:\{env:|env:)(?:xdg_config_home\}?[\\/]opencode[\\/]plugins?[\\/]h-guard\.js|pi_coding_agent_dir\}?[\\/](?:extensions[\\/]h-guard(?:-omp)?\.js|settings\.json|config\.ya?ml)|dsh_home\}?[\\/](?:profiles[\\/][^\n;&|\\/]+[\\/])?cordis\.patch\.yml|pi_config_dir\}?[\\/](?:profiles[\\/][^\n;&|\\/]+[\\/])?agent[\\/](?:extensions[\\/]h-guard-omp\.js|config\.ya?ml|settings\.json))'
+      - '>>?\s*[^\n;&|]*\$(?:\{env:|env:)(?:xdg_config_home\}?[\\/]opencode[\\/]plugins?[\\/]h-guard\.js|pi_coding_agent_dir\}?[\\/](?:extensions[\\/]h-guard(?:-omp)?\.js|settings\.json|config\.ya?ml)|dsh_home\}?[\\/](?:profiles[\\/][^\n;&|\\/]+[\\/])?cordis\.patch\.yml|pi_config_dir\}?[\\/](?:profiles[\\/][^\n;&|\\/]+[\\/])?agent[\\/](?:extensions[\\/]h-guard-omp\.js|config\.ya?ml|settings\.json))'
   file:
     # 文件动作（Write、Edit、NotebookEdit 等）按路径匹配，不调模型。
     # {config}、{cache} 是 h-guard 实际使用的目录；~ 开头的写法另覆盖默认位置。
@@ -97,12 +101,20 @@ match:
       - '**/.codex/hooks.json'
       - '**/.codex/config.toml'
       # opencode、pi、omp 的 h-guard 扩展与能停用扩展的设置文件，DeepSeek Harness 挂载插件的补丁；
-      # XDG_CONFIG_HOME、PI_CODING_AGENT_DIR、DSH_HOME 指定的目录同样覆盖（没有设置时这些模式不匹配）
+      # XDG_CONFIG_HOME、PI_CODING_AGENT_DIR、PI_CONFIG_DIR、DSH_HOME 指定的目录同样覆盖（没有设置时这些模式不匹配）
       - '{xdg_config}/opencode/plugins/h-guard.js'
       - '{pi_agent_dir}/extensions/h-guard.js'
       - '{pi_agent_dir}/extensions/h-guard-omp.js'
       - '{pi_agent_dir}/settings.json'
       - '{pi_agent_dir}/config.yml'
+      - '{pi_agent_dir}/config.yaml'
+      # PI_CONFIG_DIR 是 omp 的配置根目录在主目录下的名字（默认 .omp）
+      - '{omp_config}/agent/extensions/h-guard-omp.js'
+      - '{omp_config}/agent/config.yml'
+      - '{omp_config}/agent/config.yaml'
+      - '{omp_config}/agent/settings.json'
+      - '{omp_config}/profiles/*/agent/config.yml'
+      - '{omp_config}/profiles/*/agent/config.yaml'
       - '{dsh_home}/cordis.patch.yml'
       - '{dsh_home}/profiles/*/cordis.patch.yml'
       - '~/.config/opencode/plugins/h-guard.js'
@@ -113,6 +125,7 @@ match:
       - '~/.omp/agent/config.yaml'
       - '~/.omp/agent/settings.json'
       - '~/.omp/profiles/*/agent/config.yml'
+      - '~/.omp/profiles/*/agent/config.yaml'
       - '~/.dsh/cordis.patch.yml'
       - '~/.dsh/profiles/*/cordis.patch.yml'
       - '**/.pi/settings.json'
@@ -177,6 +190,9 @@ examples:
     - {shell: posix, command: "rm \"$PI_CODING_AGENT_DIR/extensions/h-guard.js\""}
     - {shell: powershell, command: "Remove-Item $HOME\\.config\\opencode\\plugins\\h-guard.js"}
     - {shell: powershell, command: "Set-Content ~/.dsh/profiles/web/cordis.patch.yml -Value '[]'"}
+    - {shell: powershell, command: "Remove-Item $env:PI_CODING_AGENT_DIR\\extensions\\h-guard.js"}
+    - {shell: powershell, command: "Set-Content ${env:DSH_HOME}/cordis.patch.yml -Value '[]'"}
+    - {shell: posix, command: "rm \"$HOME/$PI_CONFIG_DIR/agent/extensions/h-guard-omp.js\""}
     - {action: file_delete, path: "~/.config/opencode/plugins/h-guard.js"}
     - {action: file_write, path: "~/.omp/agent/config.yml"}
     - {action: file_write, path: "~/.dsh/profiles/web/cordis.patch.yml"}

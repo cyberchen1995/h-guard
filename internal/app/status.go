@@ -146,7 +146,7 @@ func statusHarnesses(s setup, o Options) {
 		}
 	}
 	fmt.Fprintf(o.Stdout, "codex commands are checked as %s (harnesses.codex.shell)\n", s.cfg.ShellFor("codex"))
-	if len(install.Inspect(t, "opencode")) > 1 { // 装了 opencode 时才说明
+	if strings.HasPrefix(install.Inspect(t, "opencode")[0], "installed") { // 装了 opencode 时才说明
 		fmt.Fprintf(o.Stdout, "opencode commands are checked as %s (harnesses.opencode.shell)\n", s.cfg.ShellFor("opencode"))
 	}
 }

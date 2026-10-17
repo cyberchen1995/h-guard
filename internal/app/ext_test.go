@@ -159,3 +159,27 @@ func TestInstallOpenCodeShell(t *testing.T) {
 		t.Errorf("config.yaml:\n%s", b)
 	}
 }
+
+// TestStatusOpenCodeShell：装好且没有问题的 opencode（status 只有「installed」一行）同样报告 shell 设置。
+func TestStatusOpenCodeShell(t *testing.T) {
+	e := installEnv(t, func(name string, args ...string) ([]byte, error) {
+		if name == "opencode" {
+			return []byte("1.19.3\n"), nil
+		}
+		return nil, os.ErrNotExist
+	})
+	e.bin = filepath.Join(t.TempDir(), "h-guard")
+	if err := os.WriteFile(e.bin, nil, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, errs, code := e.run(nil, "install", "opencode", "--write"); code != 0 {
+		t.Fatalf("install: %d %s", code, errs)
+	}
+	out, _, _ := e.run(nil, "status")
+	if !strings.Contains(out, "opencode: installed (opencode 1.19.3)\n") || strings.Contains(out, "opencode: problem") {
+		t.Fatalf("status:\n%s", out)
+	}
+	if !strings.Contains(out, "opencode commands are checked as posix (harnesses.opencode.shell)") {
+		t.Errorf("status lacks the opencode shell:\n%s", out)
+	}
+}

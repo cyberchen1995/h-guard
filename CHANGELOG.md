@@ -22,8 +22,10 @@ minor releases. Every such change is recorded in this file.
   `--shell` and writes `harnesses.opencode.shell`, as for Codex.
 - The locked `guard_tampering` rule also protects the new extensions and the
   settings that can turn them off (oh-my-pi's `config.yml`, pi's and oh-my-pi's
-  `settings.json`, DeepSeek Harness's patches). Path patterns can use
-  `{xdg_config}`, `{pi_agent_dir}` and `{dsh_home}`.
+  `settings.json`, DeepSeek Harness's patches), also under `XDG_CONFIG_HOME`,
+  `PI_CODING_AGENT_DIR`, `PI_CONFIG_DIR` and `DSH_HOME` and in PowerShell's
+  `$env:` form. Path patterns can use `{xdg_config}`, `{pi_agent_dir}`,
+  `{omp_config}` and `{dsh_home}`.
 
 ### Public packages
 

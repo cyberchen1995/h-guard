@@ -57,7 +57,6 @@ export default function (pi) {
   // 提示词：发送之前检查；deny 时不发送，并告诉用户原因。接入层故障放行并提示用户
   pi.on('input', async (event, ctx) => {
     const verdict = await checkPrompt(ctx, event.text, event.source)
-    checked.set(event.text, verdict)
     if (verdict !== null) return { action: 'handled', handled: true }
     return undefined
   })
@@ -75,8 +74,8 @@ export default function (pi) {
           out.push(m)
           continue
         }
-        if (!checked.has(text)) checked.set(text, await checkPrompt(ctx, text, 'context'))
-        const verdict = checked.get(text)
+        const key = sessionOf(ctx) + '\n' + text
+        const verdict = checked.has(key) ? checked.get(key) : await checkPrompt(ctx, text, 'context')
         if (verdict === null) {
           out.push(m)
           continue
@@ -89,19 +88,27 @@ export default function (pi) {
   }
 }
 
-// checked 记下检查过的提示词（文本 → null 放行，或代替它的说明），同一段文本不重复检查
+// checked 记下检查过的提示词（会话与文本 → null 放行，或代替它的说明），同一会话里的同一段文本不重复检查。
+// h-guard 没能检查的不记下，下次请求模型时再查
 const checked = new Map()
 
 // checkPrompt 检查一段提示词：deny 时提示用户并返回写给模型的说明，其余返回 null。接入层故障放行并提示用户
 async function checkPrompt(ctx, text, source) {
+  const key = sessionOf(ctx) + '\n' + text
   try {
     const reply = await callGuard('input', ctx, { data: { text, source } })
+    if (reply.action === 'error') {
+      notify(ctx, 'warning', reply.message)
+      return null
+    }
+    let verdict = null
     if (reply.action === 'deny' || reply.action === 'ask') {
       notify(ctx, 'error', messageOf(reply))
-      return textOf(reply) + ' The prompt was withheld.'
+      verdict = textOf(reply) + ' The prompt was withheld.'
     }
     if (reply.action === 'warn') notify(ctx, 'warning', messageOf(reply))
-    if (reply.action === 'error') notify(ctx, 'warning', reply.message)
+    checked.set(key, verdict)
+    return verdict
   } catch (err) {
     notify(ctx, 'warning', FAILED)
   }

@@ -135,6 +135,21 @@ test('context (omp): a prompt already checked through input is not checked again
   assert.equal((await recorded(record)).length, 1)
 })
 
+test('context (omp): verdicts are kept per session, and a failed check is tried again', async () => {
+  const { command, record } = await fake({ action: 'pass' })
+  const { handlers, ctx } = await extension(command, 'omp')
+  const msgs = { messages: [{ role: 'user', content: 'same text' }] }
+  const inSession = (id) => ({ ...ctx(), sessionManager: { getSessionId: () => id } })
+  await handlers.context(msgs, inSession('a'))
+  await handlers.context(msgs, inSession('a'))
+  await handlers.context(msgs, inSession('b'))
+  assert.equal((await recorded(record)).length, 2)
+  const broken = await extension(missing, 'omp')
+  await broken.handlers.context(msgs, broken.ctx())
+  await broken.handlers.context(msgs, broken.ctx())
+  assert.equal(broken.notes.length, 2, 'a check that did not run is not cached')
+})
+
 test('input: a guard that cannot run sends the prompt; without a UI the note goes to stderr', async () => {
   const { handlers, ctx, notes } = await extension(missing)
   assert.equal(await handlers.input({ text: 'hi', source: 'interactive' }, ctx({ hasUI: false })), undefined)
