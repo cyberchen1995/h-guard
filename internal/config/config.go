@@ -60,11 +60,19 @@ type Action struct {
 
 // Outbound 是 outbound 检查的配置（spec §6）。
 type Outbound struct {
-	Tier           int                       `yaml:"tier"`
-	JudgeMaxChunks int                       `yaml:"judge_max_chunks"`
-	JudgeMinChars  int                       `yaml:"judge_min_chars"`
-	Categories     map[string]CategoryConfig `yaml:"categories"`
+	Tier           int `yaml:"tier"`
+	JudgeMaxChunks int `yaml:"judge_max_chunks"`
+	JudgeMinChars  int `yaml:"judge_min_chars"`
+	// JudgeChunkChars 是发给模型的一块文本的字符数上限（M4b）：长文本按行切成至多 JudgeMaxChunks 块。
+	JudgeChunkChars int                       `yaml:"judge_chunk_chars"`
+	Categories      map[string]CategoryConfig `yaml:"categories"`
+	// Judge 为 false 时 outbound 不调用判断层，同意也不含 outbound 范围：只用 action 判断、不把提示词与工具输出发给
+	// 后端（M4b 计划评审 I-4，维护者决定）。没写时为 true。用 OutboundJudge 读取。
+	Judge *bool `yaml:"judge"`
 }
+
+// OutboundJudge 报告 outbound 是否使用判断层（outbound.judge，默认 true；模型本身是否开启看 judge.enabled）。
+func (c *Config) OutboundJudge() bool { return c.Outbound.Judge == nil || *c.Outbound.Judge }
 
 // CategoryConfig 是配置里写下的一个 outbound 类别（spec §6.1）：检测规则在规则包里（规则的 category），这里只管
 // 启用、动作、忽略列表与发给模型的题目（题目由判断层使用，M4b）。各层配置按字段叠加：没写的字段保留下层的取值，
@@ -145,6 +153,9 @@ type Fingerprint struct {
 	Model       string `yaml:"model"`
 	Probability string `yaml:"probability"`
 	Questions   string `yaml:"questions"` // QuestionsDigest 的结果
+	// OutboundQuestions 是 outbound 内置题集的指纹（M4b）：与 Questions 分开，改 outbound 的题不让 action 的
+	// 阈值失效，反之亦然（M4b 已定决策 4）。没写时 thresholds.outbound 不使用。
+	OutboundQuestions string `yaml:"outbound_questions"`
 }
 
 // ProfileThresholds 是档案中写下的阈值。用指针区分「没写」与「写了 0」：三个阈值都必须写明，
@@ -154,6 +165,8 @@ type ProfileThresholds struct {
 	Veto        *float64           `yaml:"veto"`
 	Requested   *float64           `yaml:"requested"`
 	RadiusFloor map[string]float64 `yaml:"radius_floor"`
+	// Outbound 是 outbound 类别题的门槛（M4b）：模型给出的概率不低于它时算命中。可以不写（只校准了 action）。
+	Outbound *float64 `yaml:"outbound"`
 }
 
 // Thresholds 是策略用到的阈值。RadiusFloor 按规则 id 覆盖规则包里的影响范围下限。
@@ -187,6 +200,10 @@ type Log struct {
 // ConservativeThresholds 在档案缺失时使用，偏向请求确认（spec §8.3）：
 // 命中门槛低、否决与授权门槛严，不放宽任何规则的影响范围下限。
 var ConservativeThresholds = Thresholds{Hit: 0.3, Veto: 0.05, Requested: 0.9}
+
+// DefaultOutboundThreshold 是档案没有校准 outbound 时的类别题门槛（M4b）。outbound 没有请求确认，模型的命中
+// 直接拦下用户的输入或工具结果，所以不像 action 那样偏向打断：取中间值，校准过的档案再按语料调整。
+const DefaultOutboundThreshold = 0.5
 
 // Issue 是一条配置问题：字段路径（或 YAML 行号）与约束说明。说明里不含用户写下的值——
 // 写错的值可能正是凭据（如带密码的 base_url），而这些说明会显示给 harness 与用户（spec §10.1）。
@@ -382,17 +399,23 @@ func (c *Config) issues() []Issue {
 	}
 	for _, name := range sortedKeys(c.Profiles) {
 		t := c.Profiles[name].Thresholds
+		// 只校准了 outbound 的档案可以不写 action 的三个阈值（M4b）；写了其中一个就要三个都写
+		outboundOnly := t.Outbound != nil && t.Hit == nil && t.Veto == nil && t.Requested == nil
 		for _, f := range []struct {
 			field string
 			v     *float64
 		}{{"hit", t.Hit}, {"veto", t.Veto}, {"requested", t.Requested}} {
 			path := "profiles." + name + ".thresholds." + f.field
 			switch {
+			case f.v == nil && outboundOnly:
 			case f.v == nil:
 				bad(path, "missing")
 			case !(*f.v >= 0 && *f.v <= 1):
 				bad(path, "got %g, want 0..1", *f.v)
 			}
+		}
+		if t.Outbound != nil && !(*t.Outbound >= 0 && *t.Outbound <= 1) {
+			bad("profiles."+name+".thresholds.outbound", "got %g, want 0..1", *t.Outbound)
 		}
 		for _, rule := range sortedKeys(t.RadiusFloor) {
 			if v := t.RadiusFloor[rule]; !(v >= 0 && v <= 3) {
@@ -404,8 +427,12 @@ func (c *Config) issues() []Issue {
 			if fp.Model == "" || fp.Probability == "" {
 				bad(path, "needs model, probability and questions")
 			}
-			if !digestPattern.MatchString(fp.Questions) {
+			// 只校准了 outbound 的指纹可以只写 outbound_questions（M4b）
+			if !(fp.Questions == "" && fp.OutboundQuestions != "") && !digestPattern.MatchString(fp.Questions) {
 				bad(path+".questions", "want sha256:<64 hex digits>")
+			}
+			if fp.OutboundQuestions != "" && !digestPattern.MatchString(fp.OutboundQuestions) {
+				bad(path+".outbound_questions", "want sha256:<64 hex digits>")
 			}
 		}
 	}
@@ -435,6 +462,9 @@ func (c *Config) issues() []Issue {
 	}
 	if c.Outbound.JudgeMinChars < 0 {
 		bad("outbound.judge_min_chars", "must not be negative")
+	}
+	if c.Outbound.JudgeChunkChars < 500 {
+		bad("outbound.judge_chunk_chars", "got %d, want at least 500", c.Outbound.JudgeChunkChars)
 	}
 	for _, name := range sortedKeys(c.Outbound.Categories) {
 		cc, path := c.Outbound.Categories[name], "outbound.categories."+name
@@ -492,7 +522,8 @@ const (
 	UncalibratedUndescribed   = "backend_undescribed" // 后端说不出自己的模型与概率获取方式
 	UncalibratedModel         = "model_changed"
 	UncalibratedProbability   = "probability_changed"
-	UncalibratedQuestions     = "questions_changed" // 题目措辞或题集变了
+	UncalibratedQuestions     = "questions_changed"     // 题目措辞或题集变了
+	UncalibratedNoOutbound    = "no_outbound_threshold" // 档案在，只是没写 outbound 门槛（M4b）
 )
 
 // Calibration 说明阈值的来源。
@@ -550,6 +581,40 @@ func (c *Config) ThresholdsFor(name string, b judge.Backend, digest string) (Thr
 		t.RadiusFloor[k] = v
 	}
 	return t, cal
+}
+
+// OutboundThresholdFor 返回后端 name（已构造为 b）的 outbound 类别题门槛：档案写了 thresholds.outbound、指纹
+// 写了 outbound_questions，且模型、概率获取方式与 outbound 题集指纹 digest 都一致时用档案，否则用
+// DefaultOutboundThreshold 并说明原因（M4b）。原因码与 ThresholdsFor 相同。
+func (c *Config) OutboundThresholdFor(name string, b judge.Backend, digest string) (float64, Calibration) {
+	cal := Calibration{Profile: c.Backends[name].Profile}
+	p, ok := c.Profiles[cal.Profile]
+	switch {
+	case cal.Profile == "" || !ok:
+		cal.Reason = UncalibratedNoProfile
+		return DefaultOutboundThreshold, cal
+	case p.Thresholds.Outbound == nil:
+		cal.Reason = UncalibratedNoOutbound // 档案在：别写成 no_profile，读起来像档案不存在（M4b 终审 M-5）
+		return DefaultOutboundThreshold, cal
+	}
+	d, ok := b.(judge.Describer)
+	fp := p.Fingerprint
+	switch {
+	case fp == nil || fp.OutboundQuestions == "":
+		cal.Reason = UncalibratedNoFingerprint
+	case !ok:
+		cal.Reason = UncalibratedUndescribed
+	case fp.Model != d.Describe().Model:
+		cal.Reason = UncalibratedModel
+	case fp.Probability != d.Describe().Probability:
+		cal.Reason = UncalibratedProbability
+	case fp.OutboundQuestions != digest:
+		cal.Reason = UncalibratedQuestions
+	}
+	if cal.Reason != "" {
+		return DefaultOutboundThreshold, cal
+	}
+	return *p.Thresholds.Outbound, cal
 }
 
 // ShellFor 返回 harness 标不出 shell 时使用的 shell：配置值，未配置时为 posix（spec §5.3；

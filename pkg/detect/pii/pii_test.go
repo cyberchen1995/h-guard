@@ -28,6 +28,20 @@ func TestDetectors(t *testing.T) {
 		{"Bob <bob+tag@mail.example.com>, carol@example.org, dan@site.test, eve@host.invalid, x@y.localhost, z@w.example", nil},
 		{"noreply@github.com no-reply@acme.com 12345+octocat@users.noreply.github.com", nil},
 		{"git clone git@github.com:acme/repo.git", nil},
+		// 开发文本里的误报（M4a 计划评审 M4、终审 M-4）：SSH 命令的 git@ 用户、mDNS 的 .local、字节数、diff 里的时间戳与
+		// 行首 +、semver 的构建元数据、带 version、build 字样的四段版本号
+		{"ssh -T git@github.com", nil},
+		// 单位只在紧跟数字、后面不再是字母时才算；短单位（b、s、us、ms）后面跟着词时不算；.local 是 AD 域里人的邮箱（M4b 计划评审 M-2）
+		{"联系人 张伟 13800138000 B座1201", [][2]string{{pii.RulePhoneCN, "13800138000"}}},
+		{"call 13800138000 us office hours", [][2]string{{pii.RulePhoneCN, "13800138000"}}},
+		{"mail jane.doe@contoso.local", [][2]string{{pii.RuleEmail, "jane.doe@contoso.local"}}},
+		{"took 13800138000 ms, 13900139000 bytes free", nil},
+		{"memory 17179869184 bytes, size=13421772800", nil},
+		{"+2026-10-16 12:00:00 started", nil},
+		{"@@ -1,3 +1,4 @@\n+1234567890 rows affected", nil},
+		{"tag 1.2.3+20231015.1", nil},
+		{"build 2.0.0.1 and version 8.8.4.4", nil},
+		{"call 13800138000 or +44 20 7946 0958", [][2]string{{pii.RulePhoneCN, "13800138000"}, {pii.RulePhoneIntl, "+44 20 7946 0958"}}},
 		// 中国大陆手机号：1[3-9] 开头 11 位，可带 +86、86 与空格连字符；前后不能紧邻数字
 		{"call 13800138000 or +86 139-1234-5678", [][2]string{{pii.RulePhoneCN, "13800138000"}, {pii.RulePhoneCN, "+86 139-1234-5678"}}},
 		{"id 913800138000 and 1380013800012 and 12345678901", nil},

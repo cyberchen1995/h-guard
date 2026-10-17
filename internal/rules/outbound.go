@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"slices"
+	"unicode/utf8"
 
 	"github.com/cyberchen1995/h-guard/pkg/detect/pii"
 	"github.com/cyberchen1995/h-guard/pkg/detect/secrets"
@@ -66,8 +67,8 @@ func (r *OutboundRule) Find(ctx context.Context, text string) (locs [][2]int, ti
 	if r.Match.Detector != "" {
 		return FindDetectors(text, []string{r.Match.Detector})[r.Match.Detector], false, nil
 	}
-	var offsets []int // 第 i 个字符的字节偏移（最后一项是 len(text)）；regexp2 按字符计位置，只换算一次
 	for _, re := range r.regex {
+		cur := runeCursor{text: text} // regexp2 按字符计位置；同一个正则的命中位置递增，边走边换算成字节偏移
 		if err := ctx.Err(); err != nil {
 			return locs, timedOut, err
 		}
@@ -76,10 +77,8 @@ func (r *OutboundRule) Find(ctx context.Context, text string) (locs [][2]int, ti
 			if m.Length == 0 {
 				continue
 			}
-			if offsets == nil {
-				offsets = runeOffsets(text)
-			}
-			locs = append(locs, [2]int{offsets[m.Index], offsets[m.Index+m.Length]})
+			start := cur.at(m.Index)
+			locs = append(locs, [2]int{start, cur.at(m.Index + m.Length)})
 			if cerr := ctx.Err(); cerr != nil {
 				// 没扫完：已找到的命中照样返回（可以收紧结论），同时报告取消，调用方不能当成完整结果（M4a Codex 第二轮 R2-01）
 				slices.SortFunc(locs, func(a, b [2]int) int { return a[0] - b[0] })
@@ -94,14 +93,24 @@ func (r *OutboundRule) Find(ctx context.Context, text string) (locs [][2]int, ti
 	return locs, timedOut, nil
 }
 
-// runeOffsets 返回 text 中每个字符的字节偏移，末尾再加上 len(text)：regexp2 的位置按字符计，用它换成字节偏移
-// （一次线性的换算，不随命中数增长，M4a 计划评审 I3）。无效的 UTF-8 字节各算一个字符，与 regexp2 一致。
-func runeOffsets(text string) []int {
-	out := make([]int, 0, len(text)+1)
-	for b := range text {
-		out = append(out, b)
+// runeCursor 把字符位置换成字节偏移：从上一次的位置往后走，位置递增时整体是线性的（M4a 计划评审 I3），也不像预先
+// 建表那样按字节分配内存（M4a 终审 M-6：16 MiB 的输入要约 128 MB）。位置回退时从头再走。无效的 UTF-8 字节各算
+// 一个字符，与 regexp2（[]rune 转换）一致。
+type runeCursor struct {
+	text       string
+	rune, byte int
+}
+
+func (c *runeCursor) at(r int) int {
+	if r < c.rune {
+		c.rune, c.byte = 0, 0
 	}
-	return append(out, len(text))
+	for c.rune < r && c.byte < len(c.text) {
+		_, size := utf8.DecodeRuneInString(c.text[c.byte:])
+		c.byte += size
+		c.rune++
+	}
+	return c.byte
 }
 
 // FindDetectors 用 ids 里的检测器扫描 text，返回各检测器的命中区间。凭据与私钥一起查（只在这些规则之间合并区间、

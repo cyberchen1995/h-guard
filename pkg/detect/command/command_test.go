@@ -530,6 +530,21 @@ func TestReadsFiles(t *testing.T) {
 		{"git -C /repo show HEAD:secrets.txt", guard.ShellPOSIX},
 		{"git -c core.pager=cat --git-dir /r/.git --no-pager show HEAD:a", guard.ShellPOSIX},
 		{"git --git-dir=/r/.git --work-tree /r cat-file -p HEAD:a", guard.ShellPOSIX},
+		// 容器、远程主机里的读文件命令，压缩文件，git log -p（M4a 终审 M-2）
+		{"docker exec web cat /app/.env", guard.ShellPOSIX},
+		{"docker exec -it -u root -e A=1 web sh -c 'cat /app/.env'", guard.ShellPOSIX},
+		{"podman exec db head -5 /etc/pgpass", guard.ShellPOSIX},
+		{"docker compose exec api cat config/prod.yaml", guard.ShellPOSIX},
+		{"kubectl exec pod-1 -n prod -- cat /etc/secret/token", guard.ShellPOSIX},
+		{"kubectl exec -it deploy/api -c app -- sh -c 'cat /run/secrets/db'", guard.ShellPOSIX},
+		{"ssh deploy@host cat .env", guard.ShellPOSIX},
+		{"ssh -p 2222 -i ~/.ssh/k host 'cat /etc/app.conf'", guard.ShellPOSIX},
+		{"zcat logs/app.log.gz | tail", guard.ShellPOSIX},
+		{"xzcat dump.sql.xz", guard.ShellPOSIX},
+		{"column -t .env", guard.ShellPOSIX},
+		{"git log -p -- config/", guard.ShellPOSIX},
+		{"cmd /c type .env", guard.ShellPowerShell},
+		{"[IO.File]::ReadAllText('C:\\app\\.env')", guard.ShellPowerShell},
 	} {
 		if !command.ReadsFiles(c.cmd, c.shell) {
 			t.Errorf("%s: not a file read", c.cmd)
@@ -544,6 +559,10 @@ func TestReadsFiles(t *testing.T) {
 		{"git status && git log --oneline", guard.ShellPOSIX},
 		{"echo cat", guard.ShellPOSIX},
 		{"git -C /repo status", guard.ShellPOSIX},
+		{"docker exec web ls /app", guard.ShellPOSIX},
+		{"kubectl exec pod-1 -- env", guard.ShellPOSIX},
+		{"ssh host uptime", guard.ShellPOSIX},
+		{"git log --oneline", guard.ShellPOSIX},
 		{"ls | xargs -I cat echo cat", guard.ShellPOSIX},
 		{"Get-ChildItem", guard.ShellPowerShell},
 	} {

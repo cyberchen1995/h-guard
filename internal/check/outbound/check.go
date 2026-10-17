@@ -16,6 +16,7 @@ import (
 	"github.com/cyberchen1995/h-guard/internal/i18n"
 	"github.com/cyberchen1995/h-guard/internal/rules"
 	"github.com/cyberchen1995/h-guard/pkg/detect/pii"
+	"github.com/cyberchen1995/h-guard/pkg/detect/secrets"
 	"github.com/cyberchen1995/h-guard/pkg/guard"
 )
 
@@ -29,6 +30,7 @@ const (
 type Check struct {
 	Rules  *rules.Set
 	Config *config.Config
+	Judge  Judge // 判断层（M4b）；模型关闭时不用
 	// Scanned 不为 nil 时，Evaluate 扫完之后用这次的 Scan 调用它（hook 的决策日志用它遮蔽摘录）。
 	Scanned func(Scan)
 }
@@ -64,10 +66,11 @@ func (c *Check) Evaluate(ctx context.Context, ev guard.Event, commit func(guard.
 	var detectors, regexRules, maskOnly []*rules.OutboundRule
 	for _, r := range c.Rules.Outbound() {
 		switch {
-		case !r.Enabled() || !r.AppliesTo(ev.Kind):
-		case !c.Config.Category(r.Category).Enabled:
+		case !r.Enabled() || !r.AppliesTo(ev.Kind) || !c.Config.Category(r.Category).Enabled:
+			// 不算命中的凭据、私钥规则（规则停用、不扫这类事件、类别停用）照样扫，只为遮蔽：遮蔽与「算不算命中」分开
+			// （M4b 计划评审 I-1）
 			if r.Match.Detector == "" && secretCategories[r.Category] {
-				maskOnly = append(maskOnly, r) // 类别停用的凭据规则：不算命中，只为遮蔽
+				maskOnly = append(maskOnly, r)
 			}
 		case r.Match.Detector != "":
 			detectors = append(detectors, r)
@@ -94,6 +97,11 @@ func (c *Check) Evaluate(ctx context.Context, ev guard.Event, commit func(guard.
 			ids[i] = r.Match.Detector
 		}
 		found := rules.FindDetectors(ev.Text, ids)
+		for _, id := range slices.Sorted(maps.Keys(found)) {
+			for _, l := range found[id] {
+				scan.Builtin = append(scan.Builtin, secrets.Hit{Rule: id, Start: l[0], End: l[1]})
+			}
+		}
 		for _, r := range detectors {
 			if locs := c.keep(r, ev.Text, found[r.Match.Detector]); len(locs) > 0 {
 				hits = append(hits, hit{r.ID, r.Category, locs})
@@ -106,7 +114,7 @@ func (c *Check) Evaluate(ctx context.Context, ev guard.Event, commit func(guard.
 			return
 		}
 		var partial guard.Verdict
-		c.render(&partial, ev.Text, slices.Clone(hits))
+		c.render(&partial, ev.Text, slices.Clone(hits), nil)
 		commit(partial)
 		committed = len(hits)
 	}
@@ -133,7 +141,7 @@ func (c *Check) Evaluate(ctx context.Context, ev guard.Event, commit func(guard.
 			}
 		}
 	}
-	c.render(&v, ev.Text, hits)
+	c.render(&v, ev.Text, hits, nil)
 	if v.Decision == guard.DecisionDeny && len(hits) != committed {
 		commit(v)
 	}
@@ -150,6 +158,20 @@ func (c *Check) Evaluate(ctx context.Context, ev guard.Event, commit func(guard.
 	if c.Scanned != nil {
 		c.Scanned(scan)
 	}
+	jr := c.askJudge(ctx, ev, v.Decision, scan)
+	if len(jr.hits) > 0 { // 模型的命中只提示，不会让结论成为 deny，所以不必提交
+		v = guard.Verdict{Fallbacks: v.Fallbacks}
+		c.render(&v, ev.Text, hits, jr.hits)
+	}
+	for _, f := range jr.fallback {
+		v.Fallbacks = appendOnce(v.Fallbacks, f)
+	}
+	if jr.state != "" {
+		v.Signals = map[string]any{"judge": jr.state}
+		if jr.chunks > 0 {
+			v.Signals["judge_chunks"] = jr.chunks
+		}
+	}
 	return v, nil
 }
 
@@ -164,6 +186,9 @@ type Scan struct {
 	Secret [][2]int
 	// Other 是其余类别的区间：只在发给模型前遮蔽。
 	Other [][2]int
+	// Builtin 是这一次在全文上跑的内置检测器的区间（规则名即检测器名；按 ignore 过滤之前）。发给模型时只遮蔽会发出去的
+	// 前缀，靠前缀之外的内容才认得出的形状（END 落在前缀之外的私钥）要用全文上的结果（M4b Codex 评审 M4B-01）。
+	Builtin []secrets.Hit
 	// Complete 报告该扫的用户正则都扫完了：没有超时、出错，截止时间也没到。不完整时这些区间不能当作全部，调用方
 	// 不能据此记录或发送正文（M4a Codex 第二轮 R2-01）。
 	Complete bool
@@ -193,8 +218,8 @@ func (c *Check) keep(r *rules.OutboundRule, text string, locs [][2]int) [][2]int
 }
 
 // render 写出结论：命中（规则、类别、位置）、按类别的原因（命中数与行号）与前进路径。
-func (c *Check) render(v *guard.Verdict, text string, hits []hit) {
-	if len(hits) == 0 {
+func (c *Check) render(v *guard.Verdict, text string, hits []hit, judged []judgeHit) {
+	if len(hits) == 0 && len(judged) == 0 {
 		v.Decision = guard.DecisionPass
 		return
 	}
@@ -239,7 +264,27 @@ func (c *Check) render(v *guard.Verdict, text string, hits []hit) {
 		}
 		v.Reasons = append(v.Reasons, guard.Reason{Code: code, Params: params})
 	}
-	v.Reasons = append(v.Reasons, guard.Reason{Code: i18n.KeyHintOutbound})
+	// 判断层补报的类别：命中写明来源与概率；本地已经报了这个类别时不重复原因（spec §6.2：两层取并集）。模型的命中
+	// 一律只提示（warn），不按类别的动作：outbound 没有请求确认，模型误报会直接吞掉用户的输入，而 ignore 列表与规则
+	// 开关对模型的命中都不起作用（维护者决定，M4b 计划评审 I-3）
+	judgeOnly := false
+	for _, j := range judged {
+		p := j.p
+		v.Findings = append(v.Findings, guard.Finding{Rule: j.question, Category: j.category, Source: guard.FindingJudge, Probability: &p})
+		v.Decision = guard.Stricter(v.Decision, guard.DecisionWarn)
+		if byCategory[j.category] == nil {
+			v.Reasons = append(v.Reasons, guard.Reason{Code: i18n.KeyOutboundJudge, Params: map[string]string{"category": j.category}})
+			judgeOnly = true
+		}
+	}
+	// 有模型补报的类别时模型的前进路径在前：Engine 只取第一条 hint，本地的那条（加进 ignore、停用规则）对模型的命中
+	// 不起作用（M4b 终审 M-3）
+	if judgeOnly {
+		v.Reasons = append(v.Reasons, guard.Reason{Code: i18n.KeyHintOutboundJudge})
+	}
+	if len(hits) > 0 {
+		v.Reasons = append(v.Reasons, guard.Reason{Code: i18n.KeyHintOutbound})
+	}
 }
 
 // maxLines 是原因里列出的行号上限，其余写作省略号。

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cyberchen1995/h-guard/internal/check/outbound"
 	"github.com/cyberchen1995/h-guard/internal/eval"
 	"github.com/cyberchen1995/h-guard/pkg/detect/secrets"
 	"github.com/cyberchen1995/h-guard/pkg/guard"
@@ -64,7 +65,7 @@ func runCheck(args []string, o Options) int {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), checkTimeout)
 	defer cancel()
-	res := s.newEngine(o, j).Evaluate(ctx, ev, harness.EventCaps{Block: true, Ask: true, Warn: true})
+	res := s.newEngine(o, j, outbound.Judge{}).Evaluate(ctx, ev, harness.EventCaps{Block: true, Ask: true, Warn: true})
 	printOutcome(o.Stdout, res.Outcome)
 	return 0
 }

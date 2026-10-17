@@ -57,7 +57,8 @@ var rules = []rule{
 	// 被截断的私钥（M4a 终审 I-1）：head、带 limit 的读取或只粘贴了一部分时只有 BEGIN 行与之后的正文（可带
 	// Proc-Type 这类头部行），或者只有正文与 END 行。正文行是整行至少 16 个 base64 字符，可以缩进（YAML 块）。
 	{RulePrivateKey, regexp.MustCompile(`-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----(?:[ \t]*\r?\n[ \t]*(?:[A-Za-z0-9+/=]{16,}|[A-Za-z-]+: [^\n]*)[ \t]*)+`), nil, nil},
-	{RulePrivateKey, regexp.MustCompile(`(?m)(?:^[ \t]*[A-Za-z0-9+/=]{16,}[ \t]*\r?\n)+[ \t]*-----END (?:[A-Z0-9]+ )*PRIVATE KEY-----`), nil, nil},
+	// END 前最后一行正文可以很短（PEM 的最后一行长度不定，常是 AB3x== 这样几个字符，M4b 终审 M-2）
+	{RulePrivateKey, regexp.MustCompile(`(?m)(?:^[ \t]*[A-Za-z0-9+/=]{16,}[ \t]*\r?\n)+(?:^[ \t]*[A-Za-z0-9+/=]{2,15}[ \t]*\r?\n)?[ \t]*-----END (?:[A-Z0-9]+ )*PRIVATE KEY-----`), nil, nil},
 	{RulePrefixedToken, regexp.MustCompile(`\b(?:sk|pk|ghp|gho|ghs|ghu|ghr|xox[baprs])[-_][A-Za-z0-9_-]{12,}\b`), nil, nil},
 	{RuleAWSAccessKey, regexp.MustCompile(`\b(?:AKIA|ASIA)[0-9A-Z]{16}\b`), nil, nil},
 	{RuleURLPassword, regexp.MustCompile(`\b[a-zA-Z][a-zA-Z0-9+.-]*://[^\s:/@]+:([^\s@/]+)@`), []int{1}, nil},
@@ -407,7 +408,7 @@ func Confirmed(rule, value string) bool {
 		hasDigit := strings.ContainsAny(v, "0123456789")
 		return hasDigit || strings.ToLower(v) != v && strings.ToUpper(v) != v && wordShare(v) < maxWordShare
 	case RuleAssignment, RuleURLPassword:
-		v = strings.TrimRight(v, ";,") // 代码里的 token: string; 与对象里的 password: hashedPassword,
+		v = strings.TrimRight(v, ";,.") // 代码里的 token: string; 、对象里的 password: hashedPassword, 与句末的句号
 		switch {
 		case placeholderValue.MatchString(strings.ToLower(v)),
 			strings.ContainsAny(v, "$%") && !strings.ContainsAny(v, "0123456789"), // ${VAR}、$VAR、%VAR%

@@ -108,7 +108,19 @@ func enableBackend(s setup, o Options, name string, in *bufio.Reader, fromInit b
 	fmt.Fprintf(o.Stdout, "Backend %s (%s) will receive, for every command the agent runs that the judge checks:\n", name, st.typ)
 	fmt.Fprintf(o.Stdout, "  - the command, its working directory, the harness and the tool name;\n")
 	fmt.Fprintf(o.Stdout, "  - up to %d of the user's most recent instructions in the session.\n", s.cfg.Policy.RequestWindow)
-	fmt.Fprintf(o.Stdout, "Credentials that h-guard recognizes are masked before sending; anything it does not recognize is sent as is.\n")
+	if ob := s.cfg.Outbound; s.cfg.OutboundJudge() {
+		fmt.Fprintf(o.Stdout, "and, for prompts and tool output that h-guard scans (outbound tier %d: %s), when local rules find nothing to block\n", ob.Tier, outboundScope[ob.Tier])
+		fmt.Fprintf(o.Stdout, "and the text has at least %d characters:\n", ob.JudgeMinChars)
+		fmt.Fprintf(o.Stdout, "  - the text, in up to %d chunks of up to %d characters.\n", ob.JudgeMaxChunks, ob.JudgeChunkChars)
+		fmt.Fprintf(o.Stdout, "Credentials, private keys and personal information that h-guard recognizes are masked before sending; anything it does not recognize is sent as is.\n")
+		if s.cfg.Category("pii").Enabled {
+			fmt.Fprintf(o.Stdout, "The PII category is on: personal information that h-guard does not recognize (names, addresses and the like) is sent as is, so the judge can report it.\n")
+		}
+		// 同意不绑定档位与分块（M4b 计划评审 M-5）：写明，免得用户以为改了设置会再问
+		fmt.Fprintf(o.Stdout, "Changing the outbound tier or the chunk settings later does not ask again; set outbound.judge: false to stop sending prompts and tool output.\n")
+	} else {
+		fmt.Fprintf(o.Stdout, "Credentials that h-guard recognizes are masked before sending; anything it does not recognize is sent as is.\n")
+	}
 	if st.typ == "exec" {
 		fmt.Fprintf(o.Stdout, "The data is handed to the program %s; where it goes from there is up to the program.\n", shown(st.identity.Target))
 	} else {
@@ -123,7 +135,7 @@ func enableBackend(s setup, o Options, name string, in *bufio.Reader, fromInit b
 		fmt.Fprintln(o.Stdout, "not enabled")
 		return 1
 	}
-	if err := (consent.Store{Dir: o.ConfigDir}).Grant(st.identity, []consent.Scope{consent.ScopeAction}, o.Now()); err != nil {
+	if err := (consent.Store{Dir: o.ConfigDir}).Grant(st.identity, s.scopesFor(), o.Now()); err != nil {
 		fmt.Fprintln(o.Stderr, "h-guard:", err)
 		return 1
 	}
@@ -150,7 +162,21 @@ func consentText(st judgeState, extra string) string {
 	hint := enableHint(st.name, extra)
 	switch st.consent {
 	case consentGranted:
-		return "granted " + st.record.Granted.Format("2006-01-02") + " (scope: action)"
+		var scopes []string
+		for _, sc := range st.record.Scopes {
+			scopes = append(scopes, string(sc))
+		}
+		text := "granted " + st.record.Granted.Format("2006-01-02") + " (scopes: " + strings.Join(scopes, ", ") + ")"
+		switch {
+		case !st.outboundOn:
+		case !st.outbound:
+			// 只同意过 action（M4b 之前的同意）：outbound 的判断层不调用（M4b 已定决策：不自动扩大范围）
+			text += "; does not cover outbound, so prompts and tool output are checked by local rules only; " + hint
+		case st.piiOn && !st.pii:
+			// 同意之后才开启 PII 类别：PII 题不问（spec §8.5：扩大范围要重新同意，M4b 计划评审 M-4）
+			text += "; does not cover pii, so the judge does not look for personal information; " + hint
+		}
+		return text
 	case consentChanged:
 		switch r := st.record.Identity; {
 		case r == st.identity: // 身份相同，只是范围里没有 action（如只同意过 outbound）
@@ -184,6 +210,21 @@ func shellQuote(s string, windows bool) string {
 		return "'" + strings.ReplaceAll(s, "'", "''") + "'"
 	}
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// outboundCalibrationText 描述 outbound 类别题的门槛及其来源（M4b）。
+func outboundCalibrationText(st judgeState) string {
+	if st.backend == nil {
+		return "unknown"
+	}
+	if st.outboundCal.Calibrated() {
+		return fmt.Sprintf("profile %s (outbound %g)", st.outboundCal.Profile, st.outboundThreshold)
+	}
+	where := ""
+	if st.outboundCal.Profile != "" {
+		where = " for profile " + st.outboundCal.Profile
+	}
+	return fmt.Sprintf("uncalibrated (%s%s); default threshold %g", st.outboundCal.Reason, where, st.outboundThreshold)
 }
 
 func calibrationText(st judgeState) string {

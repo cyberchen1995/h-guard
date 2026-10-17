@@ -112,6 +112,7 @@ const usage = `usage:
   h-guard backend list | enable <name> | disable <name> [--config <file>]
   h-guard status [--config <file>]
   h-guard eval [--backend <name>] [--sweep] [--shell posix|powershell | --cases <file>] [--repeat <K>] [--bootstrap <N>] [--seed <n>] [--yes] [--config <file>]
+  h-guard eval --outbound [--backend <name>] [--sweep] [--threshold <t>] [--cases <file>] [--yes] [--config <file>]
   h-guard init
   h-guard install claudecode|codex [--write] [--remove] [--timeout <seconds>] [--shell posix|powershell]
   h-guard migrate <questions.json> [--write]
@@ -251,27 +252,57 @@ func loadConfig(o Options, extra string, checkKinds bool) (setup, error) {
 
 // newEngine 组装 Engine：action 检查与 outbound 检查（M4）。文件动作的保护路径用主目录、h-guard 实际的配置与缓存目录，
 // 以及这次 --config 加载的文件展开。
-func (s setup) newEngine(o Options, j action.Judge) *engine.Engine {
+func (s setup) newEngine(o Options, j action.Judge, oj outbound.Judge) *engine.Engine {
 	c := &action.Check{Rules: s.rules, Config: s.cfg, Catalog: s.catalog, Locale: s.locale, Judge: j,
 		Paths: paths.Env{Home: o.Home, FoldCase: paths.FoldCaseDefault, Windows: paths.WindowsDefault,
 			Vars: map[string]string{rules.VarConfig: o.ConfigDir, rules.VarCache: o.CacheDir, rules.VarExtraConfig: s.extra,
 				rules.VarClaudeConfig: o.Getenv("CLAUDE_CONFIG_DIR"), rules.VarCodexHome: o.Getenv("CODEX_HOME")}}}
-	o2 := &outbound.Check{Rules: s.rules, Config: s.cfg}
+	o2 := &outbound.Check{Rules: s.rules, Config: s.cfg, Judge: oj}
 	return &engine.Engine{
 		Checks: []guard.Check{c, o2}, Catalog: s.catalog, Locale: s.locale,
 		WhenAskUnsupported: guard.Decision(s.cfg.Policy.WhenAskUnsupported),
 	}
 }
 
-// judgeOnlyCategories 报告完全依赖模型的 outbound 类别（spec §4）：启用、写了题目、却没有启用的本地规则，而模型
-// 关闭——这样的类别什么也查不出，是配置错误。错误指出类别与开启方法。
+// outboundNotes 是 config validate 与 status 的提示（不是错误）：配置里写了、却没有任何规则引用也没有题目的类别
+// 什么也不查，多半是名字写错（M4a 计划评审 M3）；ownRules 为真时另列用户自己的、不生效的 outbound 规则（M4a 终审 M-5）。
+func outboundNotes(s setup, ownRules bool) []string {
+	used := map[string]bool{}
+	for _, r := range s.rules.Outbound() {
+		used[r.Category] = true
+	}
+	var notes []string
+	for _, name := range slices.Sorted(maps.Keys(s.cfg.Outbound.Categories)) {
+		if !used[name] && s.cfg.Category(name).Question == nil {
+			notes = append(notes, "outbound category "+name+" has no rules and no question, so it checks nothing (is the name misspelled?)")
+		}
+	}
+	if ownRules {
+		why := map[string]string{rules.InactiveDisabled: "disabled", rules.InactiveCategory: "category disabled", rules.InactiveTier: "outbound tier"}
+		for _, r := range s.rules.Outbound() {
+			if st := rules.OutboundStateOf(r, s.cfg.Outbound.Tier, s.cfg.Category(r.Category).Enabled); !r.Builtin && !st.Effective {
+				notes = append(notes, "your rule "+r.ID+" is not active ("+why[st.Inactive]+")")
+			}
+		}
+	}
+	return notes
+}
+
+// judgeOnlyCategories 报告完全依赖模型的 outbound 类别（spec §4）：启用、写了题目、却没有生效的本地规则（规则启用，
+// 且当前档位扫描它查的某类事件，M4a 计划评审 M8），而模型关闭——这样的类别什么也查不出，是配置错误。错误指出类别与
+// 开启方法。
 func judgeOnlyCategories(cfg *config.Config, set *rules.Set) error {
-	if cfg.Judge.Enabled {
+	// outbound.judge: false 与模型关闭一样：outbound 不调用判断层，只靠题目的类别同样什么也查不出（M4b 终审 M-4）
+	if cfg.Judge.Enabled && cfg.OutboundJudge() {
 		return nil
+	}
+	why := "judge.enabled is false (run h-guard init, or add a rule with this category)"
+	if cfg.Judge.Enabled {
+		why = "outbound.judge is false (remove it, or add a rule with this category)"
 	}
 	local := map[string]bool{}
 	for _, r := range set.Outbound() {
-		if r.Enabled() {
+		if rules.OutboundStateOf(r, cfg.Outbound.Tier, true).Effective {
 			local[r.Category] = true
 		}
 	}
@@ -279,7 +310,7 @@ func judgeOnlyCategories(cfg *config.Config, set *rules.Set) error {
 	for _, name := range slices.Sorted(maps.Keys(cfg.Outbound.Categories)) {
 		if c := cfg.Category(name); c.Enabled && c.Question != nil && !local[name] {
 			issues = append(issues, config.Issue{Path: "outbound.categories." + name,
-				Msg: "has no enabled local rule and relies on the judge, but judge.enabled is false (run h-guard init, or add a rule with this category)"})
+				Msg: "has no enabled local rule and relies on the judge, but " + why})
 		}
 	}
 	if len(issues) > 0 {

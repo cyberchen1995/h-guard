@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/cyberchen1995/h-guard/internal/check/action"
+	"github.com/cyberchen1995/h-guard/internal/check/outbound"
 	"github.com/cyberchen1995/h-guard/internal/config"
 	"github.com/cyberchen1995/h-guard/internal/consent"
 	"github.com/cyberchen1995/h-guard/internal/rules"
@@ -27,6 +28,13 @@ type judgeState struct {
 	thresholds config.Thresholds
 	cal        config.Calibration
 	err        error // 后端构造失败的原因
+	// outbound、pii 报告同意是否覆盖这两个范围（身份一致的记录，M4b）；outboundThreshold 与 outboundCal 是 outbound
+	// 类别题的门槛及其来源
+	outbound, pii bool
+	// outboundOn、piiOn：配置要用 outbound 判断层、PII 类别开启（同意是否覆盖它们由上面两项给出）
+	outboundOn, piiOn bool
+	outboundThreshold float64
+	outboundCal       config.Calibration
 }
 
 // 同意状态。
@@ -39,7 +47,8 @@ const (
 
 // inspectJudge 构造配置的后端 name，核对同意（范围 action）并按档案与指纹选出阈值。只构造对象，不发请求。
 func (s setup) inspectJudge(o Options, name string) judgeState {
-	st := judgeState{name: name, typ: s.cfg.Backends[name].Type, consent: consentUnavailable}
+	st := judgeState{name: name, typ: s.cfg.Backends[name].Type, consent: consentUnavailable,
+		outboundOn: s.cfg.OutboundJudge(), piiOn: s.cfg.Category("pii").Enabled}
 	b, err := s.cfg.NewBackend(name)
 	if err != nil {
 		st.err = err
@@ -50,6 +59,7 @@ func (s setup) inspectJudge(o Options, name string) judgeState {
 	}
 	st.backend = b
 	st.thresholds, st.cal = s.cfg.ThresholdsFor(name, b, builtinDigest())
+	st.outboundThreshold, st.outboundCal = s.cfg.OutboundThresholdFor(name, b, outbound.BuiltinQuestionsDigest)
 	id, ok := consent.IdentityOf(name, st.typ, b)
 	if !ok || o.ConfigDir == "" {
 		return st
@@ -71,7 +81,36 @@ func (s setup) inspectJudge(o Options, name string) judgeState {
 	if store.Covers(id, consent.ScopeAction) {
 		st.consent = consentGranted
 	}
+	st.outbound = store.Covers(id, consent.ScopeOutbound)
+	st.pii = store.Covers(id, consent.ScopePII)
 	return st
+}
+
+// outboundJudge 是 outbound 检查的判断层（M4b，spec §6.2、§8.5）：模型开启、后端可建、同意含 outbound 范围时才调用
+// 后端，否则按同意缺失处理（judge_consent_missing：只用本地结论）。PII 题只在同意也含 pii 范围时问。
+func (s setup) outboundJudge(st judgeState) outbound.Judge {
+	switch {
+	case !s.cfg.Judge.Enabled || !s.cfg.OutboundJudge():
+		return outbound.Judge{} // outbound.judge: false：只用 action 判断（M4b 计划评审 I-4）
+	case st.backend == nil:
+		return outbound.Judge{Unavailable: outbound.FallbackJudgeUnavailable} // 后端构造失败（如缺 key），不是同意的问题（M-6）
+	case !st.outbound:
+		return outbound.Judge{Unavailable: outbound.FallbackConsentMissing}
+	}
+	return outbound.Judge{Backend: st.backend, Threshold: st.outboundThreshold, PII: st.pii}
+}
+
+// scopesFor 是 backend enable 与 init 记录的数据范围（M4b 已定决策：一次同意）：action 与 outbound，PII 类别开启时
+// 加上 pii；outbound.judge: false 时只有 action。
+func (s setup) scopesFor() []consent.Scope {
+	if !s.cfg.OutboundJudge() {
+		return []consent.Scope{consent.ScopeAction}
+	}
+	scopes := []consent.Scope{consent.ScopeAction, consent.ScopeOutbound}
+	if s.cfg.Category("pii").Enabled {
+		scopes = append(scopes, consent.ScopePII)
+	}
+	return scopes
 }
 
 // actionJudge 是 hook 与 check 的判断层（spec §8.5）：模型开启、后端可建、同意有效时才调用后端，

@@ -134,7 +134,11 @@ func (h *hookRun) commit(check string, v guard.Verdict) {
 // newEngine 是 hook 使用的 Engine：判断层按配置与同意接入（spec §8.5），再接上提交记录，供看门狗读取。
 func (h *hookRun) newEngine(s setup) (*engine.Engine, judgeState) {
 	j, st := s.actionJudge(h.o)
-	eng := s.newEngine(h.o, j)
+	oj := s.outboundJudge(st)
+	if h.ev != nil && h.ev.Kind != guard.EventAction && !h.adapter.CapsFor(*h.ev).Warn {
+		oj.Skip = true // harness 显示不了提示：outbound 判断层的命中只提示，不调用（M4b 终审 I-1）
+	}
+	eng := s.newEngine(h.o, j, oj)
 	eng.OnCommit = h.commit
 	for _, c := range eng.Checks {
 		if oc, ok := c.(*outbound.Check); ok {
@@ -243,11 +247,54 @@ func (h *hookRun) remember(p *cache.Prompts, ev guard.Event, d guard.Decision) {
 		_ = p.Block(ev.Harness, ev.SessionID, ev.Text)
 		return
 	}
+	// 用户自己的凭据正则认出的值在写入前遮蔽（缓存只认 secrets 的内置形状，M4a 终审 M-3）；这些区间找不全时不写入：
+	// 少一条授权依据只会多问，写进去的值之后会作为用户指令发给判断后端。残余路径（M4b 计划评审 M-9）：缓存为空时
+	// transcript 回退读到的是原文，用户正则认出的值仍会作为指令发给 action 判断；不写缓存会让这次会话更早走回退
+	h.mu.Lock()
+	scan := h.scan
+	h.mu.Unlock()
+	if scan != nil && !scan.Complete {
+		return
+	}
 	for _, r := range ev.Requests {
+		if scan != nil && r.Text == ev.Text {
+			r.Text = redactSpans(r.Text, scan.Secret)
+		}
 		if h.live() {
 			_ = p.Add(ev.Harness, ev.SessionID, r)
 		}
 	}
+}
+
+// redactSpans 把 text 中的区间（字节偏移，可以重叠）换成 [redacted]。
+func redactSpans(text string, spans [][2]int) string {
+	if len(spans) == 0 {
+		return text
+	}
+	sorted := slices.Clone(spans)
+	slices.SortFunc(sorted, func(a, b [2]int) int { return a[0] - b[0] })
+	var b strings.Builder
+	last := 0
+	for _, sp := range sorted {
+		if sp[1] <= last {
+			continue
+		}
+		b.WriteString(text[last:max(last, sp[0])])
+		b.WriteString("[redacted]")
+		last = sp[1]
+	}
+	b.WriteString(text[last:])
+	return b.String()
+}
+
+// blockFingerprint 在兜底路径（看门狗、panic）输出了提示词的 deny 时记下指纹：正常路径由 remember 记，兜底路径之前
+// 漏了，transcript 回退会把被拦的提示词读成授权（M4a 终审 M-1）。
+func (h *hookRun) blockFingerprint(ev guard.Event, out guard.Outcome) {
+	if ev.Kind != guard.EventPrompt || out.Verdict.Decision != guard.DecisionDeny || ev.Text == "" {
+		return
+	}
+	p := &cache.Prompts{Dir: under(h.o.CacheDir, "prompts"), Now: h.o.Now}
+	_ = p.Block(ev.Harness, ev.SessionID, ev.Text)
 }
 
 // requests 补全用户指令：指令缓存优先，没有时读 transcript（spec §3.3 第 3 步）。
@@ -326,14 +373,17 @@ func (h *hookRun) expire() {
 	if h.ev != nil {
 		ev, kind, ok = *h.ev, h.ev.Kind, true
 	}
+	var fin guard.Outcome
 	if ok {
 		v := h.committed.With(fallbackOutcome(kind, action.FallbackBudget, i18n.KeyActionBudgetExceeded, nil))
-		h.writeLocked(ev, h.bareEngine().Finish(ev, h.adapter.CapsFor(ev), v))
+		fin = h.bareEngine().Finish(ev, h.adapter.CapsFor(ev), v)
+		h.writeLocked(ev, fin)
 	}
 	h.abandoned = true
 	recs := h.stamp([]hglog.Health{{Event: string(kind), Check: "app", Code: action.FallbackBudget}})
 	h.mu.Unlock()
-	go h.logs.Health(recs) // 不等待：日志存储卡住时也要按时退出，这条记录可能丢失
+	go h.logs.Health(recs)         // 不等待：日志存储卡住时也要按时退出，这条记录可能丢失
+	go h.blockFingerprint(ev, fin) // 同上：尽力而为
 }
 
 // configInvalid：配置或规则非法时，action 请求确认，其余放行并计入健康记录（spec §10.1）。
@@ -404,12 +454,15 @@ func (h *hookRun) recover() {
 		ev, kind, ok = *h.ev, h.ev.Kind, true
 	}
 	recs := h.stamp([]hglog.Health{{Event: string(kind), Check: "app", Code: engine.FallbackInternal, Where: where}})
+	var fin guard.Outcome
 	if !h.written && ok {
 		v := h.committed.With(fallbackOutcome(kind, engine.FallbackInternal, i18n.KeyErrorInternal, nil))
-		h.writeLocked(ev, h.bareEngine().Finish(ev, h.adapter.CapsFor(ev), v))
+		fin = h.bareEngine().Finish(ev, h.adapter.CapsFor(ev), v)
+		h.writeLocked(ev, fin)
 	}
 	h.mu.Unlock()
 	h.logs.Health(recs)
+	h.blockFingerprint(ev, fin)
 }
 
 // panicSite 返回 panic 发生处的函数与行号（跳过 runtime 帧），不含 panic 值。

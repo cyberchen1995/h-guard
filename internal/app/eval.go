@@ -34,9 +34,25 @@ func runEval(args []string, o Options) int {
 	boot := fs.Int("bootstrap", 100, "with --sweep: resample the corpus this many times to test the suggestion (0 disables)")
 	seed := fs.Uint64("seed", 1, "random seed for --bootstrap")
 	extra := fs.String("config", "", "extra config file")
+	ob := fs.Bool("outbound", false, "evaluate the outbound judge on the outbound corpus (M4b)")
+	threshold := fs.Float64("threshold", -1, "with --outbound: report at this threshold instead of the profile's")
 	pos, err := parseInterleaved(fs, args)
-	shellSet := false
-	fs.Visit(func(f *flag.Flag) { shellSet = shellSet || f.Name == "shell" })
+	shellSet, actionOnly := false, false
+	fs.Visit(func(f *flag.Flag) {
+		shellSet = shellSet || f.Name == "shell"
+		actionOnly = actionOnly || f.Name == "shell" || f.Name == "repeat" || f.Name == "bootstrap" || f.Name == "seed"
+	})
+	thresholdSet := *threshold != -1
+	if thresholdSet && (!*ob || !(*threshold >= 0 && *threshold <= 1)) {
+		fmt.Fprintln(o.Stderr, "h-guard: --threshold needs --outbound and a value between 0 and 1")
+		fmt.Fprint(o.Stderr, usage)
+		return 2
+	}
+	if *ob && actionOnly { // --outbound 只有一个门槛、不重复运行：这些选项只属于动作的评估
+		fmt.Fprintln(o.Stderr, "h-guard: --outbound cannot be used with --shell, --repeat, --bootstrap or --seed")
+		fmt.Fprint(o.Stderr, usage)
+		return 2
+	}
 	// --shell 只选内置语料：--cases 的语料逐条写 shell
 	if err != nil || len(pos) != 0 || !guard.Shell(*shell).Valid() || (shellSet && *casesPath != "") {
 		fmt.Fprint(o.Stderr, usage)
@@ -64,6 +80,9 @@ func runEval(args []string, o Options) int {
 	if st.err != nil {
 		fmt.Fprintln(o.Stderr, "h-guard: backend", shown(name)+":", shown(st.err.Error()))
 		return 1
+	}
+	if *ob {
+		return runEvalOutbound(s, o, name, st, *casesPath, *sweep, *yes, *threshold)
 	}
 	// 与模型开启时的配置期校验相同（不论模型是否开启、judge.backend 是不是它）：缺一种题型，那些题永远问不出，
 	// 拟合出的阈值不能作为校准的证据。按配置错误退出，不发送语料

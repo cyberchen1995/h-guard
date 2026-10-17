@@ -370,6 +370,7 @@ func TestConfirmed(t *testing.T) {
 		{secrets.RuleAssignment, "hashedPassword,", false},
 		{secrets.RuleAssignment, "accessToken", false},
 		{secrets.RuleAssignment, "expired_signature", false},
+		{secrets.RuleAssignment, "expired_signature.", false}, // 句末的句号（M4b 语料起草时发现）
 		{secrets.RuleAssignment, "required", false},
 		{secrets.RuleAssignment, "&secret", false},
 		{secrets.RuleAssignment, "!vault", false},
@@ -434,5 +435,20 @@ func TestTruncatedPrivateKey(t *testing.T) {
 	}
 	if hits := secrets.Find("see -----BEGIN RSA PRIVATE KEY----- in the docs"); len(hits) != 0 {
 		t.Errorf("BEGIN line alone: %v", hits)
+	}
+}
+
+// TestTruncatedKeyShortLastLine：只有正文与 END 行的私钥，END 前最后一行正文很短（PEM 的最后一行长度不定，常是
+// AB3x== 这样几个字符）时同样认出（M4b 终审 M-2）；前面各行仍要求至少 16 个字符。
+func TestTruncatedKeyShortLastLine(t *testing.T) {
+	body := strings.Repeat("MIIEowIBAAKCAQEAuQ3zZ9kq2Lm8Np4Rs7Tv1Wy5Za3Bc6Df0GhJkLm\n", 20)
+	for _, last := range []string{"AB3x==", "VQIDAQABo1MwUTAdBgNVHQ4EFgQU=="} {
+		text := body + last + "\n-----END RSA PRIVATE KEY-----\n"
+		if hits := secrets.Find(text); len(hits) != 1 || hits[0].Rule != secrets.RulePrivateKey || hits[0].Start != 0 {
+			t.Errorf("last line %q: %v", last, hits)
+		}
+	}
+	if hits := secrets.Find("ok\n-----END RSA PRIVATE KEY-----\n"); len(hits) != 0 {
+		t.Errorf("END after a short word: %v", hits)
 	}
 }

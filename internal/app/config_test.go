@@ -135,6 +135,44 @@ func TestJudgeOnlyCategory(t *testing.T) {
 	}
 }
 
+// TestJudgeOnlyByEffectiveRules：类别有没有本地检测按「生效」的规则算（M4a 计划评审 M8）：只有 on: [tool_output] 的
+// 规则、档位 1 不扫工具输出时，这个类别对它能查的事件完全依赖模型，模型关闭时是配置错误；档位 2 时规则生效，不报错。
+func TestJudgeOnlyByEffectiveRules(t *testing.T) {
+	e := newEnv(t)
+	dir := filepath.Join(e.configDir, "rules")
+	os.MkdirAll(dir, 0o700)
+	os.WriteFile(filepath.Join(dir, "falcon.yaml"), []byte("schema: 1\nid: acme.codename\ncategory: acme-codename\non: [tool_output]\n"+
+		"match: {regex: ['\\bProject Falcon\\b']}\n"), 0o600)
+	q := "categories: {acme-codename: {question: {question: 'Falcon?'}}}"
+	e.config("version: 1\noutbound: {tier: 1, " + q + "}\n")
+	if _, errs, code := e.run(nil, "config", "validate"); code != 1 || !strings.Contains(errs, "outbound.categories.acme-codename") {
+		t.Errorf("tier 1: exit %d\n%s", code, errs)
+	}
+	e.config("version: 1\noutbound: {tier: 2, " + q + "}\n")
+	if out, errs, code := e.run(nil, "config", "validate"); code != 0 {
+		t.Errorf("tier 2: exit %d\n%s%s", code, out, errs)
+	}
+}
+
+// TestCategoryNotes：配置里写了、却没有任何规则引用也没有题目的类别什么也不查（多半是名字写错，如 credential），
+// config validate 与 status 提示，不算错误（M4a 计划评审 M3）；用户自己的、不生效的 outbound 规则 config validate
+// 同样提示（M4a 终审 M-5）。
+func TestCategoryNotes(t *testing.T) {
+	e := newEnv(t)
+	dir := filepath.Join(e.configDir, "rules")
+	os.MkdirAll(dir, 0o700)
+	os.WriteFile(filepath.Join(dir, "empid.yaml"), []byte("schema: 1\nid: acme.empid\ncategory: pii\non: [prompt]\nmatch: {regex: ['EMP-[0-9]{6}']}\n"), 0o600)
+	e.config("version: 1\noutbound: {categories: {credential: {enabled: false}}}\n")
+	out, errs, code := e.run(nil, "config", "validate")
+	if code != 0 || !strings.Contains(out, "note: outbound category credential has no rules and no question") ||
+		!strings.Contains(out, "note: your rule acme.empid is not active (category disabled)") {
+		t.Errorf("validate: exit %d\n%s%s", code, out, errs)
+	}
+	if out, _, _ := e.run(nil, "status"); !strings.Contains(out, "note: outbound category credential has no rules and no question") {
+		t.Errorf("status = %s", out)
+	}
+}
+
 // TestValidateOutboundExamples：config validate 同样运行用户 outbound 规则的样例，计入「你自己的规则」。
 func TestValidateOutboundExamples(t *testing.T) {
 	e := newEnv(t)
@@ -149,5 +187,15 @@ func TestValidateOutboundExamples(t *testing.T) {
 		"match: {regex: ['\\bProject Falcon\\b']}\nexamples: {hit: ['Project Eagle']}\n"), 0o600)
 	if _, errs, code := e.run(nil, "config", "validate"); code != 1 || !strings.Contains(errs, "acme.codename") {
 		t.Errorf("failing example: exit %d\n%s", code, errs)
+	}
+}
+
+// TestJudgeOnlyCategoryWithOutboundJudgeOff：outbound.judge: false 时只靠题目的类别同样什么也查不出，与模型关闭一样
+// 是配置错误（M4b 终审 M-4）。
+func TestJudgeOnlyCategoryWithOutboundJudgeOff(t *testing.T) {
+	e := newEnv(t)
+	e.config("version: 1\njudge: {enabled: true}\noutbound: {judge: false, categories: {acme: {question: {question: 'Falcon?'}}}}\n")
+	if _, errs, code := e.run(nil, "config", "validate"); code != 1 || !strings.Contains(errs, "outbound.categories.acme") || !strings.Contains(errs, "outbound.judge") {
+		t.Errorf("exit %d\n%s", code, errs)
 	}
 }
