@@ -12,6 +12,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+
+	"github.com/cyberchen1995/h-guard/extensions"
 )
 
 // Inspect 报告 harness 的入口是否安装、与期望是否一致。返回的每一行不带 harness 名；
@@ -22,8 +24,113 @@ func Inspect(t Target, harness string) []string {
 		return inspectClaudeCode(t)
 	case "codex":
 		return inspectCodex(t)
+	case "opencode":
+		return inspectExt(t, harness, OpenCodePlugin(t))
+	case "pi":
+		return inspectExt(t, harness, PiExtension(t))
+	case "omp":
+		return inspectExt(t, harness, OMPExtension(t))
+	case "dsh":
+		return inspectDSH(t)
 	}
 	return nil
+}
+
+// extHarnesses 是以单文件扩展接入的 harness：命令名、产品名、扩展按其编写的版本、受支持的主版本（0 为不限）。
+var extHarnesses = map[string]struct {
+	cmd, product, written string
+	major                 int
+}{
+	"opencode": {"opencode", "opencode", OpenCodeWritten, 1},
+	"pi":       {"pi", "pi", PiWritten, 0},
+	"omp":      {"omp", "oh-my-pi", OMPWritten, 0},
+	"dsh":      {"dsh", "DeepSeek Harness", DSHWritten, 0},
+}
+
+// ExtNotes 返回 harness 的版本提醒（install 与 status 共用）。
+func ExtNotes(t Target, harness string) []string {
+	h := extHarnesses[harness]
+	return harnessVersionNote(t, h.cmd, h.product, h.written, h.major)
+}
+
+// inspectExt 检查单文件扩展：是否是 h-guard 的、与这个 h-guard 会写出的内容是否相同、h-guard 是否还在原处。
+func inspectExt(t Target, harness, path string) []string {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return []string{fmt.Sprintf("not installed (h-guard install %s)", harness)}
+	}
+	h := extHarnesses[harness]
+	lines := []string{extInstalledLine(t, h.cmd, h.product)}
+	if !isOurExt(b) {
+		return append(lines, fmt.Sprintf("problem: %s is not h-guard's extension", path))
+	}
+	lines = append(lines, extProblems(t, harness, b)...)
+	for _, n := range ExtNotes(t, harness) {
+		lines = append(lines, "note: "+n)
+	}
+	return lines
+}
+
+// extProblems 检查已写出的扩展：h-guard 是否还在、内容是否与这个 h-guard 按同样的路径与超时写出的相同。
+func extProblems(t Target, harness string, b []byte) []string {
+	var problems []string
+	bin, timeout, ok := installedExt(b, harness)
+	if bin != "" {
+		if _, err := os.Stat(bin); err != nil {
+			problems = append(problems, fmt.Sprintf("problem: h-guard is not at %s; run h-guard install %s --write", bin, harness))
+		}
+	}
+	tmpl := map[string][]byte{"opencode": extensions.OpenCode, "pi": extensions.Pi, "omp": extensions.Pi, "dsh": extensions.DSH}[harness]
+	want, err := renderExt(tmpl, harness, Target{Bin: bin, Timeout: timeout})
+	if !ok || err != nil || !bytes.Equal(want, b) {
+		problems = append(problems, fmt.Sprintf("problem: the extension differs from this h-guard version (edited or written by another version); run h-guard install %s --write", harness))
+	}
+	return problems
+}
+
+// extInstalledLine 是「已安装」一行，带 harness 报告的版本（omp 报告 omp/<版本>）。
+func extInstalledLine(t Target, cmd, product string) string {
+	v := strings.TrimPrefix(harnessVersion(t, cmd), cmd+"/")
+	if v == "" {
+		return fmt.Sprintf("installed (%s not found in PATH)", cmd)
+	}
+	return fmt.Sprintf("installed (%s %s)", product, v)
+}
+
+// inspectDSH 检查 DeepSeek Harness：插件文件与补丁里挂载它的那一行。
+func inspectDSH(t Target) []string {
+	plugin, patch := DSHPlugin(t), DSHPatch(t)
+	b, perr := os.ReadFile(plugin)
+	found, name := 0, ""
+	if pb, err := os.ReadFile(patch); err == nil {
+		var yerr error
+		if found, name, yerr = dshMounted(pb); yerr != nil {
+			return []string{fmt.Sprintf("problem: %s cannot be read: %v", patch, yerr)}
+		}
+	}
+	if perr != nil && found == 0 {
+		return []string{"not installed (h-guard install dsh)"}
+	}
+	lines := []string{extInstalledLine(t, "dsh", "DeepSeek Harness")}
+	switch {
+	case found == 0:
+		lines = append(lines, fmt.Sprintf("problem: the plugin is written but %s does not mount it; run h-guard install dsh --write", patch))
+	case found > 1:
+		lines = append(lines, fmt.Sprintf("problem: %s mounts h-guard %d times; run h-guard install dsh --write", patch, found))
+	case !t.samePath(name, plugin):
+		lines = append(lines, fmt.Sprintf("problem: %s mounts %s instead of %s; run h-guard install dsh --write", patch, name, plugin))
+	}
+	if perr != nil {
+		return append(lines, fmt.Sprintf("problem: %s mounts %s, but the plugin is missing; run h-guard install dsh --write", patch, plugin))
+	}
+	if !isOurExt(b) {
+		return append(lines, fmt.Sprintf("problem: %s is not h-guard's plugin", plugin))
+	}
+	lines = append(lines, extProblems(t, "dsh", b)...)
+	for _, n := range ExtNotes(t, "dsh") {
+		lines = append(lines, "note: "+n)
+	}
+	return lines
 }
 
 func harnessVersion(t Target, name string) string {

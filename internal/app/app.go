@@ -26,7 +26,10 @@ import (
 
 	_ "github.com/cyberchen1995/h-guard/pkg/harness/claudecode" // 内置 adapter
 	_ "github.com/cyberchen1995/h-guard/pkg/harness/codex"
+	_ "github.com/cyberchen1995/h-guard/pkg/harness/dsh"
 	_ "github.com/cyberchen1995/h-guard/pkg/harness/generic"
+	_ "github.com/cyberchen1995/h-guard/pkg/harness/opencode"
+	_ "github.com/cyberchen1995/h-guard/pkg/harness/pi"
 	_ "github.com/cyberchen1995/h-guard/pkg/judge/anthropic" // 内置判断后端
 	_ "github.com/cyberchen1995/h-guard/pkg/judge/exec"
 	_ "github.com/cyberchen1995/h-guard/pkg/judge/openai"
@@ -135,7 +138,7 @@ const usage = `usage:
   h-guard eval [--backend <name>] [--sweep] [--shell posix|powershell | --cases <file>] [--repeat <K>] [--bootstrap <N>] [--seed <n>] [--yes] [--config <file>]
   h-guard eval --outbound [--backend <name>] [--sweep] [--threshold <t>] [--cases <file>] [--yes] [--config <file>]
   h-guard init
-  h-guard install claudecode|codex [--write] [--remove] [--timeout <seconds>] [--shell posix|powershell]
+  h-guard install claudecode|codex|opencode|pi|omp|dsh [--write] [--remove] [--timeout <seconds>] [--shell posix|powershell]
   h-guard migrate <questions.json> [--write]
   h-guard config validate [--rules <dir>] | show | init [--config <file>]
   h-guard version

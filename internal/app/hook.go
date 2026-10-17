@@ -37,6 +37,9 @@ var eventKinds = map[string]guard.EventKind{
 	"UserPromptSubmit": guard.EventPrompt, "prompt.submit": guard.EventPrompt,
 	"PostToolUse": guard.EventToolOutput, "tool.result": guard.EventToolOutput,
 	"action": guard.EventAction, "prompt": guard.EventPrompt, "tool_output": guard.EventToolOutput, // generic 契约
+	"tool.execute.before": guard.EventAction, "tool.execute.after": guard.EventToolOutput, "chat.message": guard.EventPrompt, // opencode
+	"tool_call": guard.EventAction, "tool_result": guard.EventToolOutput, "input": guard.EventPrompt, // pi、omp
+	"tools/pre-execute": guard.EventAction, "tools/post-execute": guard.EventToolOutput, "agent/pre-step": guard.EventPrompt, // dsh
 }
 
 // budgets 由 --timeout 推出两个时间点：内部截止时间（经 context 传给各阶段）为 timeout 减 1 秒；
@@ -194,7 +197,11 @@ func (h *hookRun) run(ctx context.Context, extra string) {
 	// 再按 harnesses.<name>.shell 重新解析。配置非法时保留默认 shell 的解析结果。
 	ev, unparsed, err := parseEvent(h.adapter, raw)
 	if err != nil {
-		// 读不懂的输入什么都不输出；要求始终有输出的 adapter（generic 契约）由 finish 输出失败说明
+		// 读不懂的输入什么都不输出；要求始终有输出的 adapter（generic 契约）由 finish 输出失败说明。
+		// 不产生动作的工具调用，要求每个请求都有回复的 adapter（扩展接入协议）回复放行
+		if errors.Is(err, harness.ErrNoAction) {
+			h.noAction()
+		}
 		return
 	}
 	if !h.setEvent(ev, h.adapter) {
@@ -332,6 +339,19 @@ func (h *hookRun) writeLocked(ev guard.Event, out guard.Outcome) bool {
 	}
 	h.written, h.exit = true, code
 	return true
+}
+
+// noAction 输出 adapter 对「不产生动作的工具调用」的回复（harness.NoActionRenderer）；没有实现时什么都不输出。
+func (h *hookRun) noAction() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	nr, ok := h.adapter.(harness.NoActionRenderer)
+	if !ok || h.written || h.abandoned {
+		return
+	}
+	stdout, code := nr.RenderNoAction()
+	_, _ = h.o.Stdout.Write(stdout)
+	h.written, h.exit = true, code
 }
 
 // fallbackOutcome 生成不经过 Check 的兜底结论：action 请求确认，其余放行。
