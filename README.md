@@ -8,6 +8,8 @@ about to do (shell commands and file operations) and what passes through it
 before something destructive runs or a secret leaks. It works with Claude Code
 and Codex, and with any other agent harness through a generic JSON contract.
 
+<p align="center"><img src=".github/assets/how-it-works.svg" alt="How h-guard works" width="720"></p>
+
 **Use it with a judge model.** Local rules handle the clear-cut cases only. For
 the common dangerous operations (recursive deletes, destructive git, publishing
 and the like), a model decides whether you asked for the operation and how much

@@ -1,0 +1,100 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 250" width="720" height="250" role="img" aria-labelledby="t d">
+<title id="t">How h-guard works</title>
+<desc id="d">An agent's command passes through h-guard's local rules and, for ambiguous operations, a judge model, which decide whether to pass, ask or deny.</desc>
+<style>
+:root{--fg:#1f2328;--mute:#59636e;--line:#d0d7de;--box:#f6f8fa;--acc:#0969da;--ok:#1a7f37;--warn:#9a6700;--bad:#cf222e}
+@media (prefers-color-scheme:dark){:root{--fg:#e6edf3;--mute:#9198a1;--line:#3d444d;--box:#151b23;--acc:#4493f8;--ok:#3fb950;--warn:#d29922;--bad:#f85149}}
+text{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans","PingFang SC","Microsoft YaHei",Helvetica,Arial,sans-serif;fill:var(--fg);font-size:14px}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:15px;font-weight:600}
+.sub{font-size:12px;fill:var(--mute)}
+.cap{font-size:13px;fill:var(--mute)}
+.b{fill:var(--box);stroke:var(--line);stroke-width:1.5}
+.ln{fill:none;stroke:var(--line);stroke-width:1.5}
+.lane{fill:none;stroke:var(--line);stroke-width:1.2;stroke-dasharray:4 4}
+.t{font-weight:600;text-anchor:middle}
+.st{font-size:11.5px;fill:var(--mute);text-anchor:middle}
+.dot{fill:var(--acc)}
+.hl,.hj{fill:var(--acc);fill-opacity:.12;stroke:var(--acc);stroke-width:2}
+.hp{fill:var(--ok);fill-opacity:.15;stroke:var(--ok);stroke-width:2}
+.hk{fill:var(--warn);fill-opacity:.15;stroke:var(--warn);stroke-width:2}
+.hd{fill:var(--bad);fill-opacity:.15;stroke:var(--bad);stroke-width:2}
+.op{fill:var(--ok)}.ok{fill:var(--warn)}.od{fill:var(--bad)}
+@keyframes d0{0%{opacity:0;transform:translate(140px,130px)} 2%{opacity:1;transform:translate(140px,130px)} 7%{opacity:1;transform:translate(265px,130px)} 10%{opacity:1;transform:translate(265px,130px)} 13%{opacity:1;transform:translate(435px,130px)} 16%{opacity:1;transform:translate(435px,130px)} 19%{opacity:1;transform:translate(580px,72px)} 21%{opacity:0;transform:translate(580px,72px)} 100%{opacity:0;transform:translate(580px,72px)}}
+.d0{animation:d0 16s linear infinite;opacity:0}
+@keyframes c0{0%{opacity:0} 1%{opacity:1} 23.5%{opacity:1} 24.5%{opacity:0} 100%{opacity:0}}
+.c0{animation:c0 16s linear infinite;opacity:0}
+@keyframes d1{0%{opacity:0;transform:translate(140px,130px)} 25%{opacity:0;transform:translate(140px,130px)} 27%{opacity:1;transform:translate(140px,130px)} 32%{opacity:1;transform:translate(265px,130px)} 35%{opacity:1;transform:translate(265px,130px)} 37%{opacity:1;transform:translate(265px,182px)} 42%{opacity:1;transform:translate(545px,182px)} 44%{opacity:1;transform:translate(580px,188px)} 46%{opacity:0;transform:translate(580px,188px)} 100%{opacity:0;transform:translate(580px,188px)}}
+.d1{animation:d1 16s linear infinite;opacity:0}
+@keyframes c1{0%{opacity:0} 25%{opacity:0} 26%{opacity:1} 48.5%{opacity:1} 49.5%{opacity:0} 100%{opacity:0}}
+.c1{animation:c1 16s linear infinite;opacity:0}
+@keyframes d2{0%{opacity:0;transform:translate(140px,130px)} 50%{opacity:0;transform:translate(140px,130px)} 52%{opacity:1;transform:translate(140px,130px)} 57%{opacity:1;transform:translate(265px,130px)} 60%{opacity:1;transform:translate(265px,130px)} 63%{opacity:1;transform:translate(435px,130px)} 66%{opacity:1;transform:translate(435px,130px)} 69%{opacity:1;transform:translate(580px,130px)} 71%{opacity:0;transform:translate(580px,130px)} 100%{opacity:0;transform:translate(580px,130px)}}
+.d2{animation:d2 16s linear infinite;opacity:0}
+@keyframes c2{0%{opacity:0} 50%{opacity:0} 51%{opacity:1} 73.5%{opacity:1} 74.5%{opacity:0} 100%{opacity:0}}
+.c2{animation:c2 16s linear infinite;opacity:0}
+@keyframes d3{0%{opacity:0;transform:translate(140px,130px)} 75%{opacity:0;transform:translate(140px,130px)} 77%{opacity:1;transform:translate(140px,130px)} 82%{opacity:1;transform:translate(265px,130px)} 85%{opacity:1;transform:translate(265px,130px)} 88%{opacity:1;transform:translate(435px,130px)} 91%{opacity:1;transform:translate(435px,130px)} 94%{opacity:1;transform:translate(580px,72px)} 96%{opacity:0;transform:translate(580px,72px)} 100%{opacity:0;transform:translate(580px,72px)}}
+.d3{animation:d3 16s linear infinite;opacity:0}
+@keyframes c3{0%{opacity:0} 75%{opacity:0} 76%{opacity:1} 98.5%{opacity:1} 99.5%{opacity:0} 100%{opacity:0}}
+.c3{animation:c3 16s linear infinite;opacity:0}
+@keyframes hl{0%{opacity:0} 6.2%{opacity:0} 7%{opacity:1} 10.5%{opacity:1} 11.3%{opacity:0} 31.2%{opacity:0} 32%{opacity:1} 35.5%{opacity:1} 36.3%{opacity:0} 56.2%{opacity:0} 57%{opacity:1} 60.5%{opacity:1} 61.3%{opacity:0} 81.2%{opacity:0} 82%{opacity:1} 85.5%{opacity:1} 86.3%{opacity:0} 100%{opacity:0}}
+.hl{animation:hl 16s linear infinite;opacity:0}
+@keyframes hj{0%{opacity:0} 12.2%{opacity:0} 13%{opacity:1} 16.5%{opacity:1} 17.3%{opacity:0} 62.2%{opacity:0} 63%{opacity:1} 66.5%{opacity:1} 67.3%{opacity:0} 87.2%{opacity:0} 88%{opacity:1} 91.5%{opacity:1} 92.3%{opacity:0} 100%{opacity:0}}
+.hj{animation:hj 16s linear infinite;opacity:0}
+@keyframes hp{0%{opacity:0} 18.2%{opacity:0} 19%{opacity:1} 24%{opacity:1} 24.8%{opacity:0} 93.2%{opacity:0} 94%{opacity:1} 99%{opacity:1} 99.8%{opacity:0} 100%{opacity:0}}
+.hp{animation:hp 16s linear infinite;opacity:0}
+@keyframes hk{0%{opacity:0} 68.2%{opacity:0} 69%{opacity:1} 74%{opacity:1} 74.8%{opacity:0} 100%{opacity:0}}
+.hk{animation:hk 16s linear infinite;opacity:0}
+@keyframes hd{0%{opacity:0} 43.2%{opacity:0} 44%{opacity:1} 49%{opacity:1} 49.8%{opacity:0} 100%{opacity:0}}
+.hd{animation:hd 16s linear infinite;opacity:0}
+@media (prefers-reduced-motion:reduce){*{animation:none!important}.c2,.hj,.hk{opacity:1}}
+</style>
+<!-- connectors -->
+<path class="ln" d="M140 130H190M340 130H360M510 130H580"/>
+<path class="lane" d="M265 165V182H545L580 188M510 120L580 72"/>
+<text x="400" y="195" class="st">deny rule</text>
+<!-- agent -->
+<rect class="b" x="12" y="95" width="128" height="70" rx="10"/>
+<text x="76" y="122" class="t">Agent</text>
+<text x="76" y="150" class="st">Claude Code · Codex</text>
+<!-- h-guard -->
+<rect x="172" y="60" width="356" height="140" rx="14" fill="none" stroke="var(--acc)" stroke-width="1.5" stroke-opacity=".55"/>
+<text x="186" y="216" style="font-weight:700;fill:var(--acc)">h-guard</text>
+<rect class="b" x="190" y="95" width="150" height="70" rx="10"/>
+<rect class="hl" x="190" y="95" width="150" height="70" rx="10"/>
+<text x="265" y="118" class="t">Local rules</text>
+<text x="265" y="155" class="st">offline · deterministic</text>
+<rect class="b" x="360" y="95" width="150" height="70" rx="10"/>
+<rect class="hj" x="360" y="95" width="150" height="70" rx="10"/>
+<text x="435" y="118" class="t">Judge model</text>
+<text x="435" y="155" class="st">did you ask? how bad?</text>
+<!-- outcomes -->
+<rect class="b" x="580" y="52" width="120" height="40" rx="20"/><rect class="hp" x="580" y="52" width="120" height="40" rx="20"/>
+<text x="640" y="77" class="t op">✓ pass</text>
+<rect class="b" x="580" y="110" width="120" height="40" rx="20"/><rect class="hk" x="580" y="110" width="120" height="40" rx="20"/>
+<text x="640" y="135" class="t ok">? ask</text>
+<text x="640" y="162" class="st" style="font-size:10.5px">Codex: ask → deny</text>
+<rect class="b" x="580" y="168" width="120" height="40" rx="20"/><rect class="hd" x="580" y="168" width="120" height="40" rx="20"/>
+<text x="640" y="193" class="t od">✕ deny</text>
+<!-- moving checks -->
+<circle class="dot d0" r="6"/><circle class="dot d1" r="6"/><circle class="dot d2" r="6"/><circle class="dot d3" r="6"/>
+<!-- captions -->
+<g class="c0">
+  <text x="20" y="30" class="mono">$ git status</text>
+  
+  <text x="360" y="238" class="cap" text-anchor="middle">No rule matches, judge sees no risk → pass</text>
+</g>
+<g class="c1">
+  <text x="20" y="30" class="mono">$ rm -rf /</text>
+  
+  <text x="360" y="238" class="cap" text-anchor="middle">catastrophic is a deny rule → deny, no model needed</text>
+</g>
+<g class="c2">
+  <text x="20" y="30" class="mono">$ git push origin main</text>
+  
+  <text x="360" y="238" class="cap" text-anchor="middle">publish → judge: you did not ask for it → ask</text>
+</g>
+<g class="c3">
+  <text x="20" y="30" class="mono">$ git push origin main</text>
+  <text x="20" y="50" class="sub">you: “push this to origin”</text>
+  <text x="360" y="238" class="cap" text-anchor="middle">publish → judge: you asked for it → pass</text>
+</g>
+</svg>
