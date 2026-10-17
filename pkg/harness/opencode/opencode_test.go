@@ -136,9 +136,11 @@ func TestToolOutput(t *testing.T) {
 	if err != nil || !ev.FileContent {
 		t.Fatalf("%+v %v", ev, err)
 	}
-	ev, err = a.Parse(after("skill", map[string]string{"name": "deploy"}, map[string]any{"output": "SKILL body"}))
-	if err != nil || !ev.FileContent {
-		t.Fatalf("skill: %+v %v", ev, err)
+	for _, tool := range []string{"skill", "lsp"} {
+		ev, err = a.Parse(after(tool, map[string]string{"name": "x"}, map[string]any{"output": "body"}))
+		if err != nil || !ev.FileContent {
+			t.Fatalf("%s: %+v %v", tool, ev, err)
+		}
 	}
 }
 

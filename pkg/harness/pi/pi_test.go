@@ -121,8 +121,9 @@ func TestOMPTools(t *testing.T) {
 	if len(got) != 1 || got[0].File.Path != "n.txt" {
 		t.Errorf("apply_patch edit: %+v", got)
 	}
-	if _, err := pi.OMP.Parse(call("omp", "ast_edit", map[string]any{"ops": []any{}, "paths": []string{"a.ts", "b.ts"}})); !errors.Is(err, harness.ErrNoAction) {
-		t.Errorf("ast_edit is a preview: %v, want ErrNoAction", err)
+	got, _ = actions(t, pi.OMP, "ast_edit", map[string]any{"ops": []any{}, "paths": []string{"a.ts", "b.ts"}})
+	if len(got) != 2 || got[0].Kind != guard.ActionFileRead { // 预览只读文件
+		t.Errorf("ast_edit: %s", asJSON(got))
 	}
 	var tu *harness.TargetUnparsedError
 	for name, in := range map[string]any{
@@ -389,7 +390,7 @@ func TestOMPPaths(t *testing.T) {
 	if !slices.Contains(paths, "~/.ssh/id_rsa") || !slices.Contains(paths, "README.md") || !slices.Contains(paths, "notes.txt") {
 		t.Errorf("delimited read: %q", paths)
 	}
-	for _, tool := range []string{"ast_grep", "ast_edit", "eval"} {
+	for _, tool := range []string{"ast_grep", "ast_edit", "eval", "recall"} {
 		if ev, err := pi.OMP.Parse(result("omp", tool, map[string]any{"pat": "x"}, "K=V")); err != nil || !ev.FileContent {
 			t.Errorf("%s result: %+v %v", tool, ev, err)
 		}

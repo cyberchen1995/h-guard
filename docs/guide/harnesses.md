@@ -207,7 +207,7 @@ or restart after installing.
 
 | Extension event | What h-guard does |
 |---|---|
-| `tool_call` | checks the actions (`bash`, pi's `powershell` on Windows; `read`, `grep`, `write`, `edit`; oh-my-pi's patch-style `edit` and `eval`; `ast_edit` only previews, and applying it through `xd://resolve` asks); `deny` blocks the call and the model reads the reason; `ask` opens a confirmation dialog |
+| `tool_call` | checks the actions (`bash`, pi's `powershell` on Windows; `read`, `grep`, `write`, `edit`; oh-my-pi's patch-style `edit` and `eval`; `ast_edit` only previews, so it is checked as reading its files, and applying it through `xd://resolve` asks); `deny` blocks the call and the model reads the reason; `ask` opens a confirmation dialog |
 | `tool_result` | scans the output; `deny` replaces the content the model sees |
 | `input` | scans the prompt; `deny` drops it and shows the reason |
 | `context` (oh-my-pi only) | scans user messages that did not go through `input`; `deny` replaces the message the model receives with h-guard's reason |

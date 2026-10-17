@@ -224,7 +224,7 @@ func (a Adapter) touches(tool string) bool {
 //     上的 powershell 工具执行 PowerShell 命令；
 //   - read、grep 读文件，write、edit 写文件；
 //   - omp 的 edit（及 apply_patch 模式下的 apply_patch）是补丁时读出补丁头里的文件（REM 删除、MV 改名），patch 模式的
-//     各项可以删除或改名；ast_edit 只是预览，不产生动作；lsp 见 ompLSP；omp 的 eval 执行 Python 或 JavaScript 代码，
+//     各项可以删除或改名；ast_edit 只是预览，读 paths 里的文件；lsp 见 ompLSP；omp 的 eval 执行 Python 或 JavaScript 代码，
 //     h-guard 读不懂，请求确认（errUnparsed）。
 //
 // pi 的 ls、find 与 MCP 工具不产生动作，其余工具见 piReadOnly；omp 见 ompReadOnly。omp 的路径先按 ompPath 规范化。
@@ -307,8 +307,17 @@ func (a Adapter) actions(tool string, in toolInput) ([]guard.Action, error) {
 		return nil, errUnknownTool
 	}
 	switch tool {
-	case "ast_edit": // 只是预览，不改文件；改动在之后 write xd://resolve 时才写入，那一步请求确认
-		return nil, ErrNoAction
+	case "ast_edit": // 只是预览（读 paths 里的文件），不改文件；改动在之后 write xd://resolve 时才写入，那一步请求确认
+		var acts []guard.Action
+		for _, p := range in.Paths {
+			if act, ok := extadapter.File(guard.ActionFileRead, p); ok {
+				acts = append(acts, act)
+			}
+		}
+		if len(acts) == 0 {
+			return nil, ErrNoAction
+		}
+		return acts, nil
 	case "eval":
 		return nil, errUnparsed
 	case "task":
@@ -636,6 +645,8 @@ func (a Adapter) fileContent(tool string, in toolInput) bool {
 	case "read", "grep", "search": // search 是 omp 的 grep 的旧名
 		return true
 	case "ast_grep", "ast_edit": // omp 的结构化搜索与改写的预览，结果是源文件里的片段
+		return a.omp
+	case "recall": // omp 的长期记忆里存下的原文
 		return a.omp
 	case "eval": // omp 的 eval 能用 read() 直接读文件并打印
 		return a.omp

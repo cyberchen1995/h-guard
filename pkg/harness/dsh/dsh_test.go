@@ -144,7 +144,7 @@ func TestTerminalSend(t *testing.T) {
 	if err != nil || !ev.FileContent {
 		t.Errorf("terminal_send output: %+v %v", ev, err)
 	}
-	for _, tool := range []string{"terminal_read", "job_output", "run_code", "skill", "session_event_read", "session_event_search", "session_search"} {
+	for _, tool := range []string{"terminal_read", "job_output", "run_code", "skill", "session_event_read", "session_event_search", "session_search", "read_mcp_resource"} {
 		if ev, err := a.Parse(post(tool, map[string]any{"session_id": "t1"}, "KEY")); err != nil || !ev.FileContent {
 			t.Errorf("%s output: %+v %v", tool, ev, err)
 		}

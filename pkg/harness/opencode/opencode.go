@@ -214,7 +214,7 @@ func (a Adapter) actions(tool string, in args) ([]guard.Action, error) {
 // fileContent 报告工具结果是不是文件内容：读文件的工具，或读文件的命令。
 func (a Adapter) fileContent(tool string, in args) bool {
 	switch tool {
-	case "read", "grep", "skill": // skill 的结果是读出的 SKILL.md
+	case "read", "grep", "skill", "lsp": // skill 的结果是读出的 SKILL.md，lsp（实验性）的结果带着源码
 		return true
 	case "bash":
 		return command.ReadsFiles(in.Command, a.shellOf())
