@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -892,15 +893,23 @@ func TestBackendEnableNeedsATerminal(t *testing.T) {
 	}
 }
 
+// judgeCmd 是测试里 exec 后端的命令：Windows 上以 /opt 开头的路径缺盘符，不算绝对路径。
+func judgeCmd() string {
+	if runtime.GOOS == "windows" {
+		return `C:\opt\judge\run`
+	}
+	return "/opt/judge/run"
+}
+
 func TestBackendEnableExecSaysWhereDataGoes(t *testing.T) {
 	e := newEnv(t)
 	e.tty = true
-	e.config("version: 1\nbackends: {local: {type: exec, command: /opt/judge/run, args: ['--fast']}}\n")
+	e.config("version: 1\nbackends: {local: {type: exec, command: '" + judgeCmd() + "', args: ['--fast']}}\n")
 	out, _, code := e.run([]byte("y\n"), "backend", "enable", "local")
-	if code != 0 || !strings.Contains(out, `handed to the program "/opt/judge/run" "--fast"`) {
+	if code != 0 || !strings.Contains(out, "handed to the program "+strconv.Quote(filepath.Clean(judgeCmd()))+` "--fast"`) {
 		t.Errorf("exec enable: exit %d, out %q", code, out)
 	}
-	e.config("version: 1\nbackends: {local: {type: exec, command: /opt/judge/run, args: ['--slow']}}\n")
+	e.config("version: 1\nbackends: {local: {type: exec, command: '" + judgeCmd() + "', args: ['--slow']}}\n")
 	if out, _, _ := e.run(nil, "backend", "list"); !strings.Contains(out, "consent: withdrawn") {
 		t.Errorf("changed args must withdraw consent: %q", out)
 	}
@@ -1191,10 +1200,10 @@ func TestBackendTargetsAreMasked(t *testing.T) {
 	const secret = "sk-proj-ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdefghijklmno"
 	e := newEnv(t)
 	e.tty = true
-	e.config("version: 1\nbackends: {local: {type: exec, command: /opt/judge/run, args: ['--token', '" + secret + "']}}\n")
+	e.config("version: 1\nbackends: {local: {type: exec, command: '" + judgeCmd() + "', args: ['--token', '" + secret + "']}}\n")
 	out, _, _ := e.run([]byte("n\n"), "backend", "enable", "local")
 	list, _, _ := e.run(nil, "backend", "list")
-	if strings.Contains(out+list, secret) || !strings.Contains(list, `"/opt/judge/run" "--token"`) {
+	if strings.Contains(out+list, secret) || !strings.Contains(list, strconv.Quote(filepath.Clean(judgeCmd()))+` "--token"`) {
 		t.Errorf("enable:\n%s\nlist:\n%s", out, list)
 	}
 }
@@ -1686,13 +1695,18 @@ func TestConsentHintMasksCredentialShapedPaths(t *testing.T) {
 			{"double", `token="` + value + `".yaml`},
 		} { // 子测试名不含凭据形状：它会进入 t.TempDir 的路径
 			t.Run(entry[0]+"/"+c.name, func(t *testing.T) {
+				if runtime.GOOS == "windows" && strings.ContainsRune(c.file, '"') {
+					t.Skip("Windows 文件名不允许含 \"")
+				}
 				e := newEnv(t)
 				extra := filepath.Join(t.TempDir(), c.file)
 				if strings.Contains(secrets.MaskForLog(extra), value) {
 					t.Fatalf("the detector does not recognize %q", extra)
 				}
-				os.WriteFile(extra, []byte("version: 1\njudge: {enabled: true, backend: jev}\n"+
-					"backends: {jev: {type: typesafe, model: jev-latest, base_url: '"+srv.URL+"', api_key_env: HG_TEST_KEY}}\n"), 0o600)
+				if err := os.WriteFile(extra, []byte("version: 1\njudge: {enabled: true, backend: jev}\n"+
+					"backends: {jev: {type: typesafe, model: jev-latest, base_url: '"+srv.URL+"', api_key_env: HG_TEST_KEY}}\n"), 0o600); err != nil {
+					t.Fatal(err)
+				}
 				out, stderr, code := e.run(nil, append(entry, "--config", extra)...)
 				if code != 0 {
 					t.Fatalf("%v: exit %d, stderr %q", entry, code, stderr)

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -323,11 +324,19 @@ func TestNewBackend(t *testing.T) {
 	}
 }
 
+// judgeCmd 是测试里 exec 后端的命令：Windows 上以 /opt 开头的路径缺盘符，不算绝对路径。
+func judgeCmd() string {
+	if runtime.GOOS == "windows" {
+		return `C:\opt\judge\run`
+	}
+	return "/opt/judge/run"
+}
+
 // TestExecKindsFromYAML：exec 后端的 kinds 经配置文件解码后校验。空列表（与省略不同）、未知取值、重复都是
 // 配置错误，说明不回显取值；省略时两种题型都能回答。
 func TestExecKindsFromYAML(t *testing.T) {
 	const canary = "HGCanaryKind987654"
-	const prefix = "version: 1\nbackends: {local: {type: exec, command: /opt/judge/run"
+	prefix := "version: 1\nbackends: {local: {type: exec, command: '" + judgeCmd() + "'"
 	for name, kinds := range map[string]string{
 		"empty list": "[]",
 		"unknown":    "[probability, " + canary + "]",

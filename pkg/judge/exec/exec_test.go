@@ -7,8 +7,10 @@ import (
 	"os"
 	osexec "os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -298,33 +300,43 @@ func TestKindsLimitWhatTheProgramIsAsked(t *testing.T) {
 	}
 }
 
+// judgeDir 是测试里 exec 后端命令所在的绝对目录：Windows 上以 /opt 开头的路径缺盘符，不算绝对路径。
+func judgeDir() string {
+	if runtime.GOOS == "windows" {
+		return `C:\opt\judge`
+	}
+	return "/opt/judge"
+}
+
 func TestNewAndDescribe(t *testing.T) {
+	dir := judgeDir()
+	sep := string(filepath.Separator)
 	for name, o := range map[string]exec.Options{
 		"relative command": {Command: "judge"},
-		"env with value":   {Command: "/opt/judge", Env: []string{"KEY=v"}},
-		"negative timeout": {Command: "/opt/judge", TimeoutMS: -1},
-		"bad probability":  {Command: "/opt/judge", Probability: "guess"},
-		"unknown kind":     {Command: "/opt/judge", Kinds: []judge.Kind{judge.KindProbability, "HGCanaryKind987654"}},
-		"empty kinds":      {Command: "/opt/judge", Kinds: []judge.Kind{}},
-		"duplicate kinds":  {Command: "/opt/judge", Kinds: []judge.Kind{judge.KindScale, judge.KindProbability, judge.KindScale}},
+		"env with value":   {Command: dir, Env: []string{"KEY=v"}},
+		"negative timeout": {Command: dir, TimeoutMS: -1},
+		"bad probability":  {Command: dir, Probability: "guess"},
+		"unknown kind":     {Command: dir, Kinds: []judge.Kind{judge.KindProbability, "HGCanaryKind987654"}},
+		"empty kinds":      {Command: dir, Kinds: []judge.Kind{}},
+		"duplicate kinds":  {Command: dir, Kinds: []judge.Kind{judge.KindScale, judge.KindProbability, judge.KindScale}},
 	} {
 		_, err := exec.New("b", o)
 		if err == nil || strings.Contains(err.Error(), "HGCanaryKind987654") {
 			t.Errorf("%s: err = %v", name, err)
 		}
 	}
-	b, err := exec.New("local", exec.Options{Command: "/opt/judge/../judge/run", Args: []string{"--model", "a b"}, Model: "m1", Probability: "logprobs"})
+	b, err := exec.New("local", exec.Options{Command: dir + sep + ".." + sep + "judge" + sep + "run", Args: []string{"--model", "a b"}, Model: "m1", Probability: "logprobs"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := b.Describe(); got != (judge.Info{Target: `"/opt/judge/run" "--model" "a b"`, Model: "m1", Probability: "logprobs"}) {
+	if got := b.Describe(); got != (judge.Info{Target: strconv.Quote(filepath.Clean(dir+sep+"run")) + ` "--model" "a b"`, Model: "m1", Probability: "logprobs"}) {
 		t.Errorf("Describe() = %+v", got)
 	}
 	if c := b.Caps(); !c.Calibrated || !c.Batch || c.Mechanism != judge.MechanismProgram ||
 		!slices.Equal(c.Kinds, []judge.Kind{judge.KindProbability, judge.KindScale}) {
 		t.Errorf("caps = %+v", c)
 	}
-	if b2, _ := exec.New("v", exec.Options{Command: "/opt/judge"}); b2.Caps().Calibrated || b2.Describe().Probability != "verbalized" {
+	if b2, _ := exec.New("v", exec.Options{Command: dir}); b2.Caps().Calibrated || b2.Describe().Probability != "verbalized" {
 		t.Errorf("default probability: caps %+v, info %+v", b2.Caps(), b2.Describe())
 	}
 	if _, ok := judge.LookupType(exec.Type); !ok {
