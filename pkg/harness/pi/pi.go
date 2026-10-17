@@ -411,7 +411,8 @@ func ompEditTargets(in toolInput) ([]guard.Action, error) {
 
 // ompLSP 读出 omp 的 lsp 改动的文件：rename_file 把 file 改名为 new_name；rename（除非 apply 为 false）、
 // 应用的 code_actions 与原始的 request 会改动不知道有哪些的文件，按 file 写文件并请求确认（errUnparsed）。
-// 其余动作（诊断、跳转、符号、状态等）只读，不产生动作。
+// reload 重启语言服务器，工作区诊断（file 为 *）运行项目的构建与检查命令，同样请求确认。
+// 其余动作（单个文件的诊断、跳转、符号、状态等）只读，不产生动作。
 func ompLSP(in toolInput) ([]guard.Action, error) {
 	applied := in.Apply == nil || *in.Apply
 	var acts []guard.Action
@@ -440,6 +441,12 @@ func ompLSP(in toolInput) ([]guard.Action, error) {
 		return acts, errUnparsed
 	case "request":
 		return acts, errUnparsed
+	case "reload": // 停止、启动语言服务器进程
+		return nil, errUnparsed
+	case "diagnostics":
+		if strings.TrimSpace(in.File) == "*" { // 工作区诊断运行 cargo check、npx tsc、go build、pyright（cargo check 会执行 build.rs）
+			return nil, errUnparsed
+		}
 	}
 	return nil, ErrNoAction
 }
@@ -594,6 +601,8 @@ func (a Adapter) fileContent(tool string, in toolInput) bool {
 	switch tool {
 	case "read", "grep", "search": // search 是 omp 的 grep 的旧名
 		return true
+	case "ast_grep": // omp 的结构化搜索，结果是源文件里的片段
+		return a.omp
 	case "bash":
 		return command.ReadsFiles(in.Command, guard.ShellPOSIX)
 	case "powershell":

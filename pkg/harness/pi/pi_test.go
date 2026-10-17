@@ -211,7 +211,7 @@ func TestOMPLSP(t *testing.T) {
 		}
 	}
 	for name, in := range map[string]map[string]any{
-		"diagnostics":       {"action": "diagnostics", "file": "*"},
+		"diagnostics":       {"action": "diagnostics", "file": "a.go"},
 		"rename preview":    {"action": "rename", "file": "a.go", "new_name": "y", "apply": false},
 		"code_actions list": {"action": "code_actions", "file": "a.go"},
 	} {
@@ -347,6 +347,20 @@ func TestOMPPaths(t *testing.T) {
 	}
 	if _, err := pi.OMP.Parse(call("omp", "task", map[string]any{"context": "c", "tasks": []map[string]any{{"task": "a"}}})); !errors.Is(err, harness.ErrNoAction) {
 		t.Errorf("task: %v, want ErrNoAction", err)
+	}
+	for name, in := range map[string]map[string]any{
+		"reload":                {"action": "reload", "file": "*"},
+		"workspace diagnostics": {"action": "diagnostics", "file": "*"},
+	} {
+		if _, err := pi.OMP.Parse(call("omp", "lsp", in)); !errors.As(err, &tu) {
+			t.Errorf("lsp %s: %v, want TargetUnparsedError", name, err)
+		}
+	}
+	if _, err := pi.OMP.Parse(call("omp", "lsp", map[string]any{"action": "diagnostics", "file": "a.go"})); !errors.Is(err, harness.ErrNoAction) {
+		t.Errorf("lsp file diagnostics: %v, want ErrNoAction", err)
+	}
+	if ev, err := pi.OMP.Parse(result("omp", "ast_grep", map[string]any{"pat": "x"}, "K=V")); err != nil || !ev.FileContent {
+		t.Errorf("ast_grep result: %+v %v", ev, err)
 	}
 	var ut *harness.UnknownToolError
 	if _, err := pi.OMP.Parse(call("omp", "security_scan", map[string]any{"action": "start"})); !errors.As(err, &ut) {

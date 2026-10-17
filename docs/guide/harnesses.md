@@ -230,7 +230,9 @@ Differences:
   its `patch` mode from each entry's `op` and `rename`, and its `sloppy` mode
   from the `*** Edit File:` lines; an edit whose files
   cannot be read asks. `lsp` renames, applied code actions and raw requests
-  change files h-guard cannot list, so they ask. `read` paths lose their line
+  change files h-guard cannot list, so they ask; so do `lsp` reloads and
+  workspace diagnostics (`file: "*"`), which start language servers or run
+  `cargo check`, `npx tsc`, `go build` and `pyright`. `read` paths lose their line
   selectors (`a.go:10-20`). Paths are normalized as oh-my-pi does: `file://`
   URLs become the file, and a stray leading `:` or `@` is dropped. oh-my-pi's `write` is checked against the file it
   really changes: an archive entry (`a.zip:inner`) or SQLite row

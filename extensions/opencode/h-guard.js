@@ -54,7 +54,7 @@ export const HGuard = async ({ client, directory }) => {
       }
     },
 
-    // 提示词：保存与发送之前检查；deny 抛出错误，消息不保存、不发送。接入层故障放行并提示用户
+    // 提示词：保存与发送之前检查；deny 时把文本换成说明并抛出错误，消息不保存、不发送。接入层故障放行并提示用户
     'chat.message': async (input, output) => {
       let reply
       try {
@@ -71,6 +71,15 @@ export const HGuard = async ({ client, directory }) => {
       }
       if (reply.action === 'deny' || reply.action === 'ask') {
         await toast('error', messageOf(reply))
+        // 先把消息的文本换成说明：哪怕某个版本的 opencode 不理会抛出的错误，模型也只读到说明
+        const notice = textOf(reply) + ' The prompt was withheld.'
+        let replaced = false
+        for (const p of output.parts || []) {
+          if (p && p.type === 'text') {
+            p.text = replaced ? '' : notice
+            replaced = true
+          }
+        }
         throw new Error(textOf(reply))
       }
       if (reply.action === 'warn') await toast('warning', messageOf(reply))

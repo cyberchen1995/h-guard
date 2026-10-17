@@ -77,6 +77,7 @@ type arguments struct {
 	Workdir  string `json:"workdir"`
 	FilePath string `json:"file_path"`
 	Path     string `json:"path"`
+	Action   string `json:"action"` // stagehand_tabs
 }
 
 type stepData struct {
@@ -246,6 +247,9 @@ func actions(tool string, raw json.RawMessage, in arguments) ([]guard.Action, er
 			}
 		}
 		return nil, errUnparsed
+	}
+	if tool == "stagehand_tabs" && in.Action == "close" { // 关闭标签页会丢掉页面的状态，按不认识的工具请求确认
+		return nil, errUnknownTool
 	}
 	if dshReadOnly[tool] || strings.HasPrefix(tool, "mcp__") {
 		return nil, ErrNoAction

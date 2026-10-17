@@ -107,8 +107,11 @@ test('tool.execute.after: a guard that cannot run lets the output through and sa
 
 test('chat.message: a prompt with a credential is not sent', { skip: !haveGuard }, async () => {
   const { hooks, toasts } = await plugin(guard('opencode'))
-  await assert.rejects(hooks['chat.message']({ sessionID: 'ses_1' }, { message: {}, parts: [{ type: 'text', text: KEY }] }), /Contains credentials/)
+  const output = { message: {}, parts: [{ type: 'text', text: KEY }, { type: 'text', text: KEY, synthetic: true }] }
+  await assert.rejects(hooks['chat.message']({ sessionID: 'ses_1' }, output), /Contains credentials/)
   assert.equal(toasts[0].variant, 'error')
+  assert.match(output.parts[0].text, /^h-guard: .*The prompt was withheld\.$/)
+  assert.equal(output.parts[1].text, '')
   await hooks['chat.message']({ sessionID: 'ses_1' }, { message: {}, parts: [{ type: 'text', text: 'fix the test' }] })
 })
 
