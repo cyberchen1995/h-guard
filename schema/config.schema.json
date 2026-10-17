@@ -145,7 +145,7 @@
       }
     },
     "harnesses": {
-      "description": "Settings per harness (claudecode, codex, ...).",
+      "description": "Settings per harness (claudecode, codex, opencode, pi, omp, dsh, ...).",
       "type": "object",
       "additionalProperties": {
         "type": "object",

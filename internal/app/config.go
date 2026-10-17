@@ -152,9 +152,10 @@ version: 1
 # rules:
 #   publish: {enabled: false}
 
-# Harnesses that cannot tell which shell runs a command (Codex): posix or powershell.
+# Harnesses that cannot tell which shell runs a command (Codex, opencode): posix or powershell.
 # harnesses:
 #   codex: {shell: posix}
+#   opencode: {shell: posix}
 
 # Decision log with the full commands (off by default; credentials h-guard recognizes are masked).
 # log: {decisions: false, retention_days: 14}

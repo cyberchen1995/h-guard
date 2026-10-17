@@ -1,14 +1,15 @@
 # Harnesses
 
-h-guard connects to Claude Code and Codex with `h-guard install`, and to any
-other agent harness through the [generic contract](protocols.md#generic-harness-contract-v1).
+h-guard connects to Claude Code, Codex, opencode, pi, oh-my-pi and DeepSeek
+Harness with `h-guard install`, and to any other agent harness through the
+[generic contract](protocols.md#generic-harness-contract-v1).
 This guide describes how each connection works, what each harness can do with
 h-guard's decisions, and what happens when it cannot.
 
 ## Installing and removing
 
 ```sh
-h-guard install claudecode|codex [--write] [--remove] [--timeout <seconds>] [--shell posix|powershell]
+h-guard install claudecode|codex|opencode|pi|omp|dsh [--write] [--remove] [--timeout <seconds>] [--shell posix|powershell]
 ```
 
 - Without `--write`, `install` prints what it would change and writes nothing.
@@ -135,18 +136,158 @@ Codex differences:
 - **Windows.** Paths that would need quoting are refused, and Codex's hook
   command forms on Windows have not been verified.
 
+## opencode
+
+Supported: opencode 1.x; the plugin was written against opencode 1.19.3 and
+has not yet been verified with a recorded session. opencode 2.x has a
+different plugin API and does not load this plugin; `install` and `status`
+say so.
+
+`install opencode --write` writes one file, h-guard's plugin, to
+`plugins/h-guard.js` in opencode's global configuration directory
+(`$XDG_CONFIG_HOME/opencode`, default `~/.config/opencode`, also on Windows).
+opencode loads every plugin in that directory at startup, so its configuration
+files are not changed. The h-guard path and timeout are written into the
+plugin. Restart opencode afterwards. `OPENCODE_PURE=1` or `--pure` disables
+all external plugins, h-guard's included.
+
+| Plugin hook | What h-guard does |
+|---|---|
+| `tool.execute.before` | checks the actions (`bash` commands; `read`, `grep`, `write`, `edit`; the files in an `apply_patch`); on `deny` the plugin throws, the tool does not run and the model reads h-guard's reason |
+| `tool.execute.after` | scans the output; on `deny` the output the model sees (and the tool's own copy shown in the interface) is replaced with h-guard's reason |
+| `chat.message` | scans the message, including the text of attached files; on `deny` the message is neither saved nor sent, and a toast shows the reason |
+
+opencode differences:
+
+- **No ask.** The plugin API has no way to ask the user, so `ask` becomes
+  `deny` (`policy.when_ask_unsupported`, recorded as `ask_unsupported`), as on
+  Codex.
+- **Warnings are toasts.** They are shown in the TUI only, not in
+  `opencode run` or a headless server.
+- **Shell.** On Windows opencode's `bash` tool usually runs PowerShell, and
+  the plugin hook does not say which shell runs a command. h-guard uses
+  `harnesses.opencode.shell` (default `posix`); on Windows `install opencode`
+  asks which shell to use, or takes `--shell` when not run in a terminal.
+- **Prompt origin.** A message in a sub-agent's session (the `task` tool) is
+  the parent agent's task and counts as automated; the plugin looks up each
+  session's parent for this. Other messages count as yours.
+- **Not covered.** Commands you type with `!` and terminal sessions do not go
+  through tool hooks.
+
+When h-guard cannot run, the plugin blocks the tool call (opencode cannot
+ask), and lets tool output and prompts through with a toast saying the check
+did not run.
+
+## pi and oh-my-pi
+
+Supported: pi (`pi`, written against 1.3.0) and oh-my-pi (`omp`, a fork of pi,
+written against 18.11.3); neither has yet been verified with a recorded
+session.
+
+oh-my-pi keeps pi's extension API, so one extension serves both, but it
+manages extensions differently. Install for the one you use:
+
+| | pi | oh-my-pi |
+|---|---|---|
+| `install` | `h-guard install pi --write` | `h-guard install omp --write` |
+| Extension written to | `~/.pi/agent/extensions/h-guard.js` | `~/.omp/agent/extensions/h-guard-omp.js` |
+| Agent directory | `$PI_CODING_AGENT_DIR`, default `~/.pi/agent` | `$PI_CODING_AGENT_DIR`, default `~/<$PI_CONFIG_DIR or .omp>/agent`; other profiles (`OMP_PROFILE`) are not covered |
+| Settings | `settings.json` | `config.yml` (a legacy `settings.json` is still read) |
+| Packages | `pi install npm:…` (`packages` in settings) | `omp plugin install …` (`~/.omp/plugins`, `"omp"` or `"pi"` in package.json) |
+| Turning extensions off | `--no-extensions` | `--no-extensions`, `disabledExtensions` |
+| Prompt event result | `{action: "handled"}` | `{handled: true}`; the extension returns both |
+
+Neither runs Claude Code style command hooks: oh-my-pi reads `.claude`
+directories for skills and commands but ignores their `hooks`, so h-guard
+connects to both through the extension. Both load files from the global
+extensions directory automatically; `install` does not change their settings.
+When `PI_CODING_AGENT_DIR` makes pi and oh-my-pi share one directory, both
+would load both extensions, so `install` refuses the second one. Run `/reload`
+or restart after installing.
+
+| Extension event | What h-guard does |
+|---|---|
+| `tool_call` | checks the actions (`bash`, pi's `powershell` on Windows; `read`, `grep`, `write`, `edit`; oh-my-pi's patch-style `edit`, `ast_edit` and `eval`); `deny` blocks the call and the model reads the reason; `ask` opens a confirmation dialog |
+| `tool_result` | scans the output; `deny` replaces the content the model sees |
+| `input` | scans the prompt; `deny` drops it and shows the reason |
+
+Differences:
+
+- **Ask without a user.** In print (`-p`) and JSON mode there is no dialog;
+  `ask` blocks the call, which is the safe direction. In RPC mode the dialog
+  goes to the RPC client.
+- **Warnings** are notifications in the interface; without one they go to
+  stderr.
+- **oh-my-pi's `eval`** runs Python or JavaScript code that h-guard cannot
+  read, so every call asks. oh-my-pi's patch-style `edit` is read from its file
+  headers (`REM` deletes, `MV` renames); an edit whose files cannot be read
+  asks. `read` paths lose their line selectors (`a.go:10-20`).
+- **Shell.** Both run `bash` commands with a bash-compatible shell on every
+  platform (pi uses Git Bash on Windows; oh-my-pi has its own), so they are
+  checked as POSIX commands.
+- **Prompt origin.** A prompt sent by an extension (`source: "extension"`)
+  counts as automated; prompts from the interface, RPC and `-p` count as yours.
+- **Not covered.** Commands you type with `!` do not go through `tool_call`.
+
+When h-guard cannot run, the extension asks before a tool call (and blocks it
+without a user), and lets tool output and prompts through with a notification.
+
+## DeepSeek Harness
+
+Supported: DeepSeek Harness (`dsh`), written against 0.2.1-rc.2; not yet
+verified with a recorded session.
+
+`install dsh --write`:
+
+1. writes h-guard's Cordis plugin to `extensions/dsh/h-guard.mjs` in h-guard's
+   configuration directory, with the h-guard path and timeout in it;
+2. adds a row `{id: h-guard, name: <plugin path>}` under `- insert:` in
+   `$DSH_HOME/cordis.patch.yml` (default `~/.dsh/cordis.patch.yml`), the user
+   patch that applies to every profile, keeping the rest of the patch.
+
+Removing deletes the row first, then the plugin. The plugin starts h-guard
+itself, outside dsh's shell sandbox. DeepSeek Harness also ships a Claude Code
+hooks bridge, but it is off by default and cannot replace tool output, so
+h-guard does not use it.
+
+| Plugin event | What h-guard does |
+|---|---|
+| `tools/pre-execute` | checks the actions (`bash`, `pwsh` on Windows; `read`, `grep`, `write`, `edit`, `str_replace_editor`); `deny` stops the call and the model reads the reason; `ask` goes to dsh's approval service |
+| `tools/post-execute` | scans the output; `deny` replaces the result with h-guard's reason, marked as an error |
+| `agent/pre-step` | scans the new messages of each step; `deny` rejects the step |
+
+DeepSeek Harness differences:
+
+- **Ask without a user.** Headless and SDK runs have nobody to answer, and
+  under `danger-full-access` approvals are never asked; dsh rejects the call in
+  both cases, which is the safe direction.
+- **No warnings.** dsh has no way for a plugin to show the user a message, so
+  `warn` is not delivered (recorded as `warn_undelivered`) and the judge's
+  outbound findings are not requested, as on Codex. A rejected prompt is
+  dropped without a message in the conversation; the reason goes to dsh's log.
+- **Prompt origin.** Each message's `source.kind` is used: `user` is yours,
+  anything else (schedules, sub-agent results, injected context) is automated;
+  every message in a sub-agent's session counts as automated.
+- **Working directory.** The session's starting directory, or the command's
+  `workdir`; a later change through the `working_directory` tool is not seen.
+- **Code tools.** Calls made from `run_code` are checked one by one as they
+  reach the tool pipeline; `run_code` itself is not.
+
+When h-guard cannot run, the plugin asks before a tool call and lets tool
+output and prompts through with a line in dsh's log.
+
 ## What each harness can do
 
-| Event | Claude Code | Codex | Generic |
-|---|---|---|---|
-| Action: deny | yes | yes | caller applies it |
-| Action: ask | yes (permission prompt) | no, becomes `deny` | caller applies it |
-| Action: warn | yes (shown to you) | no | caller applies it |
-| Prompt: block | yes | yes | caller applies it |
-| Prompt: warn | yes (added as context for Claude) | no | caller applies it |
-| Tool output: replace | yes (result withheld) | yes (result replaced) | caller applies it |
-| Tool output: warn | yes (shown to you) | no | caller applies it |
-| Prompt origin | labeled by Claude Code | inferred from known formats | `requests[].source` |
+| Event | Claude Code | Codex | opencode | pi, oh-my-pi | DeepSeek Harness | Generic |
+|---|---|---|---|---|---|---|
+| Action: deny | yes | yes | yes | yes | yes | caller applies it |
+| Action: ask | yes (permission prompt) | no, becomes `deny` | no, becomes `deny` | yes (dialog) | yes (approval service) | caller applies it |
+| Action: warn | yes (shown to you) | no | yes (toast) | yes (notification) | no | caller applies it |
+| Prompt: block | yes | yes | yes | yes | yes | caller applies it |
+| Prompt: warn | yes (added as context for Claude) | no | yes (toast) | yes (notification) | no | caller applies it |
+| Tool output: replace | yes (result withheld) | yes (result replaced) | yes | yes | yes (result replaced) | caller applies it |
+| Tool output: warn | yes (shown to you) | no | yes (toast) | yes (notification) | no | caller applies it |
+| Prompt origin | labeled by Claude Code | inferred from known formats | sub-agent sessions | `source` of the prompt | `source.kind` of each message | `requests[].source` |
 
 How h-guard adjusts a decision a harness cannot carry out:
 
@@ -170,7 +311,7 @@ rules would not have given.
 | Configuration or rules invalid | asks | passes, recorded in the health log |
 | Input too large, or time running out | asks (a deny already reached stays) | passes (a deny already reached stays), recorded |
 | Judge on but unavailable (no consent, error, timeout) | local matches ask; otherwise `policy.on_unavailable` | local rules only |
-| h-guard itself cannot run | Claude Code wrapper asks; Codex follows its own hook-failure handling | Claude Code mod passes and tells you |
+| h-guard itself cannot run | Claude Code wrapper asks; Codex follows its own hook-failure handling; opencode blocks; pi, oh-my-pi and DeepSeek Harness ask | the extension passes and tells you (DeepSeek Harness: in its log) |
 
 `h-guard status` summarizes degradations of the last 7 days from the health
 log.
@@ -181,5 +322,5 @@ Any agent harness that can run a command per event and read its output can use
 the [generic contract](protocols.md#generic-harness-contract-v1). Harnesses that
 deliver events only to in-process extensions can use the
 [extension protocol](protocols.md#extension-protocol-v1), which needs an adapter
-for that harness compiled into h-guard. Only Claude Code and Codex are
-supported out of the box.
+for that harness compiled into h-guard. The harnesses above are supported out
+of the box.
