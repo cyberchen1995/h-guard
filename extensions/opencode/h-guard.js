@@ -79,14 +79,16 @@ export const HGuard = async ({ client, directory }) => {
   }
 }
 
-// parentOf 返回会话的父会话（子 agent 的会话不为空），查不到时为空：认不出的来源按用户本人
+// parentOf 返回会话的父会话（子 agent 的会话不为空）。查询失败时返回 '?'：看不出是不是子 agent 的会话，按自动消息处理，
+// 不能让父 agent 写的任务被当作用户本人的指令
 async function parentOf(client, id) {
   try {
     const res = await client.session.get({ path: { id } })
     const s = res && res.data ? res.data : res
-    return s && typeof s.parentID === 'string' ? s.parentID : ''
+    if (!s || typeof s !== 'object') return '?'
+    return typeof s.parentID === 'string' ? s.parentID : ''
   } catch (err) {
-    return ''
+    return '?'
   }
 }
 

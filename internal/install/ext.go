@@ -208,7 +208,7 @@ func Pi(t Target, harness string, remove bool) ([]Step, error) {
 	if harness == "omp" {
 		path, other = other, path
 	}
-	if !remove && filepath.Dir(path) == filepath.Dir(other) {
+	if !remove && sameDir(filepath.Dir(path), filepath.Dir(other)) {
 		// 同一个扩展目录会被 pi 与 omp 都加载：两个扩展会把同一次调用各报告一次，而且其中一个报错 harness
 		if b, err := os.ReadFile(other); err == nil && isOurExt(b) {
 			return nil, fmt.Errorf("%s already holds h-guard's %s extension, and pi and omp load the same extensions directory here (PI_CODING_AGENT_DIR); install h-guard for only one of them", filepath.Dir(path), extHarness(b))
@@ -226,6 +226,25 @@ func Pi(t Target, harness string, remove bool) ([]Step, error) {
 		s.Summary = "write h-guard's " + harness + " extension"
 	}
 	return []Step{s}, nil
+}
+
+// sameDir 报告两个目录是否是同一个：都存在时按文件系统判断（符号链接、目录联接指向同一处也算）；还不存在时比较名字
+// 与上一级目录（~/.omp/agent 链接到 ~/.pi/agent 时，两边还没建的 extensions 同样是一个目录）。
+func sameDir(a, b string) bool {
+	a, b = filepath.Clean(a), filepath.Clean(b)
+	if a == b {
+		return true
+	}
+	fa, erra := os.Stat(a)
+	fb, errb := os.Stat(b)
+	if erra == nil && errb == nil {
+		return os.SameFile(fa, fb)
+	}
+	pa, pb := filepath.Dir(a), filepath.Dir(b)
+	if filepath.Base(a) != filepath.Base(b) || pa == a || pb == b {
+		return false
+	}
+	return sameDir(pa, pb)
 }
 
 // harnessVersionNote 检查 harness 的版本：低于扩展按其编写的版本时说明（不阻止）；找不到命令时说明。

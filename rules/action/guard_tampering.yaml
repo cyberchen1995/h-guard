@@ -144,6 +144,7 @@ match:
       - '~/.dsh/profiles/*/cordis.patch.yml'
       - '**/.pi/settings.json'
       - '**/.omp/config.yml'
+      - '**/.omp/config.yaml'
       - '**/.omp/settings.json'
 bypassable_by_request: false
 # 本地命中不能被模型的低分否决（维护者决定，2026-10-13）：本地模型曾把往指令缓存写假指令的命令判为 0。
@@ -211,6 +212,7 @@ examples:
     - {action: file_write, path: "~/.omp/agent/config.yml"}
     - {action: file_write, path: "~/.dsh/profiles/web/cordis.patch.yml"}
     - {action: file_write, path: ".omp/config.yml"}
+    - {action: file_write, path: ".omp/config.yaml"}
     - {shell: posix, command: "printf 'disabledExtensions: [h-guard-omp]' > .omp/config.yml"}
     - {shell: posix, command: "sed -i 's/x/y/' project/.pi/settings.json"}
     - {shell: powershell, command: "Set-Content .omp\\settings.json -Value '{}'"}

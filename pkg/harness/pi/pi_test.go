@@ -278,3 +278,11 @@ func TestOMPWriteTargets(t *testing.T) {
 		t.Errorf("wrapped hashline: %s", asJSON(got))
 	}
 }
+
+// TestOMPSearchIsFileContent：omp 的 search（grep 的旧名）的结果同样是文件内容。
+func TestOMPSearchIsFileContent(t *testing.T) {
+	ev, err := pi.OMP.Parse(result("omp", "search", map[string]string{"pattern": "k", "path": "."}, "K=V"))
+	if err != nil || !ev.FileContent {
+		t.Fatalf("%+v %v", ev, err)
+	}
+}

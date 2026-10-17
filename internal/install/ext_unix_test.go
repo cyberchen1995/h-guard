@@ -42,3 +42,17 @@ func TestExtSymlink(t *testing.T) {
 		t.Errorf("dangling link: %v", err)
 	}
 }
+
+// TestPiOMPSymlinkedDir：~/.omp/agent 是指向 ~/.pi/agent 的符号链接时，两边是同一个扩展目录，装了一个就不能再装另一个。
+func TestPiOMPSymlinkedDir(t *testing.T) {
+	tg := target(t, "linux")
+	os.MkdirAll(filepath.Join(tg.Home, ".pi", "agent"), 0o700)
+	os.MkdirAll(filepath.Join(tg.Home, ".omp"), 0o700)
+	if err := os.Symlink(filepath.Join(tg.Home, ".pi", "agent"), filepath.Join(tg.Home, ".omp", "agent")); err != nil {
+		t.Fatal(err)
+	}
+	apply(t, plan(t, tg, "pi", false))
+	if _, err := Pi(tg, "omp", false); err == nil || !strings.Contains(err.Error(), "install h-guard for only one of them") {
+		t.Fatalf("omp install into the symlinked directory: %v", err)
+	}
+}

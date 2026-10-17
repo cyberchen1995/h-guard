@@ -473,7 +473,7 @@ func stripSelector(p string) string {
 // fileContent 报告工具结果是不是文件内容：读文件的工具，或读文件的命令。
 func (a Adapter) fileContent(tool string, in toolInput) bool {
 	switch tool {
-	case "read", "grep":
+	case "read", "grep", "search": // search 是 omp 的 grep 的旧名
 		return true
 	case "bash":
 		return command.ReadsFiles(in.Command, guard.ShellPOSIX)

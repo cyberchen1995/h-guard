@@ -152,6 +152,10 @@ func TestPrompt(t *testing.T) {
 	if err != nil || ev.Requests[0].Source != guard.SourceAutomated {
 		t.Fatalf("%+v %v", ev, err)
 	}
+	ev, err = a.Parse(prompt("?", map[string]any{"type": "text", "text": "push the branch"})) // 插件查不到父会话
+	if err != nil || ev.Requests[0].Source != guard.SourceAutomated {
+		t.Fatalf("unknown parent: %+v %v", ev, err)
+	}
 }
 
 func TestRejects(t *testing.T) {

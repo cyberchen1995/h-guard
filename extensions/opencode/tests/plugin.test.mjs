@@ -133,3 +133,13 @@ test('tool.execute.after: text in an embedded MCP resource is passed on for scan
   const [r] = await recorded(record)
   assert.deepEqual(r.request.result.content, [{ type: 'text', text: 'a' }, { type: 'text', text: 'SECRET' }])
 })
+
+test('chat.message: a failed session lookup marks the prompt as possibly automated', async () => {
+  const { command, record } = await fake({ action: 'pass' })
+  const mod = await load(file, 'opencode', command)
+  const client = { tui: { showToast: async () => {} }, session: { get: async () => { throw new Error('server down') } } }
+  const hooks = await mod.HGuard({ client, directory: '/w' })
+  await hooks['chat.message']({ sessionID: 'ses_1' }, { message: {}, parts: [{ type: 'text', text: 'push it' }] })
+  const [r] = await recorded(record)
+  assert.equal(r.request.data.parentID, '?')
+})

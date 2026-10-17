@@ -5,7 +5,8 @@
 // 请求的 data 是 hook 的参数：
 //   - tool.execute.before：{tool, sessionID, callID, args}；
 //   - tool.execute.after：同上，result 是工具结果 {output, content}（内置工具的 output 是字符串，MCP 工具的结果在 content）；
-//   - chat.message：{sessionID, agent, parts, parentID}，parts 是消息的各部分，parentID 由插件查得（子 agent 的会话不为空）。
+//   - chat.message：{sessionID, agent, parts, parentID}，parts 是消息的各部分，parentID 由插件查得（子 agent 的会话不为空，
+//     查不到时为 "?"，同样按自动消息处理）。
 //
 // 导入本包即注册名为 opencode 的 adapter。
 package opencode
