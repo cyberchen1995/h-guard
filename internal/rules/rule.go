@@ -85,7 +85,16 @@ const (
 	// 模式不匹配）。
 	VarClaudeConfig = "claude_config"
 	VarCodexHome    = "codex_home"
+	// VarXDGConfig、VarPiAgentDir、VarDSHHome 是环境变量 XDG_CONFIG_HOME（opencode 的配置目录在它下面）、
+	// PI_CODING_AGENT_DIR（pi 与 omp 的 agent 目录）、DSH_HOME（DeepSeek Harness 的主目录），同样没有设置时为空。
+	VarXDGConfig  = "xdg_config"
+	VarPiAgentDir = "pi_agent_dir"
+	VarDSHHome    = "dsh_home"
 )
+
+// placeholders 是路径模式可以用的占位符。
+var placeholders = map[string]bool{VarConfig: true, VarCache: true, VarExtraConfig: true, VarClaudeConfig: true, VarCodexHome: true,
+	VarXDGConfig: true, VarPiAgentDir: true, VarDSHHome: true}
 
 // ExecMatch 是命令正则，按 shell 分组：any 用于所有 shell。
 type ExecMatch struct {
@@ -326,7 +335,7 @@ func (r *Rule) validate() error {
 				if err := paths.ValidPattern(p); err != nil {
 					return fieldErr(path, "%v", err)
 				}
-				if name, ok := paths.Placeholder(p); ok && name != VarConfig && name != VarCache && name != VarExtraConfig && name != VarClaudeConfig && name != VarCodexHome {
+				if name, ok := paths.Placeholder(p); ok && !placeholders[name] {
 					return fieldErr(path, "unknown placeholder (want {config}, {cache} or {extra_config})")
 				}
 			}
