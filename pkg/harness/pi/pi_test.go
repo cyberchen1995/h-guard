@@ -3,6 +3,7 @@ package pi_test
 import (
 	"encoding/json"
 	"errors"
+	"slices"
 	"testing"
 
 	"github.com/cyberchen1995/h-guard/pkg/guard"
@@ -310,7 +311,7 @@ func TestOMPPaths(t *testing.T) {
 		"a:b":                        "a:b",
 	} {
 		got, _ := actions(t, pi.OMP, "read", map[string]any{"path": in})
-		if len(got) != 1 || got[0].File.Path != want {
+		if len(got) == 0 || got[0].File.Path != want { // 第一个动作是整串路径
 			t.Errorf("read %q: %+v, want %q", in, got, want)
 		}
 	}
@@ -376,7 +377,15 @@ func TestOMPPaths(t *testing.T) {
 	if ev, err := pi.OMP.Parse(result("omp", "lsp", map[string]any{"action": "references", "file": "a.go"}, "K=V")); err != nil || !ev.FileContent {
 		t.Errorf("lsp result: %+v %v", ev, err)
 	}
-	for _, tool := range []string{"ast_grep", "ast_edit"} {
+	got, _ = actions(t, pi.OMP, "read", map[string]any{"path": "README.md; ~/.ssh/id_rsa:raw,notes.txt"})
+	var paths []string
+	for _, a := range got {
+		paths = append(paths, a.File.Path)
+	}
+	if !slices.Contains(paths, "~/.ssh/id_rsa") || !slices.Contains(paths, "README.md") || !slices.Contains(paths, "notes.txt") {
+		t.Errorf("delimited read: %q", paths)
+	}
+	for _, tool := range []string{"ast_grep", "ast_edit", "eval"} {
 		if ev, err := pi.OMP.Parse(result("omp", tool, map[string]any{"pat": "x"}, "K=V")); err != nil || !ev.FileContent {
 			t.Errorf("%s result: %+v %v", tool, ev, err)
 		}

@@ -281,6 +281,10 @@ func fileContent(tool string, raw json.RawMessage, in arguments) bool {
 		return command.ReadsFiles(in.Text, guard.ShellPOSIX)
 	case "terminal_read", "job_output": // 终端与后台任务稍后的输出：看不出是哪条命令写的，按文件内容扫描
 		return true
+	case "run_code": // 程序里的工具调用（如 tools.read）取回的值可以原样返回
+		return true
+	case "skill": // 从项目或用户目录读出的 SKILL.md
+		return true
 	}
 	return false
 }

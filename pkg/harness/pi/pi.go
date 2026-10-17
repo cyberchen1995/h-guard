@@ -247,14 +247,27 @@ func (a Adapter) actions(tool string, in toolInput) ([]guard.Action, error) {
 	case "powershell":
 		return one(extadapter.Exec(in.Command, guard.ShellPowerShell))
 	case "read":
-		p := in.Path
-		if a.omp {
+		if !a.omp {
+			return one(extadapter.File(guard.ActionFileRead, in.Path))
+		}
+		// 路径不存在时 omp 把用 ;、, 或空白分开的几个路径逐个读：整串与拆开的每一段都检查
+		var acts []guard.Action
+		for i, p := range append([]string{in.Path}, readListParts(in.Path)...) {
+			if i > 0 {
+				p = ompPath(p)
+			}
 			p = stripSelector(p)
 			if b, ok := containerFile(p); ok {
 				p = b
 			}
+			if act, ok := extadapter.File(guard.ActionFileRead, p); ok {
+				acts = append(acts, act)
+			}
 		}
-		return one(extadapter.File(guard.ActionFileRead, p))
+		if len(acts) == 0 {
+			return nil, ErrNoAction
+		}
+		return acts, nil
 	case "grep", "search": // search 是 omp 的 grep 的旧名
 		return one(extadapter.File(guard.ActionFileRead, in.Path))
 	case "write":
@@ -475,6 +488,22 @@ func ompWriteTarget(p string) (string, error) {
 	return p, nil
 }
 
+var readListDelim = regexp.MustCompile(`[;,\s]+`)
+
+// readListParts 返回 omp 的 read 在路径不存在时拆出的各段（按 ;、, 与空白拆开）；没有分隔符时为空。
+func readListParts(p string) []string {
+	if !readListDelim.MatchString(strings.TrimSpace(p)) {
+		return nil
+	}
+	var parts []string
+	for _, s := range readListDelim.Split(p, -1) {
+		if s != "" {
+			parts = append(parts, s)
+		}
+	}
+	return parts
+}
+
 // containerExt 是 omp 能以「文件:内部路径」读写的容器：归档（omp 18.11.3 的 pi-utils/ar 注册表）与 SQLite 数据库。
 var containerExt = regexp.MustCompile(`(?i)\.(tar|tar\.gz|tgz|tar\.bz2|tbz2|tbz|tar\.xz|txz|tar\.zst|tzst|tar\.z|zip|jar|war|ear|apk|aar|whl|ipa|xpi|vsix|nupkg|cbz|rar|cbr|7z|iso|cab|cpio|rpm|ar|a|lib|deb|lzh|lha|arj|asar|gz|bz2|xz|zst|z|lzma|sqlite|sqlite3|db|db3)$`)
 
@@ -606,6 +635,8 @@ func (a Adapter) fileContent(tool string, in toolInput) bool {
 	case "read", "grep", "search": // search 是 omp 的 grep 的旧名
 		return true
 	case "ast_grep", "ast_edit": // omp 的结构化搜索与改写的预览，结果是源文件里的片段
+		return a.omp
+	case "eval": // omp 的 eval 能用 read() 直接读文件并打印
 		return a.omp
 	case "lsp": // definition、references、implementation 等的结果带着被引用文件的源码
 		return a.omp
