@@ -97,7 +97,7 @@ func TestOMPTools(t *testing.T) {
 		t.Errorf("bash: %+v cwd %q", got, ev.Cwd)
 	}
 	for in, want := range map[string]string{"src/a.go:10-20": "src/a.go", "a.go:-5": "a.go", `C:\x\a.go`: `C:\x\a.go`, "notes:": "notes:",
-		".env:raw": ".env", "~/.ssh/id_rsa:conflicts": "~/.ssh/id_rsa", ".env:10-": ".env", "a.go:1-20:raw": "a.go", "a.go:raw:5+3": "a.go"} {
+		".env:raw": ".env", "~/.ssh/id_rsa:conflicts": "~/.ssh/id_rsa", ".env:L1-L5": ".env", ".env:1..5": ".env", "k.svg:img": "k.svg", ".env:10-": ".env", "a.go:1-20:raw": "a.go", "a.go:raw:5+3": "a.go"} {
 		got, _ := actions(t, pi.OMP, "read", map[string]any{"path": in})
 		if got[0].File.Path != want {
 			t.Errorf("read %q: %q, want %q", in, got[0].File.Path, want)
@@ -121,9 +121,8 @@ func TestOMPTools(t *testing.T) {
 	if len(got) != 1 || got[0].File.Path != "n.txt" {
 		t.Errorf("apply_patch edit: %+v", got)
 	}
-	got, _ = actions(t, pi.OMP, "ast_edit", map[string]any{"ops": []any{}, "paths": []string{"a.ts", "b.ts"}})
-	if len(got) != 2 {
-		t.Errorf("ast_edit: %+v", got)
+	if _, err := pi.OMP.Parse(call("omp", "ast_edit", map[string]any{"ops": []any{}, "paths": []string{"a.ts", "b.ts"}})); !errors.Is(err, harness.ErrNoAction) {
+		t.Errorf("ast_edit is a preview: %v, want ErrNoAction", err)
 	}
 	var tu *harness.TargetUnparsedError
 	for name, in := range map[string]any{

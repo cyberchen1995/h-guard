@@ -18,12 +18,33 @@ import (
 // dshRowID 是 h-guard 的插件在 cordis.patch.yml 里那一行的 id：这个 id 的行归本项目所有。
 const dshRowID = "h-guard"
 
-// DSHHome 是 DeepSeek Harness 的主目录：$DSH_HOME，默认 ~/.dsh。
+// DSHHome 是 DeepSeek Harness 的主目录：$DSH_HOME（见 ExpandDSHHome），默认 ~/.dsh。
 func DSHHome(t Target) string {
-	if d := t.Getenv("DSH_HOME"); d != "" {
+	if d := ExpandDSHHome(t.Home, t.Getenv("DSH_HOME")); d != "" {
 		return d
 	}
 	return filepath.Join(t.Home, ".dsh")
+}
+
+// ExpandDSHHome 按 dsh 的规则（dsh-home-paths）解析 $DSH_HOME：只有空白时当作没有设置（返回空），开头的 ~、~/、~\
+// 展开到主目录，相对路径换成绝对路径。
+func ExpandDSHHome(home, d string) string {
+	d = strings.TrimSpace(d)
+	if d == "" {
+		return ""
+	}
+	switch {
+	case d == "~":
+		d = home
+	case strings.HasPrefix(d, "~/"), strings.HasPrefix(d, `~\`):
+		d = filepath.Join(home, d[2:])
+	}
+	if !filepath.IsAbs(d) && !strings.HasPrefix(d, "/") && !strings.HasPrefix(d, `\`) { // \x、/x 在 Windows 上从当前盘的根开始
+		if abs, err := filepath.Abs(d); err == nil {
+			return abs
+		}
+	}
+	return d
 }
 
 // DSHPatch 是对全部配置档生效的用户补丁文件 $DSH_HOME/cordis.patch.yml。

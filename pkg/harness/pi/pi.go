@@ -213,7 +213,7 @@ func (a Adapter) touches(tool string) bool {
 	switch tool {
 	case "bash", "powershell", "write", "edit":
 		return true
-	case "eval", "ast_edit", "apply_patch", "lsp":
+	case "eval", "apply_patch", "lsp":
 		return a.omp
 	}
 	return false
@@ -224,7 +224,7 @@ func (a Adapter) touches(tool string) bool {
 //     上的 powershell 工具执行 PowerShell 命令；
 //   - read、grep 读文件，write、edit 写文件；
 //   - omp 的 edit（及 apply_patch 模式下的 apply_patch）是补丁时读出补丁头里的文件（REM 删除、MV 改名），patch 模式的
-//     各项可以删除或改名；ast_edit 写 paths 里的文件；lsp 见 ompLSP；omp 的 eval 执行 Python 或 JavaScript 代码，
+//     各项可以删除或改名；ast_edit 只是预览，不产生动作；lsp 见 ompLSP；omp 的 eval 执行 Python 或 JavaScript 代码，
 //     h-guard 读不懂，请求确认（errUnparsed）。
 //
 // pi 的 ls、find 与 MCP 工具不产生动作，其余工具见 piReadOnly；omp 见 ompReadOnly。omp 的路径先按 ompPath 规范化。
@@ -300,17 +300,8 @@ func (a Adapter) actions(tool string, in toolInput) ([]guard.Action, error) {
 		return nil, errUnknownTool
 	}
 	switch tool {
-	case "ast_edit":
-		var acts []guard.Action
-		for _, p := range in.Paths {
-			if act, ok := extadapter.File(guard.ActionFileWrite, p); ok {
-				acts = append(acts, act)
-			}
-		}
-		if len(acts) == 0 {
-			return nil, errUnparsed
-		}
-		return acts, nil
+	case "ast_edit": // 只是预览，不改文件；改动在之后 write xd://resolve 时才写入，那一步请求确认
+		return nil, ErrNoAction
 	case "eval":
 		return nil, errUnparsed
 	case "task":
@@ -615,9 +606,9 @@ func unquote(s string) string {
 	return s
 }
 
-// readSelector 是 omp 的 read 写在路径末尾的选择：行（:10-20、:-5、:3,8-9、:5+3）、:raw、:conflicts，可以连着写
+// readSelector 是 omp 的 read 写在路径末尾的选择：行（:10-20、:L10-L20、:10..20、:-5、:3,8-9、:5+3）、:raw、:img、:conflicts，可以连着写
 // （:1-20:raw、:raw:1-20）。盘符的冒号不算。
-var readSelector = regexp.MustCompile(`(?i):(?:[-+0-9,]+|raw|conflicts)$`)
+var readSelector = regexp.MustCompile(`(?i):(?:[-+0-9,.l]*[0-9][-+0-9,.l]*|raw|img|conflicts)$`)
 
 func stripSelector(p string) string {
 	for {

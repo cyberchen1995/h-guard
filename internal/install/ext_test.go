@@ -105,6 +105,16 @@ func TestExtPaths(t *testing.T) {
 	if PiExtension(tg) != filepath.Join("/a", "extensions", "h-guard.js") || OMPExtension(tg) != filepath.Join("/a", "extensions", "h-guard-omp.js") {
 		t.Errorf("PI_CODING_AGENT_DIR: %s %s", PiExtension(tg), OMPExtension(tg))
 	}
+	for in, want := range map[string]string{"~/dsh": filepath.Join(tg.Home, "dsh"), "  ": filepath.Join(tg.Home, ".dsh")} { // 与 dsh 一样展开 ~，空白当作没有设置
+		tg.Getenv = env(map[string]string{"DSH_HOME": in})
+		if got := DSHHome(tg); got != want {
+			t.Errorf("DSH_HOME %q: %s, want %s", in, got, want)
+		}
+	}
+	tg.Getenv = env(map[string]string{"DSH_HOME": "rel"})
+	if got := DSHHome(tg); !filepath.IsAbs(got) || filepath.Base(got) != "rel" {
+		t.Errorf("relative DSH_HOME: %s", got)
+	}
 	tg.Getenv = env(map[string]string{"PI_CODING_AGENT_DIR": "~/agents/pi"}) // pi 展开开头的 ~
 	if got := PiExtension(tg); got != filepath.Join(tg.Home, "agents", "pi", "extensions", "h-guard.js") {
 		t.Errorf("PI_CODING_AGENT_DIR with ~: %s", got)
