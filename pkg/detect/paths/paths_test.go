@@ -353,39 +353,42 @@ func TestNewlineInPathIsMatchedByWildcards(t *testing.T) {
 // TestRootAliasesAreStripped：指向根目录的别名前缀（macOS 的 /System/Volumes/Data）之下的路径与去掉前缀后的路径
 // 是同一个文件，realpath 不改写它，所以去掉前缀的写法另作候选。不区分大小写时前缀同样不区分大小写。
 func TestRootAliasesAreStripped(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("根别名模拟 macOS 的 firmlink（前缀等同于同一卷的 /）；Windows 没有这类别名，RootAliasesDefault 为空")
+	// 模式只能以 / 开头，所以不带盘符；别名与被解析的路径带盘符，去掉别名后的写法没有盘符（当前卷的根下）
+	v := vol()
+	pattern := "/home/u/.config/h-guard/**"
+	if err := paths.ValidPattern(pattern); err != nil {
+		t.Fatal(err)
 	}
-	env := paths.Env{Home: "/home/u", RootAliases: []string{"/alias"}}
-	m, err := paths.Compile([]string{"~/.config/h-guard/**"}, env)
+	env := paths.Env{RootAliases: []string{v + "/alias"}}
+	m, err := paths.Compile([]string{pattern}, env)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for path, want := range map[string]bool{
-		"/alias/home/u/.config/h-guard/x":  true,
-		"/alias/tmp/x":                     false,
-		"/aliasx/home/u/.config/h-guard/x": false,
-		"/ALIAS/home/u/.config/h-guard/x":  false, // 区分大小写
+		v + "/alias/home/u/.config/h-guard/x":  true,
+		v + "/alias/tmp/x":                     false,
+		v + "/aliasx/home/u/.config/h-guard/x": false,
+		v + "/ALIAS/home/u/.config/h-guard/x":  false, // 区分大小写
 	} {
 		if got := m.Match(paths.Resolve(path, env)); got != want {
 			t.Errorf("Match(%q) = %v, want %v", path, got, want)
 		}
 	}
-	if r := paths.Resolve("/alias", env); !slices.Contains(r.Candidates(), "/") {
+	if r := paths.Resolve(v+"/alias", env); !slices.Contains(r.Candidates(), filepath.FromSlash("/")) {
 		t.Errorf("the alias itself is the root: Candidates() = %q", r.Candidates())
 	}
 	env.FoldCase = true
-	m, err = paths.Compile([]string{"~/.config/h-guard/**"}, env)
+	m, err = paths.Compile([]string{pattern}, env)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !m.Match(paths.Resolve("/ALIAS/home/u/.config/h-guard/x", env)) {
+	if !m.Match(paths.Resolve(v+"/ALIAS/home/u/.config/h-guard/x", env)) {
 		t.Error("a case-insensitive env missed the alias in another case")
 	}
 	// 空列表关闭；按字面匹配（规则样例）时不处理别名
-	for _, e := range []paths.Env{{Home: "/home/u", RootAliases: []string{}}, {Home: "/home/u", RootAliases: []string{"/alias"}, Lexical: true}} {
-		m, _ := paths.Compile([]string{"~/.config/h-guard/**"}, e)
-		if m.Match(paths.Resolve("/alias/home/u/.config/h-guard/x", e)) {
+	for _, e := range []paths.Env{{RootAliases: []string{}}, {RootAliases: []string{v + "/alias"}, Lexical: true}} {
+		m, _ := paths.Compile([]string{pattern}, e)
+		if m.Match(paths.Resolve(v+"/alias/home/u/.config/h-guard/x", e)) {
 			t.Errorf("env %+v stripped the alias", e)
 		}
 	}
