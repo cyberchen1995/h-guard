@@ -18,7 +18,7 @@ minor releases. Every such change is recorded in this file.
   directory, and a Cordis plugin mounted in `$DSH_HOME/cordis.patch.yml`.
   `status` reports them. The extensions were written against each harness's
   source and have not yet been verified with recorded sessions.
-- oh-my-pi and DeepSeek Harness: h-guard keeps a list of each harness's
+- pi, oh-my-pi and DeepSeek Harness: h-guard keeps a list of each harness's
   read-only tools and asks for any other tool it does not know (`tool_unknown`).
   `harnesses.<name>.read_only_tools` adds your own read-only tools; it cannot
   loosen the checks on tools h-guard knows.

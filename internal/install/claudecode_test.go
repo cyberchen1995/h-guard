@@ -413,3 +413,30 @@ func TestStalePlanChecksUnchangedSteps(t *testing.T) {
 		t.Errorf("an unchanged reinstall made backups: %d -> %d", before, len(after))
 	}
 }
+
+// TestVersionLess：数字逐段比较；主体相同时预发布版本较小，预发布后缀逐段比较。
+func TestVersionLess(t *testing.T) {
+	for _, tt := range []struct {
+		a, b string
+		want bool
+	}{
+		{"1.2.3", "1.10.0", true},
+		{"1.10.0", "1.2.3", false},
+		{"1.3.0", "1.3.0", false},
+		{"1.3", "1.3.0", false},
+		{"0.2.0", "0.2.1-rc.2", true},
+		{"0.2.1-rc.1", "0.2.1-rc.2", true},
+		{"0.2.1-rc.2", "0.2.1-rc.2", false},
+		{"0.2.1-rc.10", "0.2.1-rc.2", false},
+		{"0.2.1-rc.2", "0.2.1", true},
+		{"0.2.1", "0.2.1-rc.2", false},
+		{"0.2.1-beta", "0.2.1-rc.1", true},
+		{"0.2.1-rc", "0.2.1-rc.1", true},
+		{"0.2.1-1", "0.2.1-rc", true},
+		{"0.2.2", "0.2.1-rc.2", false},
+	} {
+		if got := versionLess(tt.a, tt.b); got != tt.want {
+			t.Errorf("versionLess(%q, %q) = %v, want %v", tt.a, tt.b, got, tt.want)
+		}
+	}
+}

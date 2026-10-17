@@ -88,9 +88,11 @@ export default function (pi) {
   }
 }
 
-// checked 记下检查过的提示词（会话与文本 → null 放行，或代替它的说明），同一会话里的同一段文本不重复检查。
-// h-guard 没能检查的不记下，下次请求模型时再查
+// checked 记下检查过的提示词（会话与文本 → null 放行，或代替它的说明），omp 的 context 事件里同一会话的同一段文本
+// 不重复检查。只在 omp 上记下（pi 没有 context 事件）；h-guard 没能检查的不记下，下次请求模型时再查。超过 CHECKED_MAX
+// 条时丢掉最早的一条，丢掉的提示词下次出现时重新检查
 const checked = new Map()
+const CHECKED_MAX = 1000
 
 // checkPrompt 检查一段提示词：deny 时提示用户并返回写给模型的说明，其余返回 null。接入层故障放行并提示用户
 async function checkPrompt(ctx, text, source) {
@@ -109,7 +111,11 @@ async function checkPrompt(ctx, text, source) {
       verdict = textOf(reply) + ' The prompt was withheld.'
     }
     if (reply.action === 'warn') notify(ctx, 'warning', messageOf(reply))
-    checked.set(key, verdict)
+    if (HARNESS === 'omp') {
+      checked.delete(key)
+      checked.set(key, verdict)
+      if (checked.size > CHECKED_MAX) checked.delete(checked.keys().next().value)
+    }
     return verdict
   } catch (err) {
     notify(ctx, 'warning', FAILED)

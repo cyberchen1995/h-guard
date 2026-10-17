@@ -369,8 +369,11 @@ func ClaudeCodeNotes(t Target) []string {
 	return nil
 }
 
-// versionLess 按点分的数字比较版本；读不懂的部分按 0。
+// versionLess 按语义化版本比较：先按点分的数字比较主体，读不懂的部分按 0；主体相同时带预发布后缀（-rc.2）的较小，
+// 两个后缀按点分的各段比较（数字段按数值，其余按字符串，数字段小于非数字段）。
 func versionLess(a, b string) bool {
+	a, preA, _ := strings.Cut(a, "-")
+	b, preB, _ := strings.Cut(b, "-")
 	pa, pb := strings.Split(a, "."), strings.Split(b, ".")
 	for i := range max(len(pa), len(pb)) {
 		var x, y int
@@ -384,5 +387,26 @@ func versionLess(a, b string) bool {
 			return x < y
 		}
 	}
-	return false
+	switch {
+	case preA == preB:
+		return false
+	case preA == "" || preB == "":
+		return preB == ""
+	}
+	qa, qb := strings.Split(preA, "."), strings.Split(preB, ".")
+	for i := range min(len(qa), len(qb)) {
+		if qa[i] == qb[i] {
+			continue
+		}
+		x, errx := strconv.Atoi(qa[i])
+		y, erry := strconv.Atoi(qb[i])
+		switch {
+		case errx == nil && erry == nil:
+			return x < y
+		case errx == nil || erry == nil:
+			return errx == nil
+		}
+		return qa[i] < qb[i]
+	}
+	return len(qa) < len(qb)
 }

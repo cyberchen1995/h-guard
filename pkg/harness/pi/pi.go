@@ -35,10 +35,10 @@ const (
 	OMPMinVersion = "18.11.3"
 )
 
-// ErrNoAction 表示这次工具调用不产生动作（ls、find、MCP 等其他工具，或输入里没有可检查的内容），扩展照常放行。
+// ErrNoAction 表示这次工具调用不产生动作（ls、find、MCP 等只读工具，或输入里没有可检查的内容），扩展照常放行。
 var ErrNoAction = fmt.Errorf("pi: %w", harness.ErrNoAction)
 
-// errUnknownTool 表示 omp 自带的工具里 h-guard 不认识的（Parse 返回 *harness.UnknownToolError）。
+// errUnknownTool 表示 h-guard 不认识的工具（Parse 返回 *harness.UnknownToolError）。
 var errUnknownTool = errors.New("pi: the tool is not known")
 
 // errUnparsed 表示会执行代码或改文件的工具调用，目标读不懂。
@@ -221,7 +221,7 @@ func (a Adapter) touches(tool string) bool {
 //     各项可以删除或改名；ast_edit 写 paths 里的文件；lsp 见 ompLSP；omp 的 eval 执行 Python 或 JavaScript 代码，
 //     h-guard 读不懂，请求确认（errUnparsed）。
 //
-// 其余工具（ls、find、MCP 等）不产生动作。
+// pi 的 ls、find 与 MCP 工具不产生动作，其余工具见 piReadOnly；omp 见 ompReadOnly。
 func (a Adapter) actions(tool string, in toolInput) ([]guard.Action, error) {
 	one := func(act guard.Action, ok bool) ([]guard.Action, error) {
 		if !ok {
@@ -260,18 +260,19 @@ func (a Adapter) actions(tool string, in toolInput) ([]guard.Action, error) {
 		}
 		return ompEdit(in)
 	case "apply_patch": // omp 的 apply_patch 模式：工具在调用里以这个名字出现
-		if !a.omp {
-			return nil, ErrNoAction
+		if a.omp {
+			return ompEdit(in)
 		}
-		return ompEdit(in)
 	case "lsp":
-		if !a.omp {
-			return nil, ErrNoAction
+		if a.omp {
+			return ompLSP(in)
 		}
-		return ompLSP(in)
 	}
 	if !a.omp {
-		return nil, ErrNoAction
+		if piReadOnly[tool] || strings.HasPrefix(tool, "mcp__") {
+			return nil, ErrNoAction
+		}
+		return nil, errUnknownTool
 	}
 	switch tool {
 	case "ast_edit":
@@ -293,6 +294,10 @@ func (a Adapter) actions(tool string, in toolInput) ([]guard.Action, error) {
 	}
 	return nil, errUnknownTool
 }
+
+// piReadOnly 是 pi 自带的只读工具（pi 1.3.0 自带 read、bash、edit、write、grep、find、ls，Windows 上另有 powershell）。
+// 扩展与 SDK 用 registerTool 添加的工具 h-guard 不认识，请求确认；用户可以在 harnesses.pi.read_only_tools 里补充只读的工具。
+var piReadOnly = map[string]bool{"find": true, "ls": true}
 
 // ompReadOnly 是 omp 自带的、不执行命令也不改动用户文件的工具（omp 18.11.3 的 BUILTIN_TOOL_NAMES 与 HIDDEN_TOOL_NAMES）：
 // 搜索与查询、提问、子 agent 与等待（子 agent 的工具调用各自经过检查）、待办、上下文与检查点、长期记忆的查询、安全扫描。

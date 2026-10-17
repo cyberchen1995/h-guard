@@ -280,7 +280,7 @@ on Windows.
   blocked prompt is dropped without a message in the conversation.
 - **oh-my-pi's `eval` tool asks.** h-guard cannot read Python or JavaScript
   code, so every `eval` call needs your confirmation.
-- **Unknown tools ask on oh-my-pi and DeepSeek Harness.** Tools that are not on
+- **Unknown tools ask on pi, oh-my-pi and DeepSeek Harness.** Tools that are not on
   h-guard's list of the harness's own tools (for example ones added by an
   extension) need your confirmation until you list them in
   `harnesses.<name>.read_only_tools`.

@@ -296,7 +296,7 @@ output and prompts through with a line in dsh's log.
 
 ## Tools h-guard does not know
 
-For oh-my-pi and DeepSeek Harness, h-guard knows every tool the harness ships:
+For pi, oh-my-pi and DeepSeek Harness, h-guard knows every tool the harness ships:
 
 - tools that run commands or change files are checked as actions;
 - tools that only read, search, plan or coordinate pass;
@@ -311,12 +311,13 @@ match any characters:
 
 ```yaml
 harnesses:
+  pi: {read_only_tools: [web_*]}
   omp: {read_only_tools: [my_search, docs_*]}
   dsh: {read_only_tools: [plugin_market]}
 ```
 
 The list only applies to tools h-guard does not know: a shell or file tool
-named there is still checked. For opencode and pi, h-guard cannot tell the
+named there is still checked. For opencode, h-guard cannot tell the
 harness's own tools from MCP and plugin tools, so tools it does not know pass
 there.
 
