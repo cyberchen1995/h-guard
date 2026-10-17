@@ -215,16 +215,29 @@ func TestOMPLSP(t *testing.T) {
 		"diagnostics":       {"action": "diagnostics", "file": "a.go"},
 		"rename preview":    {"action": "rename", "file": "a.go", "new_name": "y", "apply": false},
 		"code_actions list": {"action": "code_actions", "file": "a.go"},
+		"hover":             {"action": "hover", "file": "a.go", "line": 3},
 	} {
-		if _, err := pi.OMP.Parse(call("omp", "lsp", in)); !errors.Is(err, harness.ErrNoAction) {
-			t.Errorf("%s: %v, want ErrNoAction", name, err)
+		got, _ := actions(t, pi.OMP, "lsp", in)
+		if asJSON(got) != asJSON([]guard.Action{{Kind: guard.ActionFileRead, File: &guard.FileAction{Path: "a.go"}}}) {
+			t.Errorf("%s: %s, want a read of a.go", name, asJSON(got))
 		}
+	}
+	if _, err := pi.OMP.Parse(call("omp", "lsp", map[string]any{"action": "status"})); !errors.Is(err, harness.ErrNoAction) {
+		t.Errorf("status: %v, want ErrNoAction", err)
 	}
 }
 
 // TestOMPToolLists：omp 自带的只读工具与 MCP 工具不产生动作；其余 h-guard 不认识的工具返回 UnknownToolError
 // （调用方按 read_only_tools 判断）；pi 上扩展提供的工具同样如此。
 func TestOMPToolLists(t *testing.T) {
+	got, _ := actions(t, pi.OMP, "ast_grep", map[string]any{"pat": "x", "path": ".env; src"})
+	var paths []string
+	for _, a := range got {
+		paths = append(paths, a.File.Path)
+	}
+	if !slices.Contains(paths, ".env") || !slices.Contains(paths, "src") {
+		t.Errorf("ast_grep paths: %q", paths)
+	}
 	for _, tool := range []string{"todo", "web_search", "ast_grep", "task", "recall", "mcp__srv_query"} {
 		if _, err := pi.OMP.Parse(call("omp", tool, map[string]any{})); !errors.Is(err, harness.ErrNoAction) {
 			t.Errorf("%s: %v, want ErrNoAction", tool, err)
@@ -243,7 +256,7 @@ func TestOMPToolLists(t *testing.T) {
 			t.Errorf("pi %s: %v, want UnknownToolError", tool, err)
 		}
 	}
-	got, _ := actions(t, pi.OMP, "search", map[string]any{"pattern": "k", "path": "/etc"})
+	got, _ = actions(t, pi.OMP, "search", map[string]any{"pattern": "k", "path": "/etc"})
 	if len(got) != 1 || got[0].Kind != guard.ActionFileRead || got[0].File.Path != "/etc" {
 		t.Errorf("search: %+v", got)
 	}
@@ -367,8 +380,8 @@ func TestOMPPaths(t *testing.T) {
 			t.Errorf("lsp %s: %v, want TargetUnparsedError", name, err)
 		}
 	}
-	if _, err := pi.OMP.Parse(call("omp", "lsp", map[string]any{"action": "diagnostics", "file": "a.go"})); !errors.Is(err, harness.ErrNoAction) {
-		t.Errorf("lsp file diagnostics: %v, want ErrNoAction", err)
+	if ev, err := pi.OMP.Parse(call("omp", "lsp", map[string]any{"action": "diagnostics", "file": "a.go"})); err != nil || ev.Actions[0].Kind != guard.ActionFileRead {
+		t.Errorf("lsp file diagnostics: %+v %v, want a read", ev, err)
 	}
 	for in, want := range map[string]string{"backup.7z:keys/id_rsa": "backup.7z", "b.tar.bz2:config": "b.tar.bz2", "x.vsix:a": "x.vsix", "d.db3:t": "d.db3"} {
 		got, _ := actions(t, pi.OMP, "read", map[string]any{"path": in})

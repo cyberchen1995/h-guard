@@ -61,7 +61,11 @@ func DSHModule(t Target, plugin string) string {
 	if t.GOOS != "windows" {
 		return plugin
 	}
-	return (&url.URL{Scheme: "file", Path: "/" + strings.ReplaceAll(plugin, `\`, "/")}).String()
+	p := strings.ReplaceAll(plugin, `\`, "/")
+	if host, rest, ok := strings.Cut(strings.TrimPrefix(p, "//"), "/"); ok && strings.HasPrefix(p, "//") { // \\server\share\… 是主机名为 server 的 URL
+		return (&url.URL{Scheme: "file", Host: host, Path: "/" + rest}).String()
+	}
+	return (&url.URL{Scheme: "file", Path: "/" + p}).String()
 }
 
 // dshModulePath 把补丁里的模块名换回路径（file: URL 取出路径，其余原样），供 status 与插件路径比较。
@@ -72,6 +76,9 @@ func dshModulePath(t Target, name string) string {
 	}
 	p := u.Path
 	if t.GOOS == "windows" {
+		if u.Host != "" && !strings.EqualFold(u.Host, "localhost") { // file://server/share/… 是 \\server\share\…
+			return filepath.FromSlash("//" + u.Host + p)
+		}
 		p = strings.TrimPrefix(p, "/")
 	}
 	return filepath.FromSlash(p)

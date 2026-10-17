@@ -320,6 +320,17 @@ func (a Adapter) actions(tool string, in toolInput) ([]guard.Action, error) {
 		return acts, nil
 	case "eval":
 		return nil, errUnparsed
+	case "ast_grep": // path 可以是 ; 分开的几个文件、目录或 glob；不写时是整个工作区（与 grep 一样只检查写出的路径）
+		var acts []guard.Action
+		for _, p := range append([]string{in.Path}, strings.Split(in.Path, ";")...) {
+			if act, ok := extadapter.File(guard.ActionFileRead, ompPath(strings.TrimSpace(p))); ok {
+				acts = append(acts, act)
+			}
+		}
+		if len(acts) == 0 {
+			return nil, ErrNoAction
+		}
+		return acts, nil
 	case "task":
 		// 隔离的子 agent 的改动在结束时合回父工作区（task.isolation.apply），这一步不经过工具调用，请求确认
 		isolated := in.Isolated
@@ -436,17 +447,24 @@ func ompEditTargets(in toolInput) ([]guard.Action, error) {
 // ompLSP 读出 omp 的 lsp 改动的文件：rename_file 把 file 改名为 new_name；rename（除非 apply 为 false）、
 // 应用的 code_actions 与原始的 request 会改动不知道有哪些的文件，按 file 写文件并请求确认（errUnparsed）。
 // reload 重启语言服务器，工作区诊断（file 为 *）运行项目的构建与检查命令，同样请求确认。
-// 其余动作（单个文件的诊断、跳转、符号、状态等）只读，不产生动作。
+// 其余动作（单个文件的诊断、跳转、符号、预览等）只读，给出 file 时按读这个文件检查。
 func ompLSP(in toolInput) ([]guard.Action, error) {
 	applied := in.Apply == nil || *in.Apply
 	var acts []guard.Action
 	if act, ok := extadapter.File(guard.ActionFileWrite, in.File); ok && in.File != "*" {
 		acts = append(acts, act)
 	}
+	// 只读的动作（跳转、hover、单个文件的诊断、预览）同样读 file
+	read := func() ([]guard.Action, error) {
+		if act, ok := extadapter.File(guard.ActionFileRead, in.File); ok && in.File != "*" {
+			return []guard.Action{act}, nil
+		}
+		return nil, ErrNoAction
+	}
 	switch in.Action {
 	case "rename_file":
 		if !applied {
-			return nil, ErrNoAction
+			return read()
 		}
 		if len(acts) == 0 || strings.TrimSpace(in.NewName) == "" {
 			return nil, errUnparsed
@@ -455,12 +473,12 @@ func ompLSP(in toolInput) ([]guard.Action, error) {
 		return acts, errUnparsed // 引用它的文件同样会被改动
 	case "rename":
 		if !applied {
-			return nil, ErrNoAction
+			return read()
 		}
 		return acts, errUnparsed
 	case "code_actions":
 		if in.Apply == nil || !*in.Apply {
-			return nil, ErrNoAction
+			return read()
 		}
 		return acts, errUnparsed
 	case "request":
@@ -472,7 +490,7 @@ func ompLSP(in toolInput) ([]guard.Action, error) {
 			return nil, errUnparsed
 		}
 	}
-	return nil, ErrNoAction
+	return read()
 }
 
 // ompWriteTarget 返回 omp 的 write 实际改动的文件：复制来的 [路径#标签] 外壳去掉；归档里的条目（a.zip:inner）与 SQLite

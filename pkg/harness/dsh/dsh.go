@@ -277,9 +277,7 @@ func fileContent(tool string, raw json.RawMessage, in arguments) bool {
 		return command.ReadsFiles(in.Command, guard.ShellPOSIX)
 	case "pwsh":
 		return command.ReadsFiles(in.Command, guard.ShellPowerShell)
-	case "terminal_send": // 结果里有终端的新输出；与动作一样按 POSIX 命令看
-		return command.ReadsFiles(in.Text, guard.ShellPOSIX)
-	case "terminal_read", "job_output": // 终端与后台任务稍后的输出：看不出是哪条命令写的，按文件内容扫描
+	case "terminal_send", "terminal_read", "job_output": // 终端与后台任务的新输出：看不出是哪条命令写的（之前在后台跑的命令也会写），按文件内容扫描
 		return true
 	case "run_code": // 程序里的工具调用（如 tools.read）取回的值可以原样返回
 		return true

@@ -301,6 +301,12 @@ func TestDSHModule(t *testing.T) {
 		t.Errorf("windows path: %s", got)
 	}
 	lin := Target{GOOS: "linux"}
+	if got := DSHModule(win, `\\server\share\cfg\h-guard.mjs`); got != "file://server/share/cfg/h-guard.mjs" { // UNC：主机名在 URL 的主机部分
+		t.Errorf("UNC module: %s", got)
+	}
+	if got := dshModulePath(win, "file://server/share/cfg/h-guard.mjs"); got != filepath.FromSlash("//server/share/cfg/h-guard.mjs") {
+		t.Errorf("UNC module path: %s", got)
+	}
 	if got := DSHModule(lin, "/home/u/h-guard.mjs"); got != "/home/u/h-guard.mjs" {
 		t.Errorf("linux: %s", got)
 	}
