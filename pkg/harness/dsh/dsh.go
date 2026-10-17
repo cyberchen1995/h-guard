@@ -34,6 +34,9 @@ var ErrNoAction = fmt.Errorf("dsh: %w", harness.ErrNoAction)
 
 var errUnparsed = errors.New("dsh: the tool's target cannot be parsed")
 
+// errUnknownTool 表示 dsh 自带的工具里 h-guard 不认识的（Parse 返回 *harness.UnknownToolError）。
+var errUnknownTool = errors.New("dsh: the tool is not known")
+
 func init() {
 	if err := harness.Register(Adapter{}); err != nil {
 		panic(err)
@@ -137,6 +140,9 @@ func (Adapter) Parse(raw []byte) (guard.Event, error) {
 			ev.Actions = acts
 			return guard.Event{}, &harness.TargetUnparsedError{Event: ev}
 		}
+		if errors.Is(err, errUnknownTool) {
+			return guard.Event{}, &harness.UnknownToolError{Event: ev}
+		}
 		if err != nil {
 			return guard.Event{}, err
 		}
@@ -178,6 +184,25 @@ func SourceOf(kind string) guard.Source {
 		return guard.SourceUser
 	}
 	return guard.SourceAutomated
+}
+
+// dshReadOnly 是 dsh 自带的、不执行命令也不改动用户文件的工具（docs/tool-catalog.md，0.2.1-rc.2）：查询与搜索、提问、
+// 计划与目标、子 agent 与团队（子 agent 的工具调用各自经过检查）、run_code（其中的工具调用同样各自经过检查）、后台任务、
+// 终端的打开、读取与关闭（发送内容的 terminal_send 单独检查）、网页、MCP 资源、会话记录、待办与工作目录。
+// 其余 dsh 自带的工具（plugin_manager、plugin_market、schedule_create 等定时任务的改动、create_worktree、lsp、
+// load_workspace_dependencies、stagehand_act）与插件提供的工具 h-guard 不认识，请求确认；用户可以在
+// harnesses.dsh.read_only_tools 里补充只读的工具。MCP 工具（mcp__ 开头）与其他 harness 一样不检查。
+var dshReadOnly = map[string]bool{
+	"glob": true, "ask_user_question": true, "exit_plan_mode": true, "run_code": true, "present": true,
+	"cordis_inspect_list": true, "cordis_inspect_query": true,
+	"terminal_close": true, "terminal_list": true, "terminal_open": true, "terminal_read": true, "terminal_signal": true,
+	"create_goal": true, "get_goal": true, "update_goal": true, "schedule_list": true, "skill": true, "ralph": true, "workflow": true,
+	"session_event_read": true, "session_event_search": true, "session_event_trace": true, "session_search": true, "session_trace": true,
+	"list_subagent_models": true, "subagent": true, "interrupt_agent": true, "list_agents": true, "send_message": true,
+	"spawn_teammate": true, "team_task_create": true, "team_task_get": true, "team_task_list": true, "team_task_update": true, "wait_agent": true,
+	"job_kill": true, "job_list": true, "job_output": true, "todo_write": true, "working_directory": true,
+	"web_fetch": true, "web_search": true, "list_mcp_resource_templates": true, "list_mcp_resources": true, "read_mcp_resource": true,
+	"stagehand_extract": true, "stagehand_navigate": true, "stagehand_observe": true, "stagehand_screenshot": true, "stagehand_tabs": true,
 }
 
 // touches 是会执行命令或改动文件的工具。
@@ -222,7 +247,10 @@ func actions(tool string, raw json.RawMessage, in arguments) ([]guard.Action, er
 		}
 		return nil, errUnparsed
 	}
-	return nil, ErrNoAction
+	if dshReadOnly[tool] || strings.HasPrefix(tool, "mcp__") {
+		return nil, ErrNoAction
+	}
+	return nil, errUnknownTool
 }
 
 // editorCommand 返回 str_replace_editor 的子命令（arguments.command；与 bash 的 command 同名，含义不同）。

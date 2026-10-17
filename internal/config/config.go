@@ -15,6 +15,7 @@ import (
 	"io"
 	"maps"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -186,9 +187,21 @@ type Policy struct {
 	MaxRequestChars    int    `yaml:"max_request_chars"`
 }
 
-// Harness 是按 harness 的设置；Shell 用于 harness 标不出 shell 时。
+// Harness 是按 harness 的设置；Shell 用于 harness 标不出 shell 时。ReadOnlyTools 是用户补充的只读工具名（可以用
+// * 与 ? 通配）：adapter 不认识的工具在这里列出时不检查，其余请求确认。它不能放宽 adapter 认识的工具。
 type Harness struct {
-	Shell guard.Shell `yaml:"shell"`
+	Shell         guard.Shell `yaml:"shell"`
+	ReadOnlyTools []string    `yaml:"read_only_tools"`
+}
+
+// ReadOnlyTool 报告 harness 不认识的工具 tool 是否被配置为只读（harnesses.<name>.read_only_tools）。
+func (c *Config) ReadOnlyTool(harness, tool string) bool {
+	for _, p := range c.Harnesses[harness].ReadOnlyTools {
+		if ok, _ := path.Match(p, tool); ok {
+			return true
+		}
+	}
+	return false
 }
 
 // Log 是决策日志的设置；健康记录总是开启。
@@ -486,6 +499,11 @@ func (c *Config) issues() []Issue {
 	for _, name := range sortedKeys(c.Harnesses) {
 		if s := c.Harnesses[name].Shell; s != "" && !s.Valid() {
 			bad("harnesses."+name+".shell", "want posix or powershell")
+		}
+		for i, p := range c.Harnesses[name].ReadOnlyTools {
+			if _, err := path.Match(p, ""); err != nil || strings.TrimSpace(p) == "" {
+				bad(fmt.Sprintf("harnesses.%s.read_only_tools[%d]", name, i), "want a tool name, optionally with * or ?")
+			}
 		}
 	}
 	for _, id := range sortedKeys(c.Rules) {

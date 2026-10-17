@@ -218,3 +218,27 @@ func TestOMPLSP(t *testing.T) {
 		}
 	}
 }
+
+// TestOMPToolLists：omp 自带的只读工具与 MCP 工具不产生动作；其余 h-guard 不认识的工具返回 UnknownToolError
+// （调用方按 read_only_tools 判断）；pi 不认识的工具（扩展提供的）照旧不检查。
+func TestOMPToolLists(t *testing.T) {
+	for _, tool := range []string{"todo", "web_search", "ast_grep", "task", "recall", "mcp__srv_query"} {
+		if _, err := pi.OMP.Parse(call("omp", tool, map[string]any{})); !errors.Is(err, harness.ErrNoAction) {
+			t.Errorf("%s: %v, want ErrNoAction", tool, err)
+		}
+	}
+	var ut *harness.UnknownToolError
+	for _, tool := range []string{"debug", "github", "ida", "manage_skill", "my_extension_tool"} {
+		_, err := pi.OMP.Parse(call("omp", tool, map[string]any{"x": 1}))
+		if !errors.As(err, &ut) || ut.Event.Tool != tool || ut.Event.Harness != "omp" || ut.Event.SessionID != "s1" {
+			t.Errorf("%s: %v, want UnknownToolError", tool, err)
+		}
+	}
+	if _, err := pi.Pi.Parse(call("pi", "my_extension_tool", map[string]any{})); !errors.Is(err, harness.ErrNoAction) {
+		t.Errorf("pi extension tool: %v", err)
+	}
+	got, _ := actions(t, pi.OMP, "search", map[string]any{"pattern": "k", "path": "/etc"})
+	if len(got) != 1 || got[0].Kind != guard.ActionFileRead || got[0].File.Path != "/etc" {
+		t.Errorf("search: %+v", got)
+	}
+}

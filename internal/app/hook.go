@@ -163,19 +163,34 @@ func (h *hookRun) setEvent(ev guard.Event, ad harness.Adapter) bool {
 	return !h.abandoned
 }
 
-// parseEvent 解析 hook 输入。*harness.TargetUnparsedError 不是读不懂：返回它带的事件（按动作处理）与 unparsed。
-func parseEvent(ad harness.Adapter, raw []byte) (ev guard.Event, unparsed bool, err error) {
+// parseNote 是解析结果之外要另加的检查：目标读不懂（unparsed），或 adapter 不认识的工具（unknownTool）。
+type parseNote int
+
+const (
+	parsedOK parseNote = iota
+	unparsed
+	unknownTool
+)
+
+// parseEvent 解析 hook 输入。*harness.TargetUnparsedError 与 *harness.UnknownToolError 不是读不懂：返回它们带的事件
+// （按动作处理）与对应的 parseNote。
+func parseEvent(ad harness.Adapter, raw []byte) (ev guard.Event, note parseNote, err error) {
 	ev, err = ad.Parse(raw)
 	var tu *harness.TargetUnparsedError
-	if errors.As(err, &tu) {
-		ev = tu.Event
-		ev.Kind = guard.EventAction
-		if ev.Harness == "" {
-			ev.Harness = ad.Name()
-		}
-		return ev, true, nil
+	var ut *harness.UnknownToolError
+	switch {
+	case errors.As(err, &tu):
+		ev, note = tu.Event, unparsed
+	case errors.As(err, &ut):
+		ev, note = ut.Event, unknownTool
+	default:
+		return ev, parsedOK, err
 	}
-	return ev, false, err
+	ev.Kind = guard.EventAction
+	if ev.Harness == "" {
+		ev.Harness = ad.Name()
+	}
+	return ev, note, nil
 }
 
 func (h *hookRun) live() bool {
@@ -195,7 +210,7 @@ func (h *hookRun) run(ctx context.Context, extra string) {
 	}
 	// 先按默认 shell 解析并记下事件（读配置卡住时看门狗与兜底要用它）；标不出 shell 的 harness 读完配置后
 	// 再按 harnesses.<name>.shell 重新解析。配置非法时保留默认 shell 的解析结果。
-	ev, unparsed, err := parseEvent(h.adapter, raw)
+	ev, note, err := parseEvent(h.adapter, raw)
 	if err != nil {
 		// 读不懂的输入什么都不输出；要求始终有输出的 adapter（generic 契约）由 finish 输出失败说明。
 		// 不产生动作的工具调用，要求每个请求都有回复的 adapter（扩展接入协议）回复放行
@@ -214,12 +229,12 @@ func (h *hookRun) run(ctx context.Context, extra string) {
 	}
 	if sd, ok := h.adapter.(harness.ShellDefaulter); ok {
 		ad := sd.WithShell(s.cfg.ShellFor(h.adapter.Name()))
-		rev, runparsed, rerr := parseEvent(ad, raw)
+		rev, rnote, rerr := parseEvent(ad, raw)
 		if rerr != nil {
 			// 按配置的 shell 读不懂：沿用默认 shell 的解析结果照常检查，另外请求确认，不能什么都不输出
-			rev, runparsed = ev, true
+			rev, rnote = ev, unparsed
 		}
-		if ev, unparsed = rev, runparsed; !h.setEvent(ev, ad) {
+		if ev, note = rev, rnote; !h.setEvent(ev, ad) {
 			return
 		}
 	}
@@ -229,9 +244,17 @@ func (h *hookRun) run(ctx context.Context, extra string) {
 	if ev.Kind == guard.EventAction && len(ev.Requests) == 0 {
 		ev.Requests = h.requests(prompts, ev)
 	}
+	if note == unknownTool && s.cfg.ReadOnlyTool(h.adapter.Name(), ev.Tool) {
+		// 用户列为只读的工具（harnesses.<name>.read_only_tools）：与不产生动作的工具调用相同
+		h.noAction()
+		return
+	}
 	eng, st := h.newEngine(s)
-	if unparsed {
+	switch note {
+	case unparsed:
 		eng.Checks = append(eng.Checks, unparsedCheck{tool: ev.Tool})
+	case unknownTool:
+		eng.Checks = append(eng.Checks, unknownToolCheck{tool: ev.Tool, harness: h.adapter.Name()})
 	}
 	res := eng.Evaluate(ctx, ev, h.adapter.CapsFor(ev))
 	if !h.write(ev, res.Outcome) {
@@ -433,6 +456,18 @@ func (unparsedCheck) Applies(ev guard.Event) bool { return ev.Kind == guard.Even
 func (c unparsedCheck) Evaluate(context.Context, guard.Event, func(guard.Verdict)) (guard.Verdict, error) {
 	return fallbackOutcome(guard.EventAction, engine.FallbackTargetUnparsed, i18n.KeyErrorTargetUnparsed,
 		map[string]string{"tool": secrets.MaskForLog(c.tool)}), nil
+}
+
+// unknownToolCheck 给 adapter 不认识、也不在 read_only_tools 里的工具调用加上「请求确认」，与 unparsedCheck 相同地聚合。
+type unknownToolCheck struct{ tool, harness string }
+
+func (unknownToolCheck) Name() string { return "app" }
+
+func (unknownToolCheck) Applies(ev guard.Event) bool { return ev.Kind == guard.EventAction }
+
+func (c unknownToolCheck) Evaluate(context.Context, guard.Event, func(guard.Verdict)) (guard.Verdict, error) {
+	return fallbackOutcome(guard.EventAction, engine.FallbackToolUnknown, i18n.KeyErrorToolUnknown,
+		map[string]string{"tool": secrets.MaskForLog(c.tool), "harness": c.harness}), nil
 }
 
 // brief 返回配置或规则错误的位置（文件名与字段路径），不含说明。动态片段（后端名、规则 id、文件名）是用户写下的，

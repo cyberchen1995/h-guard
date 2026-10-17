@@ -190,7 +190,7 @@ understood.
 | `reasons` | Machine-readable reasons: `[{"code": ..., "params": {...}}]`. |
 | `findings` | What matched: `rule`, `category` (outbound), `source` (`local`, `judge`, `both`), `probability` (from the judge), `locations` (`line`, `start`, `end` byte offsets in `text`). |
 | `signals` | Diagnostic signals, for example whether the judge was used. |
-| `fallbacks` | Codes for anything that degraded the check, for example `judge_unavailable`, `judge_timeout`, `judge_consent_missing`, `evidence_truncated`, `input_too_large`, `local_budget_exceeded`, `regex_timeout`. |
+| `fallbacks` | Codes for anything that degraded the check, for example `judge_unavailable`, `judge_timeout`, `judge_consent_missing`, `evidence_truncated`, `input_too_large`, `tool_unknown`, `local_budget_exceeded`, `regex_timeout`. |
 | `error` | Present only when h-guard gave no decision. |
 
 How to apply the decision:

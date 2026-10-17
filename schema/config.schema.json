@@ -155,6 +155,11 @@
             "description": "Shell assumed when the harness cannot tell which shell runs a command (default: posix).",
             "type": "string",
             "enum": ["posix", "powershell"]
+          },
+          "read_only_tools": {
+            "description": "Tools the harness's adapter does not know that only read and need no confirmation; * and ? match any characters. Tools the adapter knows are always checked.",
+            "type": "array",
+            "items": {"type": "string"}
           }
         }
       }

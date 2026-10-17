@@ -183,3 +183,42 @@ func TestStatusOpenCodeShell(t *testing.T) {
 		t.Errorf("status lacks the opencode shell:\n%s", out)
 	}
 }
+
+// TestUnknownTools：adapter 不认识的工具请求确认（tool_unknown）；harnesses.<name>.read_only_tools 列出的（可以通配）
+// 不检查；这个列表不能放宽 adapter 认识的工具。
+func TestUnknownTools(t *testing.T) {
+	e := newEnv(t)
+	omp := func(tool string, input any) []byte {
+		return extReq("omp", "tool_call", map[string]any{"toolCallId": "c", "toolName": tool, "input": input})
+	}
+	out, _, _ := e.run(omp("debug", map[string]string{"action": "launch"}), "hook", "omp", "--event", "tool_call")
+	if r, _ := extproto.ParseReply([]byte(out)); r.Action != extproto.ActionAsk || !strings.Contains(r.Message, "harnesses.omp.read_only_tools") {
+		t.Errorf("unknown tool: %s", out)
+	}
+	if h := e.files("health"); !strings.Contains(h, `"code":"tool_unknown"`) {
+		t.Errorf("health = %s", h)
+	}
+	e.config("version: 1\nharnesses:\n  omp: {read_only_tools: [deb*, bash]}\n  dsh: {read_only_tools: [plugin_market]}\n")
+	if got := extAction(t, mustOut(e, omp("debug", map[string]string{}), "omp", "tool_call")); got != "pass" {
+		t.Errorf("listed tool: %s", got)
+	}
+	if got := extAction(t, mustOut(e, omp("bash", map[string]string{"command": "rm -rf /"}), "omp", "tool_call")); got != "deny" {
+		t.Errorf("a known tool in read_only_tools must still be checked: %s", got)
+	}
+	if got := extAction(t, mustOut(e, omp("github", map[string]string{}), "omp", "tool_call")); got != "ask" {
+		t.Errorf("unlisted tool: %s", got)
+	}
+	dsh := extReq("dsh", "tools/pre-execute", map[string]any{"name": "plugin_market", "callId": "c", "arguments": map[string]string{}})
+	if got := extAction(t, mustOut(e, dsh, "dsh", "tools/pre-execute")); got != "pass" {
+		t.Errorf("dsh listed tool: %s", got)
+	}
+	e.config("version: 1\nharnesses:\n  omp: {read_only_tools: ['[']}\n")
+	if _, errs, code := e.run(nil, "config", "validate"); code == 0 || !strings.Contains(errs+"", "read_only_tools") {
+		t.Errorf("invalid pattern: exit %d %s", code, errs)
+	}
+}
+
+func mustOut(e *env, in []byte, harness, event string) string {
+	out, _, _ := e.run(in, "hook", harness, "--event", event)
+	return out
+}

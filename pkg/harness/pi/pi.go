@@ -38,6 +38,9 @@ const (
 // ErrNoAction 表示这次工具调用不产生动作（ls、find、MCP 等其他工具，或输入里没有可检查的内容），扩展照常放行。
 var ErrNoAction = fmt.Errorf("pi: %w", harness.ErrNoAction)
 
+// errUnknownTool 表示 omp 自带的工具里 h-guard 不认识的（Parse 返回 *harness.UnknownToolError）。
+var errUnknownTool = errors.New("pi: the tool is not known")
+
 // errUnparsed 表示会执行代码或改文件的工具调用，目标读不懂。
 var errUnparsed = errors.New("pi: the tool's target cannot be parsed")
 
@@ -166,6 +169,9 @@ func (a Adapter) Parse(raw []byte) (guard.Event, error) {
 			ev.Actions = acts
 			return guard.Event{}, &harness.TargetUnparsedError{Event: ev}
 		}
+		if errors.Is(err, errUnknownTool) {
+			return guard.Event{}, &harness.UnknownToolError{Event: ev}
+		}
 		if err != nil {
 			return guard.Event{}, err
 		}
@@ -234,7 +240,7 @@ func (a Adapter) actions(tool string, in toolInput) ([]guard.Action, error) {
 			p = stripSelector(p)
 		}
 		return one(extadapter.File(guard.ActionFileRead, p))
-	case "grep":
+	case "grep", "search": // search 是 omp 的 grep 的旧名
 		return one(extadapter.File(guard.ActionFileRead, in.Path))
 	case "write":
 		return one(extadapter.File(guard.ActionFileWrite, in.Path))
@@ -272,7 +278,21 @@ func (a Adapter) actions(tool string, in toolInput) ([]guard.Action, error) {
 	case "eval":
 		return nil, errUnparsed
 	}
-	return nil, ErrNoAction
+	if ompReadOnly[tool] || strings.HasPrefix(tool, "mcp__") {
+		return nil, ErrNoAction
+	}
+	return nil, errUnknownTool
+}
+
+// ompReadOnly 是 omp 自带的、不执行命令也不改动用户文件的工具（omp 18.11.3 的 BUILTIN_TOOL_NAMES 与 HIDDEN_TOOL_NAMES）：
+// 搜索与查询、提问、子 agent 与等待（子 agent 的工具调用各自经过检查）、待办、上下文与检查点、长期记忆、安全扫描。
+// 其余 omp 自带的工具（debug、ida、github、learn、manage_skill）与扩展提供的工具 h-guard 不认识，请求确认；
+// 用户可以在 harnesses.omp.read_only_tools 里补充只读的工具。MCP 工具（mcp__ 开头）与其他 harness 一样不检查。
+var ompReadOnly = map[string]bool{
+	"ast_grep": true, "ask": true, "glob": true, "find": true, "task": true, "wait": true, "todo": true,
+	"web_search": true, "checkpoint": true, "rewind": true, "context_notes": true, "new_context": true,
+	"security_scan": true, "memory_edit": true, "retain": true, "recall": true, "reflect": true,
+	"yield": true, "goal": true, "think": true,
 }
 
 // ompEdit 读出 omp 的 edit 改动的文件。替换形式直接给出 path；补丁形式（hashline）的文件在 [路径#标签] 补丁头里，

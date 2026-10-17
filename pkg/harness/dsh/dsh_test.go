@@ -149,3 +149,18 @@ func TestDriveRootedWorkdir(t *testing.T) {
 		t.Fatalf("%q %v", ev.Cwd, err)
 	}
 }
+
+// TestToolLists：dsh 自带的只读工具与 MCP 工具不产生动作；其余 h-guard 不认识的工具返回 UnknownToolError。
+func TestToolLists(t *testing.T) {
+	for _, tool := range []string{"todo_write", "terminal_read", "schedule_list", "mcp__srv__q"} {
+		if _, err := a.Parse(pre(tool, map[string]any{})); !errors.Is(err, harness.ErrNoAction) {
+			t.Errorf("%s: %v, want ErrNoAction", tool, err)
+		}
+	}
+	var ut *harness.UnknownToolError
+	for _, tool := range []string{"plugin_manager", "schedule_create", "create_worktree", "lsp", "some_plugin_tool"} {
+		if _, err := a.Parse(pre(tool, map[string]any{"x": 1})); !errors.As(err, &ut) || ut.Event.Tool != tool {
+			t.Errorf("%s: %v, want UnknownToolError", tool, err)
+		}
+	}
+}

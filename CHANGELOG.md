@@ -18,6 +18,10 @@ minor releases. Every such change is recorded in this file.
   directory, and a Cordis plugin mounted in `$DSH_HOME/cordis.patch.yml`.
   `status` reports them. The extensions were written against each harness's
   source and have not yet been verified with recorded sessions.
+- oh-my-pi and DeepSeek Harness: h-guard keeps a list of each harness's
+  read-only tools and asks for any other tool it does not know (`tool_unknown`).
+  `harnesses.<name>.read_only_tools` adds your own read-only tools; it cannot
+  loosen the checks on tools h-guard knows.
 - opencode cannot ask, so `ask` becomes `deny` there; `install opencode` takes
   `--shell` and writes `harnesses.opencode.shell`, as for Codex.
 - The locked `guard_tampering` rule also protects the new extensions and the
@@ -31,6 +35,7 @@ minor releases. Every such change is recorded in this file.
 
 - New adapters `pkg/harness/opencode`, `pkg/harness/pi` (registers `pi` and
   `omp`) and `pkg/harness/dsh`.
+- `pkg/harness` adds `UnknownToolError` for tools an adapter does not know.
 - `pkg/harness` adds `ErrNoAction` and the optional `NoActionRenderer`: an
   adapter that answers every request (extension protocol) replies `pass` to a
   tool call with nothing to check, so an empty reply always means h-guard could

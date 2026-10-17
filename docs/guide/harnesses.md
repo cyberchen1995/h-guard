@@ -290,6 +290,32 @@ DeepSeek Harness differences:
 When h-guard cannot run, the plugin asks before a tool call and lets tool
 output and prompts through with a line in dsh's log.
 
+## Tools h-guard does not know
+
+For oh-my-pi and DeepSeek Harness, h-guard knows every tool the harness ships:
+
+- tools that run commands or change files are checked as actions;
+- tools that only read, search, plan or coordinate pass;
+- MCP tools (`mcp__…`) pass, as on the other harnesses;
+- anything else asks, with the reason `tool_unknown`. That covers the
+  harness's remaining tools, which can run code, install plugins, schedule
+  runs or change remote repositories, and tools added by extensions or
+  plugins.
+
+List the tools you know to be read-only in the configuration; `*` and `?`
+match any characters:
+
+```yaml
+harnesses:
+  omp: {read_only_tools: [my_search, docs_*]}
+  dsh: {read_only_tools: [plugin_market]}
+```
+
+The list only applies to tools h-guard does not know: a shell or file tool
+named there is still checked. For opencode and pi, h-guard cannot tell the
+harness's own tools from MCP and plugin tools, so tools it does not know pass
+there.
+
 ## What each harness can do
 
 | Event | Claude Code | Codex | opencode | pi, oh-my-pi | DeepSeek Harness | Generic |

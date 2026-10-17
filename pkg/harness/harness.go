@@ -17,6 +17,16 @@ type TargetUnparsedError struct {
 
 func (*TargetUnparsedError) Error() string { return "harness: the tool's target cannot be parsed" }
 
+// UnknownToolError 表示 adapter 不认识的工具：它不在已知只读的名单里，也不是 adapter 能读出动作的工具，可能执行命令
+// 或改动文件。Parse 以 *UnknownToolError 返回，Event 填好 Harness、SessionID、Cwd、Tool 等字段（没有动作）。调用方按配置
+// harnesses.<name>.read_only_tools 判断：列出的工具不检查（与 ErrNoAction 相同），其余请求确认，带 tool_unknown。
+// 只在 harness 自带的工具可以列全时使用；分不出 harness 自带工具与 MCP 等外部工具的 adapter 不用它。
+type UnknownToolError struct {
+	Event guard.Event
+}
+
+func (*UnknownToolError) Error() string { return "harness: the tool is not known" }
+
 // ShellDefaulter 由标不出 shell 的 adapter 实现（如 Codex）。WithShell 返回一个副本，
 // 它把解析出的 exec 动作的 shell 设为 s；调用方按配置 harnesses.<name>.shell 传入。副本同样不保存其他状态。
 type ShellDefaulter interface {
