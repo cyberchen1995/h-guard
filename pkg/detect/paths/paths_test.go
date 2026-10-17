@@ -399,7 +399,7 @@ func TestRootAliasesAreStripped(t *testing.T) {
 func TestOpaquePathsMatchAnyPattern(t *testing.T) {
 	v := vol()
 	env := paths.Env{Home: v + "/home/u", Opaque: []string{v + "/opq"}}
-	m, err := paths.Compile([]string{v + "/etc/unrelated/**"}, env)
+	m, err := paths.Compile([]string{"/etc/unrelated/**"}, env)
 	if err != nil {
 		t.Fatal(err)
 	}
