@@ -166,3 +166,12 @@ test('input: a guard that cannot run sends the prompt; without a UI the note goe
   assert.equal(await handlers.input({ text: 'hi', source: 'interactive' }, ctx({ hasUI: false })), undefined)
   assert.equal(notes.length, 0)
 })
+
+test('context (omp): a message an extension sent as the agent is checked as automated', async () => {
+  const { command, record } = await fake({ action: 'pass' })
+  const { handlers, ctx } = await extension(command, 'omp')
+  await handlers.input({ text: 'deploy it', source: 'interactive' }, ctx())
+  await handlers.context({ messages: [{ role: 'user', content: 'deploy it' }, { role: 'user', content: 'deploy it', attribution: 'agent' }] }, ctx())
+  const sent = await recorded(record)
+  assert.deepEqual(sent.map((r) => r.request.data.source), ['interactive', 'extension'])
+})

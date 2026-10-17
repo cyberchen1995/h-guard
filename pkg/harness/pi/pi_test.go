@@ -294,3 +294,41 @@ func TestOMPSearchIsFileContent(t *testing.T) {
 		t.Fatalf("%+v %v", ev, err)
 	}
 }
+
+// TestOMPPaths：omp 的路径与 omp 一样规范化（误加的 :、表示路径的 @、file:// URL）；sloppy 模式的补丁按 *** Edit File: 行读。
+func TestOMPPaths(t *testing.T) {
+	for in, want := range map[string]string{
+		"file:///home/u/.ssh/id_rsa": "/home/u/.ssh/id_rsa",
+		"FILE:///w/a%20b.txt":        "/w/a b.txt",
+		"file:///C:/Users/u/.env":    "C:/Users/u/.env",
+		"file://localhost/etc/hosts": "/etc/hosts",
+		"@~/.ssh/id_rsa:raw":         "~/.ssh/id_rsa",
+		"@/etc/shadow":               "/etc/shadow",
+		":~/.aws/credentials":        "~/.aws/credentials",
+		":./.env":                    "./.env",
+		"@my-file.txt":               "@my-file.txt",
+		"a:b":                        "a:b",
+	} {
+		got, _ := actions(t, pi.OMP, "read", map[string]any{"path": in})
+		if len(got) != 1 || got[0].File.Path != want {
+			t.Errorf("read %q: %+v, want %q", in, got, want)
+		}
+	}
+	got, _ := actions(t, pi.OMP, "write", map[string]any{"path": "file:///w/.env", "content": "x"})
+	if len(got) != 1 || got[0].File.Path != "/w/.env" {
+		t.Errorf("write file URL: %+v", got)
+	}
+	sloppy := "*** Edit File: ~/.dsh/cordis.patch.yml\n*** Find\n[section]\n*** Replace\n[other]\n*** Edit File:\n*** Find\nx\n*** Insert After\ny\n*** Edit File: \"src/a b.ts\" all\n*** Find\n[x]\n*** Replace\n[y]\n"
+	got, _ = actions(t, pi.OMP, "edit", map[string]any{"input": sloppy})
+	want := []guard.Action{
+		{Kind: guard.ActionFileWrite, File: &guard.FileAction{Path: "~/.dsh/cordis.patch.yml"}},
+		{Kind: guard.ActionFileWrite, File: &guard.FileAction{Path: "src/a b.ts"}},
+	}
+	if asJSON(got) != asJSON(want) {
+		t.Errorf("sloppy edit: %s, want %s", asJSON(got), asJSON(want))
+	}
+	var ut *harness.UnknownToolError
+	if _, err := pi.OMP.Parse(call("omp", "security_scan", map[string]any{"action": "start"})); !errors.As(err, &ut) {
+		t.Errorf("security_scan: %v, want UnknownToolError", err)
+	}
+}

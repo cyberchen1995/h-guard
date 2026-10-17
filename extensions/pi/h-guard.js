@@ -74,8 +74,10 @@ export default function (pi) {
           out.push(m)
           continue
         }
-        const key = sessionOf(ctx) + '\n' + text
-        const verdict = checked.has(key) ? checked.get(key) : await checkPrompt(ctx, text, 'context')
+        // 扩展用 sendUserMessage(..., { attribution: 'agent' }) 发出的消息不经过 input，按扩展发出的自动消息检查
+        const source = m.attribution === 'agent' ? 'extension' : 'context'
+        const key = cacheKey(ctx, source, text)
+        const verdict = checked.has(key) ? checked.get(key) : await checkPrompt(ctx, text, source)
         if (verdict === null) {
           out.push(m)
           continue
@@ -94,9 +96,14 @@ export default function (pi) {
 const checked = new Map()
 const CHECKED_MAX = 1000
 
+// cacheKey 是 checked 的键：会话、是否扩展发出的消息与文本（用户输入过的文本由扩展再发出时要按自动消息重新检查）
+function cacheKey(ctx, source, text) {
+  return sessionOf(ctx) + (source === 'extension' ? '\nagent\n' : '\n') + text
+}
+
 // checkPrompt 检查一段提示词：deny 时提示用户并返回写给模型的说明，其余返回 null。接入层故障放行并提示用户
 async function checkPrompt(ctx, text, source) {
-  const key = sessionOf(ctx) + '\n' + text
+  const key = cacheKey(ctx, source, text)
   try {
     // omp 把扩展重新绑定到子 agent 的会话上：那里的「用户消息」是父 agent 写的任务
     const sub = !!(ctx.agent && ctx.agent.kind === 'sub')

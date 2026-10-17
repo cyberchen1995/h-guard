@@ -227,10 +227,12 @@ Differences:
 - **oh-my-pi's `eval`** runs Python or JavaScript code that h-guard cannot
   read, so every call asks. oh-my-pi's patch-style `edit` (and `apply_patch` in
   that mode) is read from its file headers (`REM` deletes, `MV` renames), and
-  its `patch` mode from each entry's `op` and `rename`; an edit whose files
+  its `patch` mode from each entry's `op` and `rename`, and its `sloppy` mode
+  from the `*** Edit File:` lines; an edit whose files
   cannot be read asks. `lsp` renames, applied code actions and raw requests
   change files h-guard cannot list, so they ask. `read` paths lose their line
-  selectors (`a.go:10-20`). oh-my-pi's `write` is checked against the file it
+  selectors (`a.go:10-20`). Paths are normalized as oh-my-pi does: `file://`
+  URLs become the file, and a stray leading `:` or `@` is dropped. oh-my-pi's `write` is checked against the file it
   really changes: an archive entry (`a.zip:inner`) or SQLite row
   (`app.sqlite:users:42`) counts as a write to the archive or database, and
   `xd://resolve` (which applies a previewed `ast_edit` or edit), other `xd://`
@@ -238,8 +240,8 @@ Differences:
 - **Shell.** Both run `bash` commands with a bash-compatible shell on every
   platform (pi uses Git Bash on Windows; oh-my-pi has its own), so they are
   checked as POSIX commands.
-- **Prompt origin.** A prompt sent by an extension (`source: "extension"`)
-  counts as automated, and so does every prompt in an oh-my-pi sub-agent's
+- **Prompt origin.** A prompt sent by an extension (`source: "extension"`,
+  or on oh-my-pi a message with `attribution: "agent"`) counts as automated, and so does every prompt in an oh-my-pi sub-agent's
   session (the `task` tool, `eval`'s `agent()`); prompts from the interface,
   RPC and `-p` count as yours.
 - **Not covered.** Commands you type with `!` do not go through `tool_call`.

@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"regexp"
 	"strings"
 
@@ -221,8 +222,14 @@ func (a Adapter) touches(tool string) bool {
 //     各项可以删除或改名；ast_edit 写 paths 里的文件；lsp 见 ompLSP；omp 的 eval 执行 Python 或 JavaScript 代码，
 //     h-guard 读不懂，请求确认（errUnparsed）。
 //
-// pi 的 ls、find 与 MCP 工具不产生动作，其余工具见 piReadOnly；omp 见 ompReadOnly。
+// pi 的 ls、find 与 MCP 工具不产生动作，其余工具见 piReadOnly；omp 见 ompReadOnly。omp 的路径先按 ompPath 规范化。
 func (a Adapter) actions(tool string, in toolInput) ([]guard.Action, error) {
+	if a.omp {
+		in.Path, in.File = ompPath(in.Path), ompPath(in.File)
+		for i, p := range in.Paths {
+			in.Paths[i] = ompPath(p)
+		}
+	}
 	one := func(act guard.Action, ok bool) ([]guard.Action, error) {
 		if !ok {
 			return nil, ErrNoAction
@@ -300,17 +307,19 @@ func (a Adapter) actions(tool string, in toolInput) ([]guard.Action, error) {
 var piReadOnly = map[string]bool{"find": true, "ls": true}
 
 // ompReadOnly 是 omp 自带的、不执行命令也不改动用户文件的工具（omp 18.11.3 的 BUILTIN_TOOL_NAMES 与 HIDDEN_TOOL_NAMES）：
-// 搜索与查询、提问、子 agent 与等待（子 agent 的工具调用各自经过检查）、待办、上下文与检查点、长期记忆的查询、安全扫描。
-// 其余 omp 自带的工具（debug、ida、github、写长期记忆的 retain、memory_edit、learn、manage_skill）与扩展提供的工具 h-guard 不认识，请求确认；
+// 搜索与查询、提问、子 agent 与等待（子 agent 的工具调用各自经过检查）、待办、上下文与检查点、长期记忆的查询。
+// 其余 omp 自带的工具（debug、ida、github、写长期记忆的 retain、memory_edit、learn、manage_skill、会建目录、启动后台与云端扫描的
+// security_scan）与扩展提供的工具 h-guard 不认识，请求确认；
 // 用户可以在 harnesses.omp.read_only_tools 里补充只读的工具。MCP 工具（mcp__ 开头）与其他 harness 一样不检查。
 var ompReadOnly = map[string]bool{
 	"ast_grep": true, "ask": true, "glob": true, "find": true, "task": true, "wait": true, "todo": true,
 	"web_search": true, "checkpoint": true, "rewind": true, "context_notes": true, "new_context": true,
-	"security_scan": true, "recall": true, "reflect": true,
+	"recall": true, "reflect": true,
 	"yield": true, "goal": true, "think": true,
 }
 
-// ompEdit 读出 omp 的 edit 改动的文件。替换形式直接给出 path；补丁形式（hashline）的文件在 [路径#标签] 补丁头里，
+// ompEdit 读出 omp 的 edit 改动的文件。替换形式直接给出 path；sloppy 模式的文件在 *** Edit File: <路径> 行里（段内是原样的
+// 文本，不找 hashline 补丁头）；补丁形式（hashline）的文件在 [路径#标签] 补丁头里，
 // 段内的 REM 删除这个文件、MV <目标> 把它改名；apply_patch 模式的补丁按 apply_patch 的格式读。补丁里读不出文件时，用 omp 派生的 path、paths；都没有时请求确认。
 func ompEdit(in toolInput) ([]guard.Action, error) {
 	if strings.TrimSpace(in.Input) == "" {
@@ -328,6 +337,9 @@ func ompEdit(in toolInput) ([]guard.Action, error) {
 			}
 		}
 		return []guard.Action{act}, nil
+	}
+	if acts, ok := sloppyEdit(in.Input); ok {
+		return acts, nil
 	}
 	// hashline 的段头 [路径#标签] 优先：严格语法下 hashline 补丁同样包在 *** Begin Patch / *** End Patch 里
 	var acts []guard.Action
@@ -436,6 +448,76 @@ func containerFile(p string) (string, bool) {
 	}
 	return "", false
 }
+
+// sloppyEdit 读出 sloppy 模式的补丁改动的文件：每个 *** Edit File: <路径>[ all] 行是一个文件（路径可以用 JSON 引号括起），
+// 不带路径的 *** Edit File: 接着改上一个文件。补丁里没有这样的行时 ok 为假。
+func sloppyEdit(input string) (acts []guard.Action, ok bool) {
+	for _, line := range strings.Split(strings.TrimPrefix(input, "\ufeff"), "\n") {
+		rest, found := strings.CutPrefix(strings.TrimRight(line, "\r"), sloppyHeader)
+		if !found {
+			continue
+		}
+		ok = true
+		p := strings.TrimSpace(rest)
+		if q := strings.TrimSuffix(p, " all"); q != p {
+			p = strings.TrimSpace(q)
+		}
+		if strings.HasPrefix(p, `"`) {
+			var u string
+			if json.Unmarshal([]byte(p), &u) == nil {
+				p = u
+			}
+		}
+		if p == "" || p == "all" {
+			continue
+		}
+		if act, ok := extadapter.File(guard.ActionFileWrite, ompPath(p)); ok {
+			acts = append(acts, act)
+		}
+	}
+	return acts, ok && len(acts) > 0
+}
+
+const sloppyHeader = "*** Edit File:"
+
+// ompPath 按 omp 的 expandPath 规范化路径：去掉误加在路径前的 :（:/abs、:~/x、:./x、:C:\x），去掉表示路径的 @ 前缀
+// （@/abs、@~/x、@C:\x、@\\server、@<内部 URL>），file:// URL 换成它指向的文件。其余原样返回。
+func ompPath(p string) string {
+	if len(p) > 1 && p[0] == ':' && pathStart(p[1:], true) {
+		p = p[1:]
+	}
+	if len(p) > 1 && p[0] == '@' && (pathStart(p[1:], false) || p[1:] == "~" || internalURL(p[1:])) {
+		p = p[1:]
+	}
+	if len(p) >= 7 && strings.EqualFold(p[:7], "file://") {
+		if u, err := url.Parse(p); err == nil && (u.Host == "" || strings.EqualFold(u.Host, "localhost")) && u.Path != "" {
+			f := u.Path
+			if len(f) >= 3 && f[0] == '/' && f[2] == ':' && isLetter(f[1]) { // file:///C:/x
+				f = f[1:]
+			}
+			return f
+		}
+	}
+	return p
+}
+
+// pathStart 报告 s 是否以绝对路径、~ 或（relative 为真时）./、../ 开头。
+func pathStart(s string, relative bool) bool {
+	switch {
+	case strings.HasPrefix(s, "/"), strings.HasPrefix(s, `\`), strings.HasPrefix(s, "~/"), strings.HasPrefix(s, `~\`):
+		return true
+	case relative && (s[0] == '~' || strings.HasPrefix(s, "./") || strings.HasPrefix(s, "../") || strings.HasPrefix(s, `.\`) || strings.HasPrefix(s, `..\`)):
+		return true
+	}
+	return len(s) >= 2 && isLetter(s[0]) && s[1] == ':'
+}
+
+func internalURL(s string) bool {
+	i := strings.Index(s, "://")
+	return i > 0 && !strings.ContainsAny(s[:i], `/\.`)
+}
+
+func isLetter(c byte) bool { return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' }
 
 var hashlineTag = regexp.MustCompile(`#[0-9a-fA-F]{4}$`)
 
