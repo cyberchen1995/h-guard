@@ -22,18 +22,27 @@ func real(t *testing.T, dir string) string {
 	return r
 }
 
+// vol 是可移植绝对路径的卷前缀：Windows 上没有盘符的 /x 不是绝对路径，Unix 上为空。
+func vol() string {
+	if runtime.GOOS == "windows" {
+		return "C:"
+	}
+	return ""
+}
+
 func TestResolveExpandsHomeAndCwd(t *testing.T) {
-	env := paths.Env{Home: "/home/u", Cwd: "/home/u/proj", Lexical: true}
+	v := vol()
+	env := paths.Env{Home: v + "/home/u", Cwd: v + "/home/u/proj", Lexical: true}
 	for in, want := range map[string]string{
-		"~":              "/home/u",
-		"~/x/../y":       "/home/u/y",
-		"a/./b":          "/home/u/proj/a/b",
-		"../other/f":     "/home/u/other/f",
-		"/etc//passwd/.": "/etc/passwd",
+		"~":                  "/home/u",
+		"~/x/../y":           "/home/u/y",
+		"a/./b":              "/home/u/proj/a/b",
+		"../other/f":         "/home/u/other/f",
+		v + "/etc//passwd/.": "/etc/passwd",
 	} {
 		r := paths.Resolve(in, env)
-		if r.Clean != filepath.FromSlash(want) || r.Real != "" || r.Err != nil {
-			t.Errorf("Resolve(%q) = %+v, want Clean %q", in, r, want)
+		if r.Clean != filepath.FromSlash(v+want) || r.Real != "" || r.Err != nil {
+			t.Errorf("Resolve(%q) = %+v, want Clean %q", in, r, v+want)
 		}
 	}
 }
@@ -50,7 +59,7 @@ func TestResolveWithoutCwdOrHome(t *testing.T) {
 }
 
 func TestResolveFollowsSymlinksOnTheExistingPrefix(t *testing.T) {
-	dir := t.TempDir()
+	dir := real(t, t.TempDir()) // Windows 的 t.TempDir() 可能是 8.3 短路径，先取长路径
 	os.Mkdir(filepath.Join(dir, "real"), 0o755)
 	if err := os.Symlink(filepath.Join(dir, "real"), filepath.Join(dir, "link")); err != nil {
 		t.Skip("symlinks unavailable:", err)
@@ -67,7 +76,7 @@ func TestResolveFollowsSymlinksOnTheExistingPrefix(t *testing.T) {
 
 // 指向不存在文件的符号链接：写入它会创建链接目标，所以解析结果是目标路径。
 func TestResolveDanglingSymlinkPointsAtItsTarget(t *testing.T) {
-	dir := t.TempDir()
+	dir := real(t, t.TempDir()) // Windows 的 t.TempDir() 可能是 8.3 短路径，先取长路径
 	target := filepath.Join(dir, "home", ".claude", "settings.json")
 	if err := os.Symlink(target, filepath.Join(dir, "notes.txt")); err != nil {
 		t.Skip("symlinks unavailable:", err)
@@ -80,7 +89,7 @@ func TestResolveDanglingSymlinkPointsAtItsTarget(t *testing.T) {
 
 // 链接之后的 .. 按真实位置回退（与 shell 打开文件的语义一致），不按字面抵消。
 func TestResolveDotDotAfterSymlink(t *testing.T) {
-	dir := t.TempDir()
+	dir := real(t, t.TempDir()) // Windows 的 t.TempDir() 可能是 8.3 短路径，先取长路径
 	os.MkdirAll(filepath.Join(dir, "a", "deep"), 0o755)
 	if err := os.Symlink(filepath.Join(dir, "a", "deep"), filepath.Join(dir, "link")); err != nil {
 		t.Skip("symlinks unavailable:", err)
@@ -344,36 +353,42 @@ func TestNewlineInPathIsMatchedByWildcards(t *testing.T) {
 // TestRootAliasesAreStripped：指向根目录的别名前缀（macOS 的 /System/Volumes/Data）之下的路径与去掉前缀后的路径
 // 是同一个文件，realpath 不改写它，所以去掉前缀的写法另作候选。不区分大小写时前缀同样不区分大小写。
 func TestRootAliasesAreStripped(t *testing.T) {
-	env := paths.Env{Home: "/home/u", RootAliases: []string{"/alias"}}
-	m, err := paths.Compile([]string{"~/.config/h-guard/**"}, env)
+	// 模式只能以 / 开头，所以不带盘符；别名与被解析的路径带盘符，去掉别名后的写法没有盘符（当前卷的根下）
+	v := vol()
+	pattern := "/home/u/.config/h-guard/**"
+	if err := paths.ValidPattern(pattern); err != nil {
+		t.Fatal(err)
+	}
+	env := paths.Env{RootAliases: []string{v + "/alias"}}
+	m, err := paths.Compile([]string{pattern}, env)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for path, want := range map[string]bool{
-		"/alias/home/u/.config/h-guard/x":  true,
-		"/alias/tmp/x":                     false,
-		"/aliasx/home/u/.config/h-guard/x": false,
-		"/ALIAS/home/u/.config/h-guard/x":  false, // 区分大小写
+		v + "/alias/home/u/.config/h-guard/x":  true,
+		v + "/alias/tmp/x":                     false,
+		v + "/aliasx/home/u/.config/h-guard/x": false,
+		v + "/ALIAS/home/u/.config/h-guard/x":  false, // 区分大小写
 	} {
 		if got := m.Match(paths.Resolve(path, env)); got != want {
 			t.Errorf("Match(%q) = %v, want %v", path, got, want)
 		}
 	}
-	if r := paths.Resolve("/alias", env); !slices.Contains(r.Candidates(), "/") {
+	if r := paths.Resolve(v+"/alias", env); !slices.Contains(r.Candidates(), filepath.FromSlash("/")) {
 		t.Errorf("the alias itself is the root: Candidates() = %q", r.Candidates())
 	}
 	env.FoldCase = true
-	m, err = paths.Compile([]string{"~/.config/h-guard/**"}, env)
+	m, err = paths.Compile([]string{pattern}, env)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !m.Match(paths.Resolve("/ALIAS/home/u/.config/h-guard/x", env)) {
+	if !m.Match(paths.Resolve(v+"/ALIAS/home/u/.config/h-guard/x", env)) {
 		t.Error("a case-insensitive env missed the alias in another case")
 	}
 	// 空列表关闭；按字面匹配（规则样例）时不处理别名
-	for _, e := range []paths.Env{{Home: "/home/u", RootAliases: []string{}}, {Home: "/home/u", RootAliases: []string{"/alias"}, Lexical: true}} {
-		m, _ := paths.Compile([]string{"~/.config/h-guard/**"}, e)
-		if m.Match(paths.Resolve("/alias/home/u/.config/h-guard/x", e)) {
+	for _, e := range []paths.Env{{RootAliases: []string{}}, {RootAliases: []string{v + "/alias"}, Lexical: true}} {
+		m, _ := paths.Compile([]string{pattern}, e)
+		if m.Match(paths.Resolve(v+"/alias/home/u/.config/h-guard/x", e)) {
 			t.Errorf("env %+v stripped the alias", e)
 		}
 	}
@@ -382,35 +397,36 @@ func TestRootAliasesAreStripped(t *testing.T) {
 // TestOpaquePathsMatchAnyPattern：无法映射到规范位置的前缀（macOS 的 /.vol、Linux 的 /proc）之下的目标
 // 可能就是受保护的文件，有模式的 Matcher 一律按命中处理（fail-closed）；没有模式的 Matcher 不命中。
 func TestOpaquePathsMatchAnyPattern(t *testing.T) {
-	env := paths.Env{Home: "/home/u", Opaque: []string{"/opq"}}
+	v := vol()
+	env := paths.Env{Home: v + "/home/u", Opaque: []string{v + "/opq"}}
 	m, err := paths.Compile([]string{"/etc/unrelated/**"}, env)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r := paths.Resolve("/opq/1/2", env); !r.Opaque || !m.Match(r) {
+	if r := paths.Resolve(v+"/opq/1/2", env); !r.Opaque || !m.Match(r) {
 		t.Errorf("an opaque target did not match: %+v", r)
 	}
-	if r := paths.Resolve("/opq", env); !r.Opaque {
+	if r := paths.Resolve(v+"/opq", env); !r.Opaque {
 		t.Errorf("the opaque prefix itself is opaque: %+v", r)
 	}
-	if r := paths.Resolve("/opqx/1", env); r.Opaque || m.Match(r) {
+	if r := paths.Resolve(v+"/opqx/1", env); r.Opaque || m.Match(r) {
 		t.Errorf("/opqx is not under /opq: %+v", r)
 	}
 	// 全部模式都因缺少 ~ 而跳过：没有可匹配的模式，不命中
-	empty, err := paths.Compile([]string{"~/.config/h-guard/**"}, paths.Env{Opaque: []string{"/opq"}})
+	empty, err := paths.Compile([]string{"~/.config/h-guard/**"}, paths.Env{Opaque: []string{v + "/opq"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if empty.Match(paths.Resolve("/opq/1/2", paths.Env{Opaque: []string{"/opq"}})) {
+	if empty.Match(paths.Resolve(v+"/opq/1/2", paths.Env{Opaque: []string{v + "/opq"}})) {
 		t.Error("an empty matcher matched an opaque target")
 	}
-	for _, e := range []paths.Env{{Opaque: []string{}}, {Opaque: []string{"/opq"}, Lexical: true}} {
-		if r := paths.Resolve("/opq/1/2", e); r.Opaque {
+	for _, e := range []paths.Env{{Opaque: []string{}}, {Opaque: []string{v + "/opq"}, Lexical: true}} {
+		if r := paths.Resolve(v+"/opq/1/2", e); r.Opaque {
 			t.Errorf("env %+v marked the target opaque", e)
 		}
 	}
 	env.FoldCase = true
-	if r := paths.Resolve("/OPQ/1", env); !r.Opaque {
+	if r := paths.Resolve(v+"/OPQ/1", env); !r.Opaque {
 		t.Errorf("a case-insensitive env missed the opaque prefix: %+v", r)
 	}
 }
