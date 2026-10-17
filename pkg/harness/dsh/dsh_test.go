@@ -173,7 +173,7 @@ func TestToolLists(t *testing.T) {
 	if _, err := a.Parse(pre("stagehand_tabs", map[string]any{"action": "close", "tabId": "t1"})); !errors.As(err, &ut) {
 		t.Errorf("stagehand_tabs close: %v, want UnknownToolError", err)
 	}
-	for _, tool := range []string{"plugin_manager", "schedule_create", "create_worktree", "lsp", "terminal_signal", "terminal_close", "job_kill", "some_plugin_tool"} {
+	for _, tool := range []string{"plugin_manager", "schedule_create", "create_worktree", "lsp", "terminal_open", "terminal_signal", "terminal_close", "job_kill", "some_plugin_tool"} {
 		if _, err := a.Parse(pre(tool, map[string]any{"x": 1})); !errors.As(err, &ut) || ut.Event.Tool != tool {
 			t.Errorf("%s: %v, want UnknownToolError", tool, err)
 		}

@@ -296,8 +296,8 @@ DeepSeek Harness differences:
 - **Terminals.** Text sent to a persistent terminal (`terminal_send`) is
   checked as a POSIX command and always asks, because the terminal's shell is
   not known; its output is scanned as file content when the text reads files.
-  `terminal_signal`, `terminal_close` and `job_kill` end processes, so they
-  ask.
+  `terminal_open` starts a shell, and `terminal_signal`, `terminal_close` and
+  `job_kill` end processes, so they ask.
 
 When h-guard cannot run, the plugin asks before a tool call and lets tool
 output and prompts through with a line in dsh's log.

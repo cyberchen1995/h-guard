@@ -369,12 +369,16 @@ func TestOMPPaths(t *testing.T) {
 	}
 	for in, want := range map[string]string{"backup.7z:keys/id_rsa": "backup.7z", "b.tar.bz2:config": "b.tar.bz2", "x.vsix:a": "x.vsix", "d.db3:t": "d.db3"} {
 		got, _ := actions(t, pi.OMP, "read", map[string]any{"path": in})
-		if len(got) != 1 || got[0].File.Path != want {
+		if len(got) == 0 || got[0].File.Path != want { // 另有原样的路径（同名的文件存在时 omp 按原名读）
 			t.Errorf("read %q: %+v, want %q", in, got, want)
 		}
 	}
 	if ev, err := pi.OMP.Parse(result("omp", "lsp", map[string]any{"action": "references", "file": "a.go"}, "K=V")); err != nil || !ev.FileContent {
 		t.Errorf("lsp result: %+v %v", ev, err)
+	}
+	got, _ = actions(t, pi.OMP, "read", map[string]any{"path": "protected:1"})
+	if len(got) != 2 || got[0].File.Path != "protected" || got[1].File.Path != "protected:1" {
+		t.Errorf("selector-looking file name: %s", asJSON(got))
 	}
 	got, _ = actions(t, pi.OMP, "read", map[string]any{"path": "README.md; ~/.ssh/id_rsa:raw,notes.txt"})
 	var paths []string

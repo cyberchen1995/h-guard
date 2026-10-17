@@ -250,19 +250,26 @@ func (a Adapter) actions(tool string, in toolInput) ([]guard.Action, error) {
 		if !a.omp {
 			return one(extadapter.File(guard.ActionFileRead, in.Path))
 		}
-		// 路径不存在时 omp 把用 ;、, 或空白分开的几个路径逐个读：整串与拆开的每一段都检查
+		// 路径不存在时 omp 把用 ;、, 或空白分开的几个路径逐个读：整串与拆开的每一段都检查。存在的文件优先于选择的写法
+		// （名为 protected:1 的文件按原名读），所以去掉选择前后的路径都检查
 		var acts []guard.Action
+		seen := map[string]bool{}
+		add := func(p string) {
+			if act, ok := extadapter.File(guard.ActionFileRead, p); ok && !seen[p] {
+				seen[p] = true
+				acts = append(acts, act)
+			}
+		}
 		for i, p := range append([]string{in.Path}, readListParts(in.Path)...) {
 			if i > 0 {
 				p = ompPath(p)
 			}
-			p = stripSelector(p)
-			if b, ok := containerFile(p); ok {
-				p = b
+			s := stripSelector(p)
+			if b, ok := containerFile(s); ok {
+				s = b
 			}
-			if act, ok := extadapter.File(guard.ActionFileRead, p); ok {
-				acts = append(acts, act)
-			}
+			add(s)
+			add(p)
 		}
 		if len(acts) == 0 {
 			return nil, ErrNoAction
