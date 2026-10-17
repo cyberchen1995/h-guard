@@ -70,6 +70,7 @@ type toolData struct {
 
 type arguments struct {
 	Command  string `json:"command"`
+	Text     string `json:"text"` // terminal_send 写进持久终端的内容
 	Workdir  string `json:"workdir"`
 	FilePath string `json:"file_path"`
 	Path     string `json:"path"`
@@ -133,6 +134,7 @@ func (Adapter) Parse(raw []byte) (guard.Event, error) {
 		}
 		acts, err := actions(d.Name, d.Arguments, in)
 		if errors.Is(err, errUnparsed) {
+			ev.Actions = acts
 			return guard.Event{}, &harness.TargetUnparsedError{Event: ev}
 		}
 		if err != nil {
@@ -179,10 +181,10 @@ func SourceOf(kind string) guard.Source {
 }
 
 // touches 是会执行命令或改动文件的工具。
-var touches = map[string]bool{"bash": true, "pwsh": true, "write": true, "edit": true, "str_replace_editor": true}
+var touches = map[string]bool{"bash": true, "pwsh": true, "write": true, "edit": true, "str_replace_editor": true, "terminal_send": true}
 
 // actions 把工具映射为动作：bash 执行 POSIX 命令，pwsh（Windows）执行 PowerShell 命令；read、read_image、grep 读文件；
-// write、edit 写文件；str_replace_editor 的 view 读文件，create、str_replace、insert 写文件，其余子命令读不懂。
+// write、edit 写文件；terminal_send 写进持久终端的内容按命令检查并请求确认；str_replace_editor 的 view 读文件，create、str_replace、insert 写文件，其余子命令读不懂。
 // 其余工具（glob、web_fetch、run_code、subagent、MCP 等）不产生动作；run_code 里发出的工具调用各自经过这里。
 func actions(tool string, raw json.RawMessage, in arguments) ([]guard.Action, error) {
 	one := func(act guard.Action, ok bool) ([]guard.Action, error) {
@@ -202,6 +204,13 @@ func actions(tool string, raw json.RawMessage, in arguments) ([]guard.Action, er
 		return one(extadapter.File(guard.ActionFileRead, in.Path))
 	case "write", "edit":
 		return one(extadapter.File(guard.ActionFileWrite, in.FilePath))
+	case "terminal_send":
+		// 写进持久终端的内容多半是一条命令，但终端是哪种 shell（或 gdb 之类的程序）这里看不出：按 POSIX 命令检查，
+		// 另外请求确认
+		if act, ok := extadapter.Exec(in.Text, guard.ShellPOSIX); ok {
+			return []guard.Action{act}, errUnparsed
+		}
+		return nil, ErrNoAction
 	case "str_replace_editor":
 		switch editorCommand(raw) {
 		case "view":

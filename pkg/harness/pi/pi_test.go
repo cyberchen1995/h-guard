@@ -170,3 +170,51 @@ func TestToolResult(t *testing.T) {
 		t.Fatalf("%+v %v", ev, err)
 	}
 }
+
+// TestOMPEditModes：apply_patch 模式下工具名是 apply_patch；patch 模式的各项可以删除或改名（目标同样检查）。
+func TestOMPEditModes(t *testing.T) {
+	got, _ := actions(t, pi.OMP, "apply_patch", map[string]any{"input": "*** Begin Patch\n*** Delete File: old.txt\n*** End Patch"})
+	if asJSON(got) != asJSON([]guard.Action{{Kind: guard.ActionFileDelete, File: &guard.FileAction{Path: "old.txt"}}}) {
+		t.Errorf("apply_patch: %s", asJSON(got))
+	}
+	got, _ = actions(t, pi.OMP, "edit", map[string]any{"path": "a.txt", "edits": []map[string]string{{"op": "update", "diff": "x"}, {"rename": "~/.omp/agent/config.yml"}}})
+	if asJSON(got) != asJSON([]guard.Action{{Kind: guard.ActionFileRename, File: &guard.FileAction{Path: "a.txt", To: "~/.omp/agent/config.yml"}}}) {
+		t.Errorf("patch rename: %s", asJSON(got))
+	}
+	got, _ = actions(t, pi.OMP, "edit", map[string]any{"path": "a.txt", "edits": []map[string]string{{"op": "delete"}}})
+	if len(got) != 1 || got[0].Kind != guard.ActionFileDelete {
+		t.Errorf("patch delete: %s", asJSON(got))
+	}
+	if _, err := pi.Pi.Parse(call("pi", "apply_patch", map[string]any{"input": "x"})); !errors.Is(err, harness.ErrNoAction) {
+		t.Errorf("pi apply_patch: %v", err)
+	}
+}
+
+// TestOMPLSP：lsp 的改名与应用的代码操作改动文件（请求确认，能读出的文件照常检查）；只读的动作不产生动作。
+func TestOMPLSP(t *testing.T) {
+	var tu *harness.TargetUnparsedError
+	for name, in := range map[string]map[string]any{
+		"rename":       {"action": "rename", "file": "a.go", "line": 3, "symbol": "x", "new_name": "y"},
+		"rename_file":  {"action": "rename_file", "file": "a.go", "new_name": "b.go"},
+		"code_actions": {"action": "code_actions", "file": "a.go", "apply": true},
+		"request":      {"action": "request", "query": "workspace/executeCommand"},
+	} {
+		_, err := pi.OMP.Parse(call("omp", "lsp", in))
+		if !errors.As(err, &tu) {
+			t.Errorf("%s: %v, want TargetUnparsedError", name, err)
+			continue
+		}
+		if name == "rename_file" && asJSON(tu.Event.Actions) != asJSON([]guard.Action{{Kind: guard.ActionFileRename, File: &guard.FileAction{Path: "a.go", To: "b.go"}}}) {
+			t.Errorf("rename_file actions: %s", asJSON(tu.Event.Actions))
+		}
+	}
+	for name, in := range map[string]map[string]any{
+		"diagnostics":       {"action": "diagnostics", "file": "*"},
+		"rename preview":    {"action": "rename", "file": "a.go", "new_name": "y", "apply": false},
+		"code_actions list": {"action": "code_actions", "file": "a.go"},
+	} {
+		if _, err := pi.OMP.Parse(call("omp", "lsp", in)); !errors.Is(err, harness.ErrNoAction) {
+			t.Errorf("%s: %v, want ErrNoAction", name, err)
+		}
+	}
+}

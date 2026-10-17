@@ -124,3 +124,12 @@ test('timeout: a guard that does not answer in time blocks the call', async () =
   const hooks = await mod.HGuard({ client: { tui: { showToast: async () => {} }, session: { get: async () => ({}) } }, directory: '/w' })
   await assert.rejects(before(hooks, 'bash', { command: 'ls' }), /exit code -1/)
 })
+
+test('tool.execute.after: text in an embedded MCP resource is passed on for scanning', async () => {
+  const { command, record } = await fake({ action: 'pass' })
+  const { hooks } = await plugin(command)
+  const output = { title: '', output: '', metadata: {}, content: [{ type: 'text', text: 'a' }, { type: 'resource', resource: { uri: 'x://y', text: 'SECRET' } }, { type: 'image', data: 'AA==' }] }
+  await hooks['tool.execute.after']({ tool: 'srv_q', sessionID: 'ses_1', callID: 'c', args: {} }, output)
+  const [r] = await recorded(record)
+  assert.deepEqual(r.request.result.content, [{ type: 'text', text: 'a' }, { type: 'text', text: 'SECRET' }])
+})

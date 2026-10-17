@@ -144,10 +144,15 @@ function notify(ctx, level, text) {
   }
 }
 
-// textBlocks 只转交文本块：图片等内容不参与检查
+// textBlocks 只转交文本：文本块，以及 MCP 结果里嵌入的资源的文本（harness 同样把它交给模型）；图片等内容不参与检查
 function textBlocks(content) {
   if (!Array.isArray(content)) return []
-  return content.filter((b) => b && b.type === 'text').map((b) => ({ type: 'text', text: b.text }))
+  const out = []
+  for (const b of content) {
+    if (b && b.type === 'text') out.push({ type: 'text', text: b.text })
+    else if (b && b.type === 'resource' && b.resource && typeof b.resource.text === 'string') out.push({ type: 'text', text: b.resource.text })
+  }
+  return out
 }
 
 function sessionOf(ctx) {

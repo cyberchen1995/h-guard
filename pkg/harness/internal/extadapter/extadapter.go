@@ -88,9 +88,9 @@ func Compact(raw json.RawMessage) string {
 	return b.String()
 }
 
-// Relative 报告路径是否相对于 cwd（不以 /、~、盘符或 \\ 开头）。
+// Relative 报告路径是否相对于 cwd（不以 /、~、\ 或盘符开头）。Windows 上 \repo 从当前盘的根开始，不是相对路径。
 func Relative(p string) bool {
-	if strings.HasPrefix(p, "/") || strings.HasPrefix(p, "~") || strings.HasPrefix(p, `\\`) {
+	if strings.HasPrefix(p, "/") || strings.HasPrefix(p, "~") || strings.HasPrefix(p, `\`) {
 		return false
 	}
 	return !(len(p) >= 3 && p[1] == ':' && (p[2] == '\\' || p[2] == '/'))

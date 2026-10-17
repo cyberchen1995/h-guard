@@ -225,9 +225,12 @@ Differences:
 - **Warnings** are notifications in the interface; without one they go to
   stderr.
 - **oh-my-pi's `eval`** runs Python or JavaScript code that h-guard cannot
-  read, so every call asks. oh-my-pi's patch-style `edit` is read from its file
-  headers (`REM` deletes, `MV` renames); an edit whose files cannot be read
-  asks. `read` paths lose their line selectors (`a.go:10-20`).
+  read, so every call asks. oh-my-pi's patch-style `edit` (and `apply_patch` in
+  that mode) is read from its file headers (`REM` deletes, `MV` renames), and
+  its `patch` mode from each entry's `op` and `rename`; an edit whose files
+  cannot be read asks. `lsp` renames, applied code actions and raw requests
+  change files h-guard cannot list, so they ask. `read` paths lose their line
+  selectors (`a.go:10-20`).
 - **Shell.** Both run `bash` commands with a bash-compatible shell on every
   platform (pi uses Git Bash on Windows; oh-my-pi has its own), so they are
   checked as POSIX commands.
@@ -280,6 +283,9 @@ DeepSeek Harness differences:
   `workdir`; a later change through the `working_directory` tool is not seen.
 - **Code tools.** Calls made from `run_code` are checked one by one as they
   reach the tool pipeline; `run_code` itself is not.
+- **Terminals.** Text sent to a persistent terminal (`terminal_send`) is
+  checked as a POSIX command and always asks, because the terminal's shell is
+  not known.
 
 When h-guard cannot run, the plugin asks before a tool call and lets tool
 output and prompts through with a line in dsh's log.

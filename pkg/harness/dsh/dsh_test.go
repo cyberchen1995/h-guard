@@ -129,3 +129,23 @@ func TestToolOutput(t *testing.T) {
 		t.Fatalf("%+v %v", ev, err)
 	}
 }
+
+// TestTerminalSend：写进持久终端的内容按 POSIX 命令检查，另外请求确认（看不出终端是哪种 shell）。
+func TestTerminalSend(t *testing.T) {
+	var tu *harness.TargetUnparsedError
+	_, err := a.Parse(pre("terminal_send", map[string]any{"session_id": "t1", "text": "rm ~/.dsh/cordis.patch.yml"}))
+	if !errors.As(err, &tu) || len(tu.Event.Actions) != 1 || tu.Event.Actions[0].Exec.Command != "rm ~/.dsh/cordis.patch.yml" {
+		t.Fatalf("%v %+v", err, tu)
+	}
+	if _, err := a.Parse(pre("terminal_send", map[string]any{"session_id": "t1", "text": ""})); !errors.Is(err, harness.ErrNoAction) {
+		t.Errorf("empty text: %v", err)
+	}
+}
+
+// TestDriveRootedWorkdir：Windows 上 \repo 从当前盘的根开始，不拼到会话目录后面。
+func TestDriveRootedWorkdir(t *testing.T) {
+	ev, err := a.Parse(req("tools/pre-execute", map[string]any{"name": "pwsh", "callId": "c", "arguments": map[string]string{"command": "dir", "workdir": `\repo`}}, nil))
+	if err != nil || ev.Cwd != `\repo` {
+		t.Fatalf("%q %v", ev.Cwd, err)
+	}
+}

@@ -98,9 +98,15 @@ function replace(output, text) {
   if (output.metadata && typeof output.metadata.output === 'string') output.metadata.output = text
 }
 
-// textBlocks 只转交文本块：图片等内容不参与检查
+// textBlocks 只转交文本：文本块，以及 MCP 结果里嵌入的资源的文本（harness 同样把它交给模型）；图片等内容不参与检查
 function textBlocks(content) {
-  return content.filter((b) => b && b.type === 'text').map((b) => ({ type: 'text', text: b.text }))
+  if (!Array.isArray(content)) return []
+  const out = []
+  for (const b of content) {
+    if (b && b.type === 'text') out.push({ type: 'text', text: b.text })
+    else if (b && b.type === 'resource' && b.resource && typeof b.resource.text === 'string') out.push({ type: 'text', text: b.resource.text })
+  }
+  return out
 }
 
 // callGuard 按协议组装请求、运行 h-guard、校验回复。任何失败都返回 { action: 'error' }，由各 hook 按固定规则处理

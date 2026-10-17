@@ -100,6 +100,16 @@ type toolInput struct {
 	Path    string   `json:"path"`
 	Paths   []string `json:"paths"` // omp 的 edit（由 hashline 补丁头派生）、ast_edit
 	Input   string   `json:"input"` // omp 的 edit：hashline 或 apply_patch 形式的补丁
+	// omp 的 edit 在 patch 模式下：每项可以删除（op: delete）或改名（rename）顶层 path 的文件
+	Edits []struct {
+		Op     string `json:"op"`
+		Rename string `json:"rename"`
+	} `json:"edits"`
+	// omp 的 lsp
+	Action  string `json:"action"`
+	File    string `json:"file"`
+	NewName string `json:"new_name"`
+	Apply   *bool  `json:"apply"`
 }
 
 type inputData struct {
@@ -191,7 +201,7 @@ func (a Adapter) touches(tool string) bool {
 	switch tool {
 	case "bash", "powershell", "write", "edit":
 		return true
-	case "eval", "ast_edit":
+	case "eval", "ast_edit", "apply_patch", "lsp":
 		return a.omp
 	}
 	return false
@@ -201,8 +211,9 @@ func (a Adapter) touches(tool string) bool {
 //   - bash（omp 的 bash 在任何平台上都是 bash 兼容的 shell；pi 在 Windows 上用 Git Bash）执行 POSIX 命令，pi 在 Windows
 //     上的 powershell 工具执行 PowerShell 命令；
 //   - read、grep 读文件，write、edit 写文件；
-//   - omp 的 edit 是补丁时读出补丁头里的文件（REM 删除、MV 改名），ast_edit 写 paths 里的文件；omp 的 eval 执行
-//     Python 或 JavaScript 代码，h-guard 读不懂，请求确认（errUnparsed）。
+//   - omp 的 edit（及 apply_patch 模式下的 apply_patch）是补丁时读出补丁头里的文件（REM 删除、MV 改名），patch 模式的
+//     各项可以删除或改名；ast_edit 写 paths 里的文件；lsp 见 ompLSP；omp 的 eval 执行 Python 或 JavaScript 代码，
+//     h-guard 读不懂，请求确认（errUnparsed）。
 //
 // 其余工具（ls、find、MCP 等）不产生动作。
 func (a Adapter) actions(tool string, in toolInput) ([]guard.Action, error) {
@@ -232,6 +243,16 @@ func (a Adapter) actions(tool string, in toolInput) ([]guard.Action, error) {
 			return one(extadapter.File(guard.ActionFileWrite, in.Path))
 		}
 		return ompEdit(in)
+	case "apply_patch": // omp 的 apply_patch 模式：工具在调用里以这个名字出现
+		if !a.omp {
+			return nil, ErrNoAction
+		}
+		return ompEdit(in)
+	case "lsp":
+		if !a.omp {
+			return nil, ErrNoAction
+		}
+		return ompLSP(in)
 	}
 	if !a.omp {
 		return nil, ErrNoAction
@@ -258,10 +279,20 @@ func (a Adapter) actions(tool string, in toolInput) ([]guard.Action, error) {
 // 段内的 REM 删除这个文件、MV <目标> 把它改名；apply_patch 模式的补丁按 apply_patch 的格式读。补丁里读不出文件时，用 omp 派生的 path、paths；都没有时请求确认。
 func ompEdit(in toolInput) ([]guard.Action, error) {
 	if strings.TrimSpace(in.Input) == "" {
-		if act, ok := extadapter.File(guard.ActionFileWrite, in.Path); ok {
-			return []guard.Action{act}, nil
+		act, ok := extadapter.File(guard.ActionFileWrite, in.Path)
+		if !ok {
+			return nil, errUnparsed
 		}
-		return nil, errUnparsed
+		// patch 模式：删除与改名（目标同样检查）按各项给出
+		for _, e := range in.Edits {
+			switch {
+			case strings.TrimSpace(e.Rename) != "":
+				act.Kind, act.File.To = guard.ActionFileRename, e.Rename
+			case e.Op == "delete" && act.Kind == guard.ActionFileWrite:
+				act.Kind = guard.ActionFileDelete
+			}
+		}
+		return []guard.Action{act}, nil
 	}
 	if strings.Contains(in.Input, applypatch.BeginPatch) { // apply_patch 模式
 		acts, err := applypatch.Actions(in.Input)
@@ -300,6 +331,41 @@ func ompEdit(in toolInput) ([]guard.Action, error) {
 		return nil, errUnparsed
 	}
 	return acts, nil
+}
+
+// ompLSP 读出 omp 的 lsp 改动的文件：rename_file 把 file 改名为 new_name；rename（除非 apply 为 false）、
+// 应用的 code_actions 与原始的 request 会改动不知道有哪些的文件，按 file 写文件并请求确认（errUnparsed）。
+// 其余动作（诊断、跳转、符号、状态等）只读，不产生动作。
+func ompLSP(in toolInput) ([]guard.Action, error) {
+	applied := in.Apply == nil || *in.Apply
+	var acts []guard.Action
+	if act, ok := extadapter.File(guard.ActionFileWrite, in.File); ok && in.File != "*" {
+		acts = append(acts, act)
+	}
+	switch in.Action {
+	case "rename_file":
+		if !applied {
+			return nil, ErrNoAction
+		}
+		if len(acts) == 0 || strings.TrimSpace(in.NewName) == "" {
+			return nil, errUnparsed
+		}
+		acts[0].Kind, acts[0].File.To = guard.ActionFileRename, in.NewName
+		return acts, errUnparsed // 引用它的文件同样会被改动
+	case "rename":
+		if !applied {
+			return nil, ErrNoAction
+		}
+		return acts, errUnparsed
+	case "code_actions":
+		if in.Apply == nil || !*in.Apply {
+			return nil, ErrNoAction
+		}
+		return acts, errUnparsed
+	case "request":
+		return acts, errUnparsed
+	}
+	return nil, ErrNoAction
 }
 
 var hashlineTag = regexp.MustCompile(`#[0-9a-fA-F]{4}$`)
