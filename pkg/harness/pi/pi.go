@@ -471,8 +471,8 @@ func ompWriteTarget(p string) (string, error) {
 	return p, nil
 }
 
-// containerExt 是 omp 能以「文件:内部路径」读写的容器：归档与 SQLite 数据库。
-var containerExt = regexp.MustCompile(`(?i)\.(zip|jar|war|ear|apk|aar|ipa|xpi|nupkg|whl|tar|tar\.gz|tgz|tar\.zst|tzst|asar|sqlite|sqlite3|db)$`)
+// containerExt 是 omp 能以「文件:内部路径」读写的容器：归档（omp 18.11.3 的 pi-utils/ar 注册表）与 SQLite 数据库。
+var containerExt = regexp.MustCompile(`(?i)\.(tar|tar\.gz|tgz|tar\.bz2|tbz2|tbz|tar\.xz|txz|tar\.zst|tzst|tar\.z|zip|jar|war|ear|apk|aar|whl|ipa|xpi|vsix|nupkg|cbz|rar|cbr|7z|iso|cab|cpio|rpm|ar|a|lib|deb|lzh|lha|arj|asar|gz|bz2|xz|zst|z|lzma|sqlite|sqlite3|db|db3)$`)
 
 // containerFile 返回「容器文件:内部路径」里的容器文件；盘符的冒号不算。
 func containerFile(p string) (string, bool) {
@@ -602,6 +602,8 @@ func (a Adapter) fileContent(tool string, in toolInput) bool {
 	case "read", "grep", "search": // search 是 omp 的 grep 的旧名
 		return true
 	case "ast_grep": // omp 的结构化搜索，结果是源文件里的片段
+		return a.omp
+	case "lsp": // definition、references、implementation 等的结果带着被引用文件的源码
 		return a.omp
 	case "bash":
 		return command.ReadsFiles(in.Command, guard.ShellPOSIX)

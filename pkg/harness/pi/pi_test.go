@@ -359,6 +359,15 @@ func TestOMPPaths(t *testing.T) {
 	if _, err := pi.OMP.Parse(call("omp", "lsp", map[string]any{"action": "diagnostics", "file": "a.go"})); !errors.Is(err, harness.ErrNoAction) {
 		t.Errorf("lsp file diagnostics: %v, want ErrNoAction", err)
 	}
+	for in, want := range map[string]string{"backup.7z:keys/id_rsa": "backup.7z", "b.tar.bz2:config": "b.tar.bz2", "x.vsix:a": "x.vsix", "d.db3:t": "d.db3"} {
+		got, _ := actions(t, pi.OMP, "read", map[string]any{"path": in})
+		if len(got) != 1 || got[0].File.Path != want {
+			t.Errorf("read %q: %+v, want %q", in, got, want)
+		}
+	}
+	if ev, err := pi.OMP.Parse(result("omp", "lsp", map[string]any{"action": "references", "file": "a.go"}, "K=V")); err != nil || !ev.FileContent {
+		t.Errorf("lsp result: %+v %v", ev, err)
+	}
 	if ev, err := pi.OMP.Parse(result("omp", "ast_grep", map[string]any{"pat": "x"}, "K=V")); err != nil || !ev.FileContent {
 		t.Errorf("ast_grep result: %+v %v", ev, err)
 	}
