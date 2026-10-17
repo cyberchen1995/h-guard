@@ -19,6 +19,7 @@ import (
 	"github.com/cyberchen1995/h-guard/internal/config"
 	"github.com/cyberchen1995/h-guard/internal/engine"
 	"github.com/cyberchen1995/h-guard/internal/i18n"
+	"github.com/cyberchen1995/h-guard/internal/install"
 	"github.com/cyberchen1995/h-guard/internal/rules"
 	"github.com/cyberchen1995/h-guard/internal/store"
 	"github.com/cyberchen1995/h-guard/pkg/detect/paths"
@@ -284,6 +285,15 @@ func ompConfig(o Options) string {
 	return filepath.Join(o.Home, d)
 }
 
+// piAgentDir 是 $PI_CODING_AGENT_DIR，开头的 ~ 与 pi 一样展开（install pi 写扩展的目录与它一致）；没有设置时为空。
+func piAgentDir(o Options) string {
+	d := o.Getenv("PI_CODING_AGENT_DIR")
+	if d == "" || o.Home == "" {
+		return d
+	}
+	return install.ExpandPiDir(o.Home, d)
+}
+
 // newEngine 组装 Engine：action 检查与 outbound 检查。文件动作的保护路径用主目录、h-guard 实际的配置与缓存目录，
 // 以及这次 --config 加载的文件展开。
 func (s setup) newEngine(o Options, j action.Judge, oj outbound.Judge) *engine.Engine {
@@ -291,7 +301,7 @@ func (s setup) newEngine(o Options, j action.Judge, oj outbound.Judge) *engine.E
 		Paths: paths.Env{Home: o.Home, FoldCase: paths.FoldCaseDefault, Windows: paths.WindowsDefault,
 			Vars: map[string]string{rules.VarConfig: o.ConfigDir, rules.VarCache: o.CacheDir, rules.VarExtraConfig: s.extra,
 				rules.VarClaudeConfig: o.Getenv("CLAUDE_CONFIG_DIR"), rules.VarCodexHome: o.Getenv("CODEX_HOME"),
-				rules.VarXDGConfig: o.Getenv("XDG_CONFIG_HOME"), rules.VarPiAgentDir: o.Getenv("PI_CODING_AGENT_DIR"), rules.VarDSHHome: o.Getenv("DSH_HOME"), rules.VarOMPConfig: ompConfig(o)}}}
+				rules.VarXDGConfig: o.Getenv("XDG_CONFIG_HOME"), rules.VarPiAgentDir: piAgentDir(o), rules.VarDSHHome: o.Getenv("DSH_HOME"), rules.VarOMPConfig: ompConfig(o)}}}
 	o2 := &outbound.Check{Rules: s.rules, Config: s.cfg, Judge: oj}
 	return &engine.Engine{
 		Checks: []guard.Check{c, o2}, Catalog: s.catalog, Locale: s.locale,

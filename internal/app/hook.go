@@ -286,14 +286,35 @@ func (h *hookRun) remember(p *cache.Prompts, ev guard.Event, d guard.Decision) {
 	if scan != nil && !scan.Complete {
 		return
 	}
+	// 一个事件可以有几条指令（dsh 一步里的几条消息），ev.Text 是它们按顺序连起来的文本：按顺序在 ev.Text 里找到
+	// 每条指令的位置，把落在它里面的区间移过去遮蔽；找不到位置而又有要遮蔽的区间时这条不写入
+	from := 0
 	for _, r := range ev.Requests {
-		if scan != nil && r.Text == ev.Text {
-			r.Text = redactSpans(r.Text, scan.Secret)
+		if scan != nil && len(scan.Secret) > 0 {
+			off := strings.Index(ev.Text[from:], r.Text)
+			if off < 0 {
+				continue
+			}
+			off += from
+			from = off + len(r.Text)
+			r.Text = redactSpans(r.Text, spansWithin(scan.Secret, off, from))
 		}
 		if h.live() {
 			_ = p.Add(ev.Harness, ev.SessionID, r)
 		}
 	}
+}
+
+// spansWithin 返回与 [start, end) 相交的区间，截到这一段里并换成相对 start 的偏移。
+func spansWithin(spans [][2]int, start, end int) [][2]int {
+	var out [][2]int
+	for _, sp := range spans {
+		if sp[1] <= start || sp[0] >= end {
+			continue
+		}
+		out = append(out, [2]int{max(sp[0], start) - start, min(sp[1], end) - start})
+	}
+	return out
 }
 
 // redactSpans 把 text 中的区间（字节偏移，可以重叠）换成 [redacted]。

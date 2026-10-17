@@ -4,9 +4,14 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/cyberchen1995/h-guard/internal/cache"
+	"github.com/cyberchen1995/h-guard/internal/check/outbound"
+	"github.com/cyberchen1995/h-guard/pkg/guard"
 	"github.com/cyberchen1995/h-guard/pkg/harness/extproto"
 )
 
@@ -221,4 +226,36 @@ func TestUnknownTools(t *testing.T) {
 func mustOut(e *env, in []byte, harness, event string) string {
 	out, _, _ := e.run(in, "hook", harness, "--event", event)
 	return out
+}
+
+// TestPiAgentDirTilde：PI_CODING_AGENT_DIR 写成 ~/… 时，防篡改规则保护的是 install pi 实际写扩展的、展开后的目录。
+func TestPiAgentDirTilde(t *testing.T) {
+	e := newEnv(t)
+	e.vars["PI_CODING_AGENT_DIR"] = "~/agents/pi"
+	ext := filepath.Join(e.home, "agents", "pi", "extensions", "h-guard.js")
+	out, errs, code := e.run(extReq("pi", "tool_call", map[string]any{"toolCallId": "c", "toolName": "write", "input": map[string]string{"path": ext, "content": "x"}}),
+		"hook", "pi", "--event", "tool_call")
+	if code != 0 || extAction(t, out) == "pass" {
+		t.Errorf("overwrite the pi extension: %s (exit %d, %s)", out, code, errs)
+	}
+}
+
+// TestRememberRedactsEachRequest：一个事件有几条指令（dsh 一步里的几条消息）时，用户正则认出的区间按每条指令在
+// ev.Text 里的位置遮蔽后再写入指令缓存。
+func TestRememberRedactsEachRequest(t *testing.T) {
+	dir := t.TempDir()
+	h := &hookRun{o: Options{Getenv: func(string) string { return "" }, CacheDir: dir, Now: time.Now}}
+	ev := guard.Event{Kind: guard.EventPrompt, Harness: "dsh", SessionID: "s1", Text: "deploy\nuse token tok_SECRET now",
+		Requests: []guard.Request{{Text: "deploy", Source: guard.SourceUser}, {Text: "use token tok_SECRET now", Source: guard.SourceUser}}}
+	at := strings.Index(ev.Text, "tok_SECRET")
+	h.scan = &outbound.Scan{Complete: true, Secret: [][2]int{{at, at + len("tok_SECRET")}}}
+	p := &cache.Prompts{Dir: filepath.Join(dir, "prompts"), Now: time.Now}
+	h.remember(p, ev, guard.DecisionWarn)
+	var got []string
+	for _, r := range p.Recent("dsh", "s1", 10) {
+		got = append(got, r.Text)
+	}
+	if !slices.Contains(got, "deploy") || !slices.Contains(got, "use token [redacted] now") || strings.Contains(strings.Join(got, "|"), "tok_SECRET") {
+		t.Errorf("cached %q", got)
+	}
 }

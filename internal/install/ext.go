@@ -175,18 +175,23 @@ func OpenCode(t Target, remove bool) ([]Step, error) {
 	return []Step{s}, nil
 }
 
-// PiAgentDir 是 pi 的 agent 目录：$PI_CODING_AGENT_DIR（与 pi 一样展开开头的 ~），默认 ~/.pi/agent。
+// PiAgentDir 是 pi 的 agent 目录：$PI_CODING_AGENT_DIR（见 ExpandPiDir），默认 ~/.pi/agent。
 func PiAgentDir(t Target) string {
 	if d := t.Getenv("PI_CODING_AGENT_DIR"); d != "" {
-		switch {
-		case d == "~":
-			return t.Home
-		case strings.HasPrefix(d, "~/"), runtime.GOOS == "windows" && strings.HasPrefix(d, `~\`):
-			return filepath.Join(t.Home, d[2:])
-		}
-		return d
+		return ExpandPiDir(t.Home, d)
 	}
 	return filepath.Join(t.Home, ".pi", "agent")
+}
+
+// ExpandPiDir 与 pi 一样展开 $PI_CODING_AGENT_DIR 开头的 ~（~、~/…，Windows 上另有 ~\…）；其余原样返回。
+func ExpandPiDir(home, d string) string {
+	switch {
+	case d == "~":
+		return home
+	case strings.HasPrefix(d, "~/"), runtime.GOOS == "windows" && strings.HasPrefix(d, `~\`):
+		return filepath.Join(home, d[2:])
+	}
+	return d
 }
 
 // OMPAgentDir 是 oh-my-pi 默认配置档的 agent 目录：$PI_CODING_AGENT_DIR，默认 ~/<$PI_CONFIG_DIR 或 .omp>/agent。

@@ -327,6 +327,14 @@ func TestOMPPaths(t *testing.T) {
 	if asJSON(got) != asJSON(want) {
 		t.Errorf("sloppy edit: %s, want %s", asJSON(got), asJSON(want))
 	}
+	got, _ = actions(t, pi.OMP, "edit", map[string]any{"input": "[@~/.dsh/cordis.patch.yml#1a2b]\n+ x\n[a.txt]\nMV file:///w/b.txt\n"})
+	want = []guard.Action{
+		{Kind: guard.ActionFileWrite, File: &guard.FileAction{Path: "~/.dsh/cordis.patch.yml"}},
+		{Kind: guard.ActionFileRename, File: &guard.FileAction{Path: "a.txt", To: "/w/b.txt"}},
+	}
+	if asJSON(got) != asJSON(want) {
+		t.Errorf("normalized patch targets: %s, want %s", asJSON(got), asJSON(want))
+	}
 	var tu *harness.TargetUnparsedError
 	for name, in := range map[string]map[string]any{
 		"hashline local URL": {"input": "[local://plan.md#1a2b]\n+ x\n"},

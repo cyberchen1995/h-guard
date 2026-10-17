@@ -144,6 +144,11 @@ func TestTerminalSend(t *testing.T) {
 	if err != nil || !ev.FileContent {
 		t.Errorf("terminal_send output: %+v %v", ev, err)
 	}
+	for _, tool := range []string{"terminal_read", "job_output"} {
+		if ev, err := a.Parse(post(tool, map[string]any{"session_id": "t1"}, "KEY")); err != nil || !ev.FileContent {
+			t.Errorf("%s output: %+v %v", tool, ev, err)
+		}
+	}
 }
 
 // TestDriveRootedWorkdir：Windows 上 \repo 从当前盘的根开始，不拼到会话目录后面。

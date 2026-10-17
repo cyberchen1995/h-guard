@@ -337,6 +337,10 @@ var ompReadOnly = map[string]bool{
 // 段内的 REM 删除这个文件、MV <目标> 把它改名；apply_patch 模式的补丁按 apply_patch 的格式读。补丁里读不出文件时，用 omp 派生的 path、paths；都没有时请求确认。
 func ompEdit(in toolInput) ([]guard.Action, error) {
 	acts, err := ompEditTargets(in)
+	// 补丁头与 MV 里的路径同样按 ompPath 规范化（[@~/x#tag] 改的是主目录下的 x）
+	for _, act := range acts {
+		act.File.Path, act.File.To = ompPath(act.File.Path), ompPath(act.File.To)
+	}
 	if err != nil {
 		return acts, err
 	}
