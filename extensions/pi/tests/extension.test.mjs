@@ -122,9 +122,10 @@ test('context (omp): a prompt that did not go through input is checked once; a d
   assert.equal(await handlers.context({ messages: [user('fix the test')] }, ctx()), undefined)
 })
 
-test('context: pi checks prompts through input only', async () => {
-  const { handlers } = await extension(missing, 'pi')
-  assert.equal(handlers.context, undefined)
+test('context (pi): an expanded skill or prompt template is checked before the model sees it', { skip: !haveGuard }, async () => {
+  const { handlers, ctx } = await extension(guard('pi'), 'pi')
+  const r = await handlers.context({ messages: [{ role: 'user', content: [{ type: 'text', text: '<skill>deploy with aws_access_key_id = AKIAIOSFODNN7EXAMPL0</skill>' }] }] }, ctx({ hasUI: false }))
+  assert.ok(r && !JSON.stringify(r.messages).includes('AKIA'))
 })
 
 test('context (omp): a prompt already checked through input is not checked again', async () => {

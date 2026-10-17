@@ -61,38 +61,36 @@ export default function (pi) {
     return undefined
   })
 
-  // omp 只在交互界面与 RPC 模式里触发 input，-p 与 SDK 的提示词不经过它。每次请求模型之前的 context 事件补上：
-  // 没检查过的用户消息照样交给 h-guard，被拒的消息换成说明再交给模型（只改这一次请求，不改会话记录，所以每次都要换）
-  if (HARNESS === 'omp') {
-    pi.on('context', async (event, ctx) => {
-      const messages = Array.isArray(event.messages) ? event.messages : []
-      let changed = false
-      const out = []
-      for (const m of messages) {
-        const text = m && m.role === 'user' ? userText(m.content) : ''
-        if (text === '') {
-          out.push(m)
-          continue
-        }
-        // 扩展用 sendUserMessage(..., { attribution: 'agent' }) 发出的消息不经过 input，按扩展发出的自动消息检查
-        const source = m.attribution === 'agent' ? 'extension' : 'context'
-        const key = cacheKey(ctx, source, text)
-        const verdict = checked.has(key) ? checked.get(key) : await checkPrompt(ctx, text, source)
-        if (verdict === null) {
-          out.push(m)
-          continue
-        }
-        out.push({ ...m, content: [{ type: 'text', text: verdict }] })
-        changed = true
+  // input 看到的不是全部：omp 只在交互界面与 RPC 模式里触发 input（-p 与 SDK 的提示词不经过它），pi 在 input 之后才把
+  // /skill:名字 与提示词模板展开成文件的内容。每次请求模型之前的 context 事件补上：没检查过的用户消息照样交给 h-guard，
+  // 被拒的消息换成说明再交给模型（只改这一次请求，不改会话记录，所以每次都要换）
+  pi.on('context', async (event, ctx) => {
+    const messages = Array.isArray(event.messages) ? event.messages : []
+    let changed = false
+    const out = []
+    for (const m of messages) {
+      const text = m && m.role === 'user' ? userText(m.content) : ''
+      if (text === '') {
+        out.push(m)
+        continue
       }
-      return changed ? { messages: out } : undefined
-    })
-  }
+      // 扩展用 sendUserMessage(..., { attribution: 'agent' }) 发出的消息不经过 input，按扩展发出的自动消息检查
+      const source = m.attribution === 'agent' ? 'extension' : 'context'
+      const key = cacheKey(ctx, source, text)
+      const verdict = checked.has(key) ? checked.get(key) : await checkPrompt(ctx, text, source)
+      if (verdict === null) {
+        out.push(m)
+        continue
+      }
+      out.push({ ...m, content: [{ type: 'text', text: verdict }] })
+      changed = true
+    }
+    return changed ? { messages: out } : undefined
+  })
 }
 
-// checked 记下检查过的提示词（会话与文本 → null 放行，或代替它的说明），omp 的 context 事件里同一会话的同一段文本
-// 不重复检查。只在 omp 上记下（pi 没有 context 事件）；h-guard 没能检查的不记下，下次请求模型时再查。超过 CHECKED_MAX
-// 条时丢掉最早的一条，丢掉的提示词下次出现时重新检查
+// checked 记下检查过的提示词（会话与文本 → null 放行，或代替它的说明），context 事件里同一会话的同一段文本不重复检查。
+// h-guard 没能检查的不记下，下次请求模型时再查。超过 CHECKED_MAX 条时丢掉最早的一条，丢掉的提示词下次出现时重新检查
 const checked = new Map()
 const CHECKED_MAX = 1000
 
@@ -118,11 +116,9 @@ async function checkPrompt(ctx, text, source) {
       verdict = textOf(reply) + ' The prompt was withheld.'
     }
     if (reply.action === 'warn') notify(ctx, 'warning', messageOf(reply))
-    if (HARNESS === 'omp') {
-      checked.delete(key)
-      checked.set(key, verdict)
-      if (checked.size > CHECKED_MAX) checked.delete(checked.keys().next().value)
-    }
+    checked.delete(key)
+    checked.set(key, verdict)
+    if (checked.size > CHECKED_MAX) checked.delete(checked.keys().next().value)
     return verdict
   } catch (err) {
     notify(ctx, 'warning', FAILED)

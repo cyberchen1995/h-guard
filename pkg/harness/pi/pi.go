@@ -3,8 +3,8 @@
 // 回复翻译成扩展的返回值（block、替换 content、handled）与界面上的确认和提示。
 //
 // 请求的 data 是事件本身：tool_call 为 {toolCallId, toolName, input}；tool_result 为 {toolCallId, toolName, input,
-// isError}，result 是 {content}；input 为 {text, source}。omp 只在交互界面与 RPC 模式里触发 input，扩展在每次请求模型
-// 之前的 context 事件里补查其余的提示词，同样以 input 发来（source 为 context）。
+// isError}，result 是 {content}；input 为 {text, source}。omp 只在交互界面与 RPC 模式里触发 input，pi 在 input 之后才展开
+// skill 与提示词模板，扩展在每次请求模型之前的 context 事件里补查其余的提示词，同样以 input 发来（source 为 context）。
 //
 // 导入本包即注册名为 pi 与 omp 的 adapter。
 package pi
@@ -200,7 +200,7 @@ func (a Adapter) Parse(raw []byte) (guard.Event, error) {
 
 // SourceOf 按 input 事件的 source 判定指令来源：extension 是扩展用 sendUserMessage 发出的消息，subagent 是扩展在 omp
 // 的子 agent 会话（ctx.agent.kind 为 sub）里看到的消息，都是自动消息；interactive、rpc、
-// context（omp 的扩展在 context 事件里补查的提示词）与认不出的取值按用户本人（pi 的 -p 与 SDK 的提示词也报告为 interactive）。
+// context（扩展在 context 事件里补查的提示词：omp 的 -p 与 SDK 的提示词、pi 展开后的 skill 与提示词模板）与认不出的取值按用户本人（pi 的 -p 与 SDK 的提示词也报告为 interactive）。
 func SourceOf(source string) guard.Source {
 	if source == "extension" || source == "subagent" {
 		return guard.SourceAutomated
@@ -649,6 +649,8 @@ func (a Adapter) fileContent(tool string, in toolInput) bool {
 	case "read", "grep", "search": // search 是 omp 的 grep 的旧名
 		return true
 	case "ast_grep", "ast_edit": // omp 的结构化搜索与改写的预览，结果是源文件里的片段
+		return a.omp
+	case "edit", "apply_patch", "github", "wait": // omp：改完的预览、github 的 file_read、wait 取回的后台任务输出
 		return a.omp
 	case "recall", "reflect": // omp 的长期记忆里存下的原文（reflect 可以原样列出取回的记忆）
 		return a.omp

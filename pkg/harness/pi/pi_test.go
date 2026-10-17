@@ -391,7 +391,7 @@ func TestOMPPaths(t *testing.T) {
 	if !slices.Contains(paths, "~/.ssh/id_rsa") || !slices.Contains(paths, "README.md") || !slices.Contains(paths, "notes.txt") {
 		t.Errorf("delimited read: %q", paths)
 	}
-	for _, tool := range []string{"ast_grep", "ast_edit", "eval", "recall", "reflect"} {
+	for _, tool := range []string{"ast_grep", "ast_edit", "eval", "recall", "reflect", "edit", "apply_patch", "github", "wait"} {
 		if ev, err := pi.OMP.Parse(result("omp", tool, map[string]any{"pat": "x"}, "K=V")); err != nil || !ev.FileContent {
 			t.Errorf("%s result: %+v %v", tool, ev, err)
 		}

@@ -210,12 +210,13 @@ or restart after installing.
 | `tool_call` | checks the actions (`bash`, pi's `powershell` on Windows; `read`, `grep`, `write`, `edit`; oh-my-pi's patch-style `edit` and `eval`; `ast_edit` only previews, so it is checked as reading its files, and applying it through `xd://resolve` asks); `deny` blocks the call and the model reads the reason; `ask` opens a confirmation dialog |
 | `tool_result` | scans the output; `deny` replaces the content the model sees |
 | `input` | scans the prompt; `deny` drops it and shows the reason |
-| `context` (oh-my-pi only) | scans user messages that did not go through `input`; `deny` replaces the message the model receives with h-guard's reason |
+| `context` | scans user messages that `input` did not see (pi's expanded `/skill:` and prompt templates, oh-my-pi's `-p` and SDK prompts); `deny` replaces the message the model receives with h-guard's reason |
 
 Differences:
 
-- **oh-my-pi's `-p` and SDK prompts.** oh-my-pi fires `input` only in its
-  interface and in RPC mode. Other prompts are checked on `context`, just
+- **Prompts `input` does not see.** pi expands `/skill:` and prompt
+  templates after `input`, and oh-my-pi fires `input` only in its interface and
+  in RPC mode. These prompts are checked on `context`, just
   before each model request: a denied prompt reaches the model only as
   h-guard's reason and the model still answers it, and the session file keeps
   the original text.
