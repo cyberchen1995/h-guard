@@ -381,50 +381,95 @@ func without(m map[string]judge.Answer, ids ...string) map[string]judge.Answer {
 
 // TestDeadlineDuringAskIsReportedAsTimeout：截止时间落在取答中途，后端保留已答的、没有返回错误（如 openai logprobs
 // 逐题请求）：缺的题记 judge_timeout，不记 judge_answer_invalid。已答的保留，缺答不产生豁免，所以结论仍是请求确认。
+//
+// 截止时间不靠墙钟：假后端在被调用时自己结束 ctx（expire），所以截止一定落在取答中途，与机器快慢无关。
+// 用墙钟的话，慢机器上构建检查与本地阶段（展开与正则）可能先用完时间，结论变成 local_budget_exceeded，测不到这里。
+// 取消与超时对产品是一回事：judge.KindOf 把 context.Canceled 与 DeadlineExceeded 都归为超时，
+// evalExec 用 ctx.Err() != nil 判断取答时截止时间是否已到。
 func TestDeadlineDuringAskIsReportedAsTimeout(t *testing.T) {
 	partial := without(dangerous(), action.SignalRequested, action.SignalRadius)
+	type answerFunc = func(ctx context.Context, qs []judge.Question) (judge.Response, error)
 	tests := []struct {
-		name   string
-		caps   judge.BackendCaps
-		answer func(ctx context.Context, qs []judge.Question) (judge.Response, error)
-		want   guard.Decision
-		fb     []string
+		name string
+		caps judge.BackendCaps
+		// backend 返回这次子测试的回答函数；expire 让截止时间立刻到达，nonSignal 是信号题以外的题数
+		backend func(expire func(), nonSignal int) answerFunc
+		want    guard.Decision
+		fb      []string
 	}{
 		{"a batch backend returns the partial answers after the deadline", judge.BackendCaps{Batch: true},
-			func(ctx context.Context, qs []judge.Question) (judge.Response, error) {
-				<-ctx.Done()
-				return answersFor(partial, qs), nil
+			func(expire func(), _ int) answerFunc {
+				return func(ctx context.Context, qs []judge.Question) (judge.Response, error) {
+					expire()
+					<-ctx.Done()
+					return answersFor(partial, qs), nil
+				}
 			}, guard.DecisionAsk, []string{action.FallbackJudgeTimeout}},
 		{"a per-question backend: the later questions fail at the deadline, the earlier answers are kept", judge.BackendCaps{},
-			func(ctx context.Context, qs []judge.Question) (judge.Response, error) {
-				if qs[0].ID == action.SignalRequested || qs[0].ID == action.SignalRadius {
-					<-ctx.Done()
-					return judge.Response{}, ctx.Err()
+			// 信号题以外的题立刻作答；两道信号题等到截止时间后报错。所有题都已发出、其余题都已答完时截止时间才到，
+			// 所以「已答的保留」是确定的（MaxConcurrent = 4：两道阻塞的信号题之外还有空位给其余题）
+			func(expire func(), nonSignal int) answerFunc {
+				var answered, waiting atomic.Int32
+				expireWhenAllArrived := func() {
+					if answered.Load() == int32(nonSignal) && waiting.Load() == 2 {
+						expire()
+					}
 				}
-				return answersFor(partial, qs), nil
+				return func(ctx context.Context, qs []judge.Question) (judge.Response, error) {
+					if qs[0].ID == action.SignalRequested || qs[0].ID == action.SignalRadius {
+						waiting.Add(1)
+						expireWhenAllArrived()
+						<-ctx.Done()
+						return judge.Response{}, ctx.Err()
+					}
+					r := answersFor(partial, qs)
+					answered.Add(1)
+					expireWhenAllArrived()
+					return r, nil
+				}
 			}, guard.DecisionAsk, []string{action.FallbackJudgeTimeout}},
 		{"the deadline passes after every answer arrived: no reason", judge.BackendCaps{Batch: true},
-			func(ctx context.Context, qs []judge.Question) (judge.Response, error) {
-				<-ctx.Done()
-				return answersFor(dangerous(), qs), nil
+			func(expire func(), _ int) answerFunc {
+				return func(ctx context.Context, qs []judge.Question) (judge.Response, error) {
+					expire()
+					<-ctx.Done()
+					return answersFor(dangerous(), qs), nil
+				}
 			}, guard.DecisionAsk, nil},
 		{"only the radius is missing at the deadline", judge.BackendCaps{Batch: true},
-			func(ctx context.Context, qs []judge.Question) (judge.Response, error) {
-				<-ctx.Done()
-				return answersFor(without(with(low(), "publish", 0.9), action.SignalRadius), qs), nil
+			func(expire func(), _ int) answerFunc {
+				return func(ctx context.Context, qs []judge.Question) (judge.Response, error) {
+					expire()
+					<-ctx.Done()
+					return answersFor(without(with(low(), "publish", 0.9), action.SignalRadius), qs), nil
+				}
 			}, guard.DecisionAsk, []string{action.FallbackJudgeTimeout}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel() // 每个子测试都要等到截止时间
-			b := &recordingBackend{caps: tt.caps, answer: tt.answer}
-			// 截止时间要留够本地阶段（展开与正则）的余量：它先用完的话结论是 local_budget_exceeded，
-			// 测不到取答中途的截止。-race 全量测试负载下 1 秒仍有充足余量。
-			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-			defer cancel()
-			v, err := guard.Run(ctx, newCheck(t, true, action.Judge{Backend: b}), event(nil, "git push origin main"))
+			t.Parallel()
+			// 先构建检查，再开始计时：构建（加载内置规则与文案）不占用这次检查的时间
+			c := newCheck(t, true, action.Judge{})
+			qs := c.Questions()
+			parent, expire := context.WithCancel(context.Background())
+			defer expire()
+			// 兜底：测试或产品有 bug 时不让整个测试挂住。正确的运行里永远走不到
+			ctx, stop := context.WithTimeout(parent, 30*time.Second)
+			defer stop()
+			b := &recordingBackend{caps: tt.caps, answer: tt.backend(expire, len(qs)-2)}
+			c.Judge.Backend = b
+			v, err := guard.Run(ctx, c, event(nil, "git push origin main"))
 			if err != nil {
 				t.Fatal(err)
+			}
+			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				t.Fatalf("the safety timeout fired: the backend never ended the context (%+v)", v)
+			}
+			if slices.Contains(v.Fallbacks, action.FallbackBudget) {
+				t.Fatalf("the local stage ran out of budget before the judge was asked (%+v)", v)
+			}
+			if len(b.asked) != len(qs) {
+				t.Errorf("asked %d questions %v, want all %d", len(b.asked), b.asked, len(qs))
 			}
 			if v.Decision != tt.want || !slices.Equal(v.Fallbacks, tt.fb) {
 				t.Errorf("decision = %s, fallbacks = %v, want %s %v (%+v)", v.Decision, v.Fallbacks, tt.want, tt.fb, v)
