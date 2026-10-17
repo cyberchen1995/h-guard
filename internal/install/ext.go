@@ -86,10 +86,19 @@ func extHarness(b []byte) string {
 	return ""
 }
 
-// extFileStep 计划一个归本项目所有的单文件扩展：安装时写出 data（内容相同时不改动），移除时删掉它。文件已存在而
+// extFileStep 计划一个归本项目所有的单文件扩展：安装时写出 data（内容相同时不改动），移除时删掉它；符号链接见下。文件已存在而
 // 不是 h-guard 的扩展时不覆盖、不删除。执行时（持有读改写锁）先复核文件与计划时相同；覆盖或删除前把原文件备份到
 // <cache_dir>/backups/<name>.<时间>.<随机串>/。
 func extFileStep(t Target, path, name string, data []byte, remove bool) (Step, error) {
+	// path 是符号链接时写它指向的文件，链接本身保留（与 Editor 相同，dotfiles 管理的配置）；移除时只删链接
+	target := path
+	if fi, err := os.Lstat(path); err == nil && fi.Mode()&fs.ModeSymlink != 0 {
+		resolved, err := filepath.EvalSymlinks(path)
+		if err != nil {
+			return Step{}, fmt.Errorf("%s is a symbolic link whose target cannot be resolved; not changing it", path)
+		}
+		target = resolved
+	}
 	old, err := os.ReadFile(path)
 	exists := err == nil
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
@@ -132,7 +141,7 @@ func extFileStep(t Target, path, name string, data []byte, remove bool) (Step, e
 			if err := backup(); err != nil {
 				return err
 			}
-			return store.WriteAtomic(path, data, 0o600)
+			return store.WriteAtomic(target, data, 0o600)
 		}}, nil
 }
 

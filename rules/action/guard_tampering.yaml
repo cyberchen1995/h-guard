@@ -51,6 +51,10 @@ match:
       - '(?:\.config/opencode/plugins?/h-guard\.js|\.pi/agent/(?:extensions/h-guard\.js|settings\.json)|\.omp/(?:profiles/[^\n;&|/]+/)?agent/(?:extensions/h-guard-omp\.js|config\.ya?ml|settings\.json)|\.dsh/(?:profiles/[^\n;&|/]+/)?cordis\.patch\.yml)[^\n;&|]*\|\s*(?:tee|sponge)\b'
       - '(?<![\w.])(?<![^\w]-)(?<!^-)[a-z]?(?:rm|unlink|mv|cp|install|ln|truncate|tee|chmod|chown|shred|sed\s+-i|perl\s+-[a-z]*i|python[0-9.]*\s+-c|node\s+-e|jq\b[^\n;&|]*>)\b[^\n;&|]*\$\{?(?:XDG_CONFIG_HOME\}?[/\\]opencode[/\\]plugins?[/\\]h-guard\.js|PI_CODING_AGENT_DIR\}?[/\\](?:extensions[/\\]h-guard(?:-omp)?\.js|settings\.json|config\.ya?ml)|DSH_HOME\}?[/\\](?:profiles[/\\][^\n;&|/\\]+[/\\])?cordis\.patch\.yml|PI_CONFIG_DIR\}?[/\\](?:profiles[/\\][^\n;&|/\\]+[/\\])?agent[/\\](?:extensions[/\\]h-guard-omp\.js|config\.ya?ml|settings\.json))'
       - '>>?\s*[^\n;&|]*\$\{?(?:XDG_CONFIG_HOME\}?[/\\]opencode[/\\]plugins?[/\\]h-guard\.js|PI_CODING_AGENT_DIR\}?[/\\](?:extensions[/\\]h-guard(?:-omp)?\.js|settings\.json|config\.ya?ml)|DSH_HOME\}?[/\\](?:profiles[/\\][^\n;&|/\\]+[/\\])?cordis\.patch\.yml|PI_CONFIG_DIR\}?[/\\](?:profiles[/\\][^\n;&|/\\]+[/\\])?agent[/\\](?:extensions[/\\]h-guard-omp\.js|config\.ya?ml|settings\.json))'
+      # 移动、删除整个扩展目录（或它的上级目录）同样让 harness 不再加载 h-guard；目录名之后必须是词的结尾，
+      # 目录里别的文件（plugins/other.js）不算
+      - '(?<![\w.])(?<![^\w]-)(?<!^-)[a-z]?(?:rm|unlink|mv|cp|install|ln|truncate|tee|chmod|chown|shred|sed\s+-i|perl\s+-[a-z]*i|python[0-9.]*\s+-c|node\s+-e|jq\b[^\n;&|]*>)\b[^\n;&|]*(?:\.config/opencode(?:/plugins?)?|\.pi(?:/agent(?:/extensions)?)?|\.omp(?:/agent(?:/extensions)?)?|\.dsh)/?(?=$|[\s''"`;&|)])'
+      - '(?<![\w.])(?<![^\w]-)(?<!^-)[a-z]?(?:rm|unlink|mv|cp|install|ln|truncate|tee|chmod|chown|shred|sed\s+-i|perl\s+-[a-z]*i|python[0-9.]*\s+-c|node\s+-e|jq\b[^\n;&|]*>)\b[^\n;&|]*\$\{?(?:XDG_CONFIG_HOME\}?[/\\]opencode(?:[/\\]plugins?)?|(?:PI_CODING_AGENT_DIR|DSH_HOME)\}?(?:[/\\]extensions)?|PI_CONFIG_DIR\}?(?:[/\\]agent(?:[/\\]extensions)?)?)[/\\]?(?=$|[\s''"`;&|)])'
     # PowerShell：写入、删除、移动、复制到受保护路径的 cmdlet 及其别名，.NET 的文件写入，重定向；
     # 路径可用 \ 或 /，也可拆在 Join-Path 的几个参数里；另覆盖 Windows 的配置与缓存目录（$env:APPDATA、${env:APPDATA}、
     # %LOCALAPPDATA% 下的 h-guard）与 macOS 上 PowerShell 用的 ~/Library 目录。
@@ -67,6 +71,9 @@ match:
       - '(?<![\w.-])(?:set-content|sc|add-content|ac|out-file|clear-content|clc|remove-item|rm|ri|del|erase|rd|rmdir|move-item|mi|mv|move|copy-item|cpi|cp|copy|rename-item|rni|ren|new-item|ni|set-item|si|set-itemproperty|sp|tee-object|tee)\b[^\n;&|]*\$(?:\{env:|env:)(?:xdg_config_home\}?[\\/]opencode[\\/]plugins?[\\/]h-guard\.js|pi_coding_agent_dir\}?[\\/](?:extensions[\\/]h-guard(?:-omp)?\.js|settings\.json|config\.ya?ml)|dsh_home\}?[\\/](?:profiles[\\/][^\n;&|\\/]+[\\/])?cordis\.patch\.yml|pi_config_dir\}?[\\/](?:profiles[\\/][^\n;&|\\/]+[\\/])?agent[\\/](?:extensions[\\/]h-guard-omp\.js|config\.ya?ml|settings\.json))'
       - '\[(?:system\.)?io\.file\]::(?:write|append|delete|move|copy|replace|create|open)\w*\s*\([^\n]*\$(?:\{env:|env:)(?:xdg_config_home\}?[\\/]opencode[\\/]plugins?[\\/]h-guard\.js|pi_coding_agent_dir\}?[\\/](?:extensions[\\/]h-guard(?:-omp)?\.js|settings\.json|config\.ya?ml)|dsh_home\}?[\\/](?:profiles[\\/][^\n;&|\\/]+[\\/])?cordis\.patch\.yml|pi_config_dir\}?[\\/](?:profiles[\\/][^\n;&|\\/]+[\\/])?agent[\\/](?:extensions[\\/]h-guard-omp\.js|config\.ya?ml|settings\.json))'
       - '>>?\s*[^\n;&|]*\$(?:\{env:|env:)(?:xdg_config_home\}?[\\/]opencode[\\/]plugins?[\\/]h-guard\.js|pi_coding_agent_dir\}?[\\/](?:extensions[\\/]h-guard(?:-omp)?\.js|settings\.json|config\.ya?ml)|dsh_home\}?[\\/](?:profiles[\\/][^\n;&|\\/]+[\\/])?cordis\.patch\.yml|pi_config_dir\}?[\\/](?:profiles[\\/][^\n;&|\\/]+[\\/])?agent[\\/](?:extensions[\\/]h-guard-omp\.js|config\.ya?ml|settings\.json))'
+      # 整个扩展目录（或它的上级目录），含 $env: 写法
+      - '(?<![\w.-])(?:set-content|sc|add-content|ac|out-file|clear-content|clc|remove-item|rm|ri|del|erase|rd|rmdir|move-item|mi|mv|move|copy-item|cpi|cp|copy|rename-item|rni|ren|new-item|ni|set-item|si|set-itemproperty|sp|tee-object|tee)\b[^\n;&|]*(?:\.config[\\/]opencode(?:[\\/]plugins?)?|\.pi(?:[\\/]agent(?:[\\/]extensions)?)?|\.omp(?:[\\/]agent(?:[\\/]extensions)?)?|\.dsh)[\\/]?(?=$|[\s''"`;&|),])'
+      - '(?<![\w.-])(?:set-content|sc|add-content|ac|out-file|clear-content|clc|remove-item|rm|ri|del|erase|rd|rmdir|move-item|mi|mv|move|copy-item|cpi|cp|copy|rename-item|rni|ren|new-item|ni|set-item|si|set-itemproperty|sp|tee-object|tee)\b[^\n;&|]*\$(?:\{env:|env:)(?:xdg_config_home\}?[\\/]opencode(?:[\\/]plugins?)?|(?:pi_coding_agent_dir|dsh_home)\}?(?:[\\/]extensions)?|pi_config_dir\}?(?:[\\/]agent(?:[\\/]extensions)?)?)[\\/]?(?=$|[\s''"`;&|),])'
   file:
     # 文件动作（Write、Edit、NotebookEdit 等）按路径匹配，不调模型。
     # {config}、{cache} 是 h-guard 实际使用的目录；~ 开头的写法另覆盖默认位置。
@@ -118,6 +125,13 @@ match:
       - '{dsh_home}/cordis.patch.yml'
       - '{dsh_home}/profiles/*/cordis.patch.yml'
       - '~/.config/opencode/plugins/h-guard.js'
+      # 扩展所在的目录本身（改名、删除时整个目录不再被加载；目录里别的文件不受影响）
+      - '~/.config/opencode/plugins'
+      - '~/.pi/agent/extensions'
+      - '~/.omp/agent/extensions'
+      - '{xdg_config}/opencode/plugins'
+      - '{pi_agent_dir}/extensions'
+      - '{omp_config}/agent/extensions'
       - '~/.pi/agent/extensions/h-guard.js'
       - '~/.pi/agent/settings.json'
       - '~/.omp/agent/extensions/h-guard-omp.js'
@@ -197,6 +211,13 @@ examples:
     - {action: file_write, path: "~/.omp/agent/config.yml"}
     - {action: file_write, path: "~/.dsh/profiles/web/cordis.patch.yml"}
     - {action: file_write, path: ".omp/config.yml"}
+    - {shell: posix, command: "mv ~/.pi/agent/extensions /tmp/disabled"}
+    - {shell: posix, command: "mv ~/.config/opencode/plugins /tmp/disabled"}
+    - {shell: posix, command: "rm -r ~/.dsh"}
+    - {shell: posix, command: "mv \"$PI_CODING_AGENT_DIR/extensions\" /tmp/x"}
+    - {shell: powershell, command: "Move-Item ~\\.omp\\agent\\extensions C:\\x"}
+    - {shell: powershell, command: "Move-Item $env:PI_CODING_AGENT_DIR\\extensions C:\\x"}
+    - {action: file_rename, path: "~/.omp/agent/extensions"}
   miss:
     - {shell: powershell, command: "Get-Content ~\\.claude\\settings.json"}
     - {shell: posix, command: "cat ~/.claude/settings.json"}
@@ -219,3 +240,6 @@ examples:
     - {shell: posix, command: "ls ~/.pi/agent/extensions"}
     - {action: file_write, path: "~/.config/opencode/plugins/other.js"}
     - {action: file_write, path: "~/.dsh/sessions/s1.jsonl"}
+    - {shell: posix, command: "rm ~/.config/opencode/plugins/other.js"}
+    - {shell: posix, command: "cat ~/.pi/agent/extensions/notes.md"}
+    - {action: file_write, path: "~/.pi/agent/extensions/other.js"}

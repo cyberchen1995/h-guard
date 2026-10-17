@@ -84,3 +84,17 @@ test('agent/pre-step: the subagent header is passed on', async () => {
     session: { origin: 'subagent', delegationDepth: 1 },
   })
 })
+
+test('tools/pre-execute: a cancelled call stops waiting for the guard', async () => {
+  const { command } = await fake({ action: 'pass' }, 'slow')
+  const { handlers } = await plugin(command)
+  const ac = new AbortController()
+  const started = Date.now()
+  setTimeout(() => ac.abort(), 200)
+  const r = await handlers['tools/pre-execute']({ ...exec('bash', { command: 'ls' }), signal: ac.signal }, next)
+  assert.ok(Date.now() - started < 5000, 'returned only after ' + (Date.now() - started) + 'ms')
+  assert.equal(r.kind, 'ask')
+  const pre = new AbortController()
+  pre.abort()
+  assert.equal((await handlers['tools/pre-execute']({ ...exec('bash', { command: 'ls' }), signal: pre.signal }, next)).kind, 'ask')
+})

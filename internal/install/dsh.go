@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"go.yaml.in/yaml/v3"
 
@@ -32,6 +34,28 @@ func DSHPlugin(t Target) string {
 	return filepath.Join(t.ConfigDir, "extensions", "dsh", "h-guard.mjs")
 }
 
+// DSHModule 是补丁里挂载插件的模块名：POSIX 上是绝对路径；Windows 上是 file: URL，因为 dsh 把非相对的模块名
+// 直接交给 import()，C:\… 的盘符会被当作 URL 协议。
+func DSHModule(t Target, plugin string) string {
+	if t.GOOS != "windows" {
+		return plugin
+	}
+	return (&url.URL{Scheme: "file", Path: "/" + strings.ReplaceAll(plugin, `\`, "/")}).String()
+}
+
+// dshModulePath 把补丁里的模块名换回路径（file: URL 取出路径，其余原样），供 status 与插件路径比较。
+func dshModulePath(t Target, name string) string {
+	u, err := url.Parse(name)
+	if err != nil || u.Scheme != "file" {
+		return name
+	}
+	p := u.Path
+	if t.GOOS == "windows" {
+		p = strings.TrimPrefix(p, "/")
+	}
+	return filepath.FromSlash(p)
+}
+
 // DSH 计划 DeepSeek Harness 的安装或移除：
 //   - 把内嵌的插件写到 <config_dir>/extensions/dsh/h-guard.mjs（CONFIG 一行是 h-guard 的命令与超时）；
 //   - 在 $DSH_HOME/cordis.patch.yml 里插入挂载它的一行 {id: h-guard, name: <插件的绝对路径>}，补丁里的其他内容保留
@@ -52,7 +76,8 @@ func DSH(t Target, remove bool) ([]Step, error) {
 		file.Summary = "write h-guard's DeepSeek Harness plugin"
 	}
 	patch := DSHPatch(t)
-	change := func(old []byte, exists bool) ([]byte, error) { return dshPatchEdit(old, exists, plugin, remove) }
+	module := DSHModule(t, plugin)
+	change := func(old []byte, exists bool) ([]byte, error) { return dshPatchEdit(old, exists, module, remove) }
 	old, err := os.ReadFile(patch)
 	exists := err == nil
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
@@ -62,7 +87,7 @@ func DSH(t Target, remove bool) ([]Step, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", patch, err)
 	}
-	summary, preview := "mount the plugin in the DeepSeek Harness patch", fmt.Sprintf("- insert:\n    - id: %s\n      name: %s\n", dshRowID, plugin)
+	summary, preview := "mount the plugin in the DeepSeek Harness patch", fmt.Sprintf("- insert:\n    - id: %s\n      name: %s\n", dshRowID, module)
 	if remove {
 		summary, preview = "remove the plugin from the DeepSeek Harness patch", fmt.Sprintf("remove the row with id %s\n", dshRowID)
 	}
@@ -84,7 +109,7 @@ func DSH(t Target, remove bool) ([]Step, error) {
 // dshPatchEdit 在补丁里加入或去掉本项目的一行。补丁是行覆盖与 - insert: [行…] 组成的 YAML 列表；本项目的行
 // 放在根上的一个 insert 里。重装时已有且相同的行不改动，不同（路径变了、加了 disabled 等）就换成本项目的写法，
 // 重复的删掉。没有变化时返回原文；文件不存在且是移除时返回 nil（不新建）。
-func dshPatchEdit(old []byte, exists bool, plugin string, remove bool) ([]byte, error) {
+func dshPatchEdit(old []byte, exists bool, module string, remove bool) ([]byte, error) {
 	if !exists && remove {
 		return nil, nil
 	}
@@ -101,7 +126,7 @@ func dshPatchEdit(old []byte, exists bool, plugin string, remove bool) ([]byte, 
 	if root.Kind != yaml.SequenceNode {
 		return nil, errors.New("the patch is not a list")
 	}
-	ours := dshRow(plugin)
+	ours := dshRow(module)
 	found, same := 0, false
 	var items []*yaml.Node
 	for _, item := range root.Content {
@@ -148,10 +173,10 @@ func dshPatchEdit(old []byte, exists bool, plugin string, remove bool) ([]byte, 
 }
 
 // dshRow 是挂载插件的一行。
-func dshRow(plugin string) *yaml.Node {
+func dshRow(module string) *yaml.Node {
 	return &yaml.Node{Kind: yaml.MappingNode, Content: []*yaml.Node{
 		{Kind: yaml.ScalarNode, Value: "id"}, {Kind: yaml.ScalarNode, Value: dshRowID},
-		{Kind: yaml.ScalarNode, Value: "name"}, {Kind: yaml.ScalarNode, Value: plugin},
+		{Kind: yaml.ScalarNode, Value: "name"}, {Kind: yaml.ScalarNode, Value: module},
 	}}
 }
 

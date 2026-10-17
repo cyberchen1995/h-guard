@@ -232,7 +232,9 @@ Differences:
   platform (pi uses Git Bash on Windows; oh-my-pi has its own), so they are
   checked as POSIX commands.
 - **Prompt origin.** A prompt sent by an extension (`source: "extension"`)
-  counts as automated; prompts from the interface, RPC and `-p` count as yours.
+  counts as automated, and so does every prompt in an oh-my-pi sub-agent's
+  session (the `task` tool, `eval`'s `agent()`); prompts from the interface,
+  RPC and `-p` count as yours.
 - **Not covered.** Commands you type with `!` do not go through `tool_call`.
 
 When h-guard cannot run, the extension asks before a tool call (and blocks it

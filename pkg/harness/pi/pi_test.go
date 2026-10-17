@@ -151,7 +151,7 @@ func TestHarnessField(t *testing.T) {
 
 // TestInput：input 的 source 为 extension 是扩展发出的自动消息，其余按用户本人。
 func TestInput(t *testing.T) {
-	for src, want := range map[string]guard.Source{"interactive": guard.SourceUser, "rpc": guard.SourceUser, "extension": guard.SourceAutomated, "": guard.SourceUser} {
+	for src, want := range map[string]guard.Source{"interactive": guard.SourceUser, "rpc": guard.SourceUser, "extension": guard.SourceAutomated, "subagent": guard.SourceAutomated, "context": guard.SourceUser, "": guard.SourceUser} {
 		ev, err := pi.Pi.Parse(req("pi", "input", map[string]string{"text": "do it", "source": src}, nil))
 		if err != nil || ev.Text != "do it" || ev.Requests[0].Source != want {
 			t.Errorf("%q: %+v %v", src, ev, err)

@@ -117,7 +117,7 @@ func inspectDSH(t Target) []string {
 		lines = append(lines, fmt.Sprintf("problem: the plugin is written but %s does not mount it; run h-guard install dsh --write", patch))
 	case found > 1:
 		lines = append(lines, fmt.Sprintf("problem: %s mounts h-guard %d times; run h-guard install dsh --write", patch, found))
-	case !t.samePath(name, plugin):
+	case !t.samePath(dshModulePath(t, name), plugin):
 		lines = append(lines, fmt.Sprintf("problem: %s mounts %s instead of %s; run h-guard install dsh --write", patch, name, plugin))
 	}
 	if perr != nil {

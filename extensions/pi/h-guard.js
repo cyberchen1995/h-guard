@@ -96,7 +96,9 @@ const checked = new Map()
 async function checkPrompt(ctx, text, source) {
   const key = sessionOf(ctx) + '\n' + text
   try {
-    const reply = await callGuard('input', ctx, { data: { text, source } })
+    // omp 把扩展重新绑定到子 agent 的会话上：那里的「用户消息」是父 agent 写的任务
+    const sub = !!(ctx.agent && ctx.agent.kind === 'sub')
+    const reply = await callGuard('input', ctx, { data: { text, source: sub ? 'subagent' : source } })
     if (reply.action === 'error') {
       notify(ctx, 'warning', reply.message)
       return null

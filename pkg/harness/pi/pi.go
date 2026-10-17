@@ -176,10 +176,11 @@ func (a Adapter) Parse(raw []byte) (guard.Event, error) {
 	return ev, nil
 }
 
-// SourceOf 按 input 事件的 source 判定指令来源：extension 是扩展用 sendUserMessage 发出的消息；interactive、rpc、
+// SourceOf 按 input 事件的 source 判定指令来源：extension 是扩展用 sendUserMessage 发出的消息，subagent 是扩展在 omp
+// 的子 agent 会话（ctx.agent.kind 为 sub）里看到的消息，都是自动消息；interactive、rpc、
 // context（omp 的扩展在 context 事件里补查的提示词）与认不出的取值按用户本人（pi 的 -p 与 SDK 的提示词也报告为 interactive）。
 func SourceOf(source string) guard.Source {
-	if source == "extension" {
+	if source == "extension" || source == "subagent" {
 		return guard.SourceAutomated
 	}
 	return guard.SourceUser

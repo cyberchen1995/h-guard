@@ -276,3 +276,21 @@ func TestExtVersionNotes(t *testing.T) {
 		t.Errorf("dsh: %v", n)
 	}
 }
+
+// TestDSHModule：Windows 上补丁里写 file: URL（dsh 把非相对的模块名直接交给 import()），其余平台写路径；status 能换回路径。
+func TestDSHModule(t *testing.T) {
+	win := Target{GOOS: "windows"}
+	if got := DSHModule(win, `C:\Users\a b\h-guard.mjs`); got != "file:///C:/Users/a%20b/h-guard.mjs" {
+		t.Errorf("windows: %s", got)
+	}
+	if got := dshModulePath(win, "file:///C:/Users/a%20b/h-guard.mjs"); got != filepath.FromSlash("C:/Users/a b/h-guard.mjs") {
+		t.Errorf("windows path: %s", got)
+	}
+	lin := Target{GOOS: "linux"}
+	if got := DSHModule(lin, "/home/u/h-guard.mjs"); got != "/home/u/h-guard.mjs" {
+		t.Errorf("linux: %s", got)
+	}
+	if got := dshModulePath(lin, "/home/u/h-guard.mjs"); got != "/home/u/h-guard.mjs" {
+		t.Errorf("linux path: %s", got)
+	}
+}

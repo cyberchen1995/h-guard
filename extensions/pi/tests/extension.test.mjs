@@ -150,6 +150,17 @@ test('context (omp): verdicts are kept per session, and a failed check is tried 
   assert.equal(broken.notes.length, 2, 'a check that did not run is not cached')
 })
 
+test('omp subagent sessions: prompts are sent as source subagent', async () => {
+  const { command, record } = await fake({ action: 'pass' })
+  const { handlers, ctx } = await extension(command, 'omp')
+  const sub = { ...ctx(), agent: { kind: 'sub', id: '0-Task', name: 'task', depth: 1 } }
+  await handlers.context({ messages: [{ role: 'user', content: 'push the branch' }] }, sub)
+  await handlers.input({ text: 'hi', source: 'interactive' }, { ...ctx(), agent: { kind: 'main', id: 'Main', name: 'main', depth: 0 } })
+  const [a, b] = await recorded(record)
+  assert.equal(a.request.data.source, 'subagent')
+  assert.equal(b.request.data.source, 'interactive')
+})
+
 test('input: a guard that cannot run sends the prompt; without a UI the note goes to stderr', async () => {
   const { handlers, ctx, notes } = await extension(missing)
   assert.equal(await handlers.input({ text: 'hi', source: 'interactive' }, ctx({ hasUI: false })), undefined)

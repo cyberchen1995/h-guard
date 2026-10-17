@@ -22,7 +22,7 @@ export function apply(ctx) {
   ctx.on('tools/pre-execute', async (exec, next) => {
     const reply = await callGuard('tools/pre-execute', exec.agent, {
       data: { name: exec.name, callId: exec.callId, arguments: exec.arguments, nested: exec.parent !== undefined },
-    })
+    }, exec.signal)
     if (reply.action === 'deny') return { kind: 'deny', reason: textOf(reply) }
     if (reply.action === 'ask' || reply.action === 'error') {
       const text = reply.action === 'error' ? UNCHECKED + ' (' + reply.message + ')' : textOf(reply)
@@ -38,7 +38,7 @@ export function apply(ctx) {
       const reply = await callGuard('tools/post-execute', exec.agent, {
         data: { name: exec.name, callId: exec.callId, arguments: exec.arguments, nested: exec.parent !== undefined },
         result: { isError: !!(result && result.isError), content: textBlocks(result && result.content) },
-      })
+      }, exec.signal)
       if (reply.action === 'deny' || reply.action === 'ask') return { kind: 'block', feedback: [{ type: 'text', text: textOf(reply) }] }
       if (reply.action === 'warn') log(ctx, messageOf(reply))
       if (reply.action === 'error') log(ctx, reply.message)
@@ -59,7 +59,7 @@ export function apply(ctx) {
           messages: messages.map((m) => ({ source: { kind: m && m.source ? m.source.kind : undefined }, content: textBlocks(m && m.content) })),
           session: { origin: header.origin, delegationDepth: header.delegationDepth },
         },
-      })
+      }, step.signal)
       if (reply.action === 'deny' || reply.action === 'ask') {
         log(ctx, messageOf(reply))
         return { kind: 'reject' }
@@ -99,8 +99,9 @@ function textBlocks(content) {
   return content.filter((b) => b && b.type === 'text').map((b) => ({ type: 'text', text: b.text }))
 }
 
-// callGuard 按协议组装请求、运行 h-guard、校验回复。任何失败都返回 { action: 'error' }，由各事件按固定规则处理
-async function callGuard(hook, agent, extra) {
+// callGuard 按协议组装请求、运行 h-guard、校验回复。任何失败都返回 { action: 'error' }，由各事件按固定规则处理。
+// dsh 取消这次调用时（signal）立即结束 h-guard：dsh 要等这里返回才处理取消
+async function callGuard(hook, agent, extra, signal) {
   try {
     const config = CONFIG || { command: ['h-guard', 'hook', HARNESS], timeout_ms: DEFAULT_TIMEOUT_MS }
     const header = headerOf(agent)
@@ -111,7 +112,7 @@ async function callGuard(hook, agent, extra) {
       session: { id: header.id || HARNESS + '-' + process.pid, cwd: header.cwd || process.cwd() },
       ...extra,
     }
-    const out = await run([...config.command, '--event', hook], JSON.stringify(request), config.timeout_ms || DEFAULT_TIMEOUT_MS)
+    const out = await run([...config.command, '--event', hook], JSON.stringify(request), config.timeout_ms || DEFAULT_TIMEOUT_MS, signal)
     if (out.code !== 0) return failure('exit code ' + out.code)
     const reply = JSON.parse(out.stdout)
     if (!reply || reply.protocol !== PROTOCOL || !ACTIONS.includes(reply.action)) return failure('unrecognized reply')
@@ -121,9 +122,13 @@ async function callGuard(hook, agent, extra) {
   }
 }
 
-// run 不经 shell 启动 h-guard，把请求写到 stdin；超时、启动失败都返回非零的 code
-function run(argv, input, timeoutMs) {
+// run 不经 shell 启动 h-guard，把请求写到 stdin；超时、取消、启动失败都返回非零的 code
+function run(argv, input, timeoutMs, signal) {
   return new Promise((resolve) => {
+    if (signal && signal.aborted) {
+      resolve({ code: -1, stdout: '' })
+      return
+    }
     let stdout = ''
     let done = false
     const finish = (code) => {
@@ -137,6 +142,14 @@ function run(argv, input, timeoutMs) {
       child.kill()
       finish(-1)
     }, timeoutMs)
+    const abort = () => {
+      child.kill()
+      finish(-1)
+    }
+    if (signal) {
+      signal.addEventListener('abort', abort, { once: true })
+      child.on('close', () => signal.removeEventListener('abort', abort))
+    }
     child.on('error', () => finish(-1))
     child.on('close', (code) => finish(code === null ? -1 : code))
     child.stdout.setEncoding('utf8')
