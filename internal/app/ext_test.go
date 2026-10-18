@@ -213,6 +213,16 @@ func TestUnknownTools(t *testing.T) {
 	if got := extAction(t, mustOut(e, omp("github", map[string]string{}), "omp", "tool_call")); got != "ask" {
 		t.Errorf("unlisted tool: %s", got)
 	}
+	oc := func(tool string) []byte {
+		return extReq("opencode", "tool.execute.before", map[string]any{"tool": tool, "sessionID": "s", "callID": "c", "args": map[string]string{}, "source": "mcp"})
+	}
+	if got := extAction(t, mustOut(e, oc("docs_search"), "opencode", "tool.execute.before")); got != "deny" {
+		t.Errorf("opencode MCP tool (cannot ask): %s", got)
+	}
+	e.config("version: 1\nharnesses:\n  opencode: {read_only_tools: [docs_*]}\n  dsh: {read_only_tools: [plugin_market]}\n")
+	if got := extAction(t, mustOut(e, oc("docs_search"), "opencode", "tool.execute.before")); got != "pass" {
+		t.Errorf("opencode listed MCP tool: %s", got)
+	}
 	dsh := extReq("dsh", "tools/pre-execute", map[string]any{"name": "plugin_market", "callId": "c", "arguments": map[string]string{}})
 	if got := extAction(t, mustOut(e, dsh, "dsh", "tools/pre-execute")); got != "pass" {
 		t.Errorf("dsh listed tool: %s", got)

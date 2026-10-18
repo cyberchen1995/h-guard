@@ -24,6 +24,12 @@ minor releases. Every such change is recorded in this file.
   loosen the checks on tools h-guard knows.
 - opencode cannot ask, so `ask` becomes `deny` there; `install opencode` takes
   `--shell` and writes `harnesses.opencode.shell`, as for Codex.
+- opencode: the plugin marks MCP tools by the MCP servers opencode reports, and
+  h-guard treats them as tools it does not know, so they are blocked unless
+  listed in `harnesses.opencode.read_only_tools`. Custom and plugin tools
+  still pass. When the servers cannot be looked up, or the plugin predates
+  this, any tool that is not one of opencode's own is treated the same way;
+  run `h-guard install opencode --write` again after upgrading.
 - The locked `guard_tampering` rule also protects the new extensions and the
   settings that can turn them off (oh-my-pi's `config.yml`, pi's and oh-my-pi's
   `settings.json`, DeepSeek Harness's patches), also under `XDG_CONFIG_HOME`,

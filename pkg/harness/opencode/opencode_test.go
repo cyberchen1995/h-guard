@@ -23,7 +23,16 @@ func req(hook string, data, result any) []byte {
 }
 
 func before(tool string, args any) []byte {
-	return req("tool.execute.before", map[string]any{"tool": tool, "sessionID": "ses_1", "callID": "call_1", "args": args}, nil)
+	return beforeFrom(tool, "opencode", args)
+}
+
+// beforeFrom 是插件查得来源为 source 的 tool.execute.before 请求；source 为空时不带这个字段（旧版插件）。
+func beforeFrom(tool, source string, args any) []byte {
+	d := map[string]any{"tool": tool, "sessionID": "ses_1", "callID": "call_1", "args": args}
+	if source != "" {
+		d["source"] = source
+	}
+	return req("tool.execute.before", d, nil)
 }
 
 func after(tool string, args, result any) []byte {
@@ -100,8 +109,10 @@ func TestNoAction(t *testing.T) {
 	for _, in := range [][]byte{
 		before("glob", map[string]string{"pattern": "**/*.go"}),
 		before("webfetch", map[string]string{"url": "https://example.com"}),
-		before("github_create_issue", map[string]string{"title": "x"}),
+		before("notes_search", map[string]string{"query": "x"}), // 自定义工具
 		before("bash", map[string]string{"command": "  "}),
+		beforeFrom("task", "?", map[string]string{"prompt": "x"}),
+		beforeFrom("read_mcp_resource", "mcp", map[string]string{"server": "s", "uri": "x://y"}),
 	} {
 		if _, err := a.Parse(in); !errors.Is(err, harness.ErrNoAction) {
 			t.Errorf("%s: %v, want ErrNoAction", in, err)
@@ -110,6 +121,22 @@ func TestNoAction(t *testing.T) {
 	out, code := a.RenderNoAction()
 	if r, err := extproto.ParseReply(out); err != nil || r.Action != extproto.ActionPass || code != 0 {
 		t.Errorf("RenderNoAction = %s %d", out, code)
+	}
+}
+
+// TestUnknownTool：MCP 工具与看不出来源的工具（插件查询失败，或旧版插件不带 source）返回 UnknownToolError（调用方请求
+// 确认，opencode 上阻止）；能读出动作的工具不受来源影响。
+func TestUnknownTool(t *testing.T) {
+	for _, source := range []string{"mcp", "?", ""} {
+		_, err := a.Parse(beforeFrom("github_create_issue", source, map[string]string{"title": "x"}))
+		var ut *harness.UnknownToolError
+		if !errors.As(err, &ut) || ut.Event.Tool != "github_create_issue" || ut.Event.Kind != guard.EventAction || ut.Event.SessionID != "ses_1" {
+			t.Errorf("source %q: %v", source, err)
+		}
+	}
+	ev, err := a.Parse(beforeFrom("bash", "?", map[string]string{"command": "ls"}))
+	if err != nil || len(ev.Actions) != 1 {
+		t.Errorf("bash with an unknown source: %+v %v", ev.Actions, err)
 	}
 }
 
