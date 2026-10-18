@@ -2,6 +2,7 @@ package install
 
 import (
 	"encoding/json"
+	"reflect"
 	"testing"
 )
 
@@ -35,6 +36,81 @@ func TestParseJSON5(t *testing.T) {
 	for _, in := range []string{`{a: }`, `{a: 1`, `[1 2]`, `{'a': 'unterminated}`, `{a: 1} x`, `{a: undefined}`, ``, `{"a": "new` + "\n" + `line"}`} {
 		if _, err := parseJSON5([]byte(in)); err == nil {
 			t.Errorf("%q: no error", in)
+		}
+	}
+}
+
+// TestParseJSON5LikeOpenClaw：与 OpenClaw 2026.10.4 用的 json5 包（2.2.3）对同一组边界写法的结论一致：它接受的
+// 解析成同样的值，它拒绝的（没有结束的块注释、前导零、八进制转义、多余的内容等）同样报错。
+func TestParseJSON5LikeOpenClaw(t *testing.T) {
+	for _, tt := range []struct{ in, want string }{ // want 为空表示应当报错
+		{"{a: 1 /* open", ""},
+		{"/* only", ""},
+		{"{a: 1} /* trailing", ""},
+		{"{a: 1} // ok", "{\"a\":1}"},
+		{"{a: 01}", ""},
+		{"{a: 00}", ""},
+		{"{a: 0}", "{\"a\":0}"},
+		{"{a: -0}", "{\"a\":0}"},
+		{"{a: 1.}", "{\"a\":1}"},
+		{"{a: .1}", "{\"a\":0.1}"},
+		{"{a: +.1}", "{\"a\":0.1}"},
+		{"{a: 1e}", ""},
+		{"{a: 1e+}", ""},
+		{"{a: 0x}", ""},
+		{"{a: 0x1.5}", ""},
+		{"{a: +0x10}", "{\"a\":16}"},
+		{"{a: -0x10}", "{\"a\":-16}"},
+		{"{a: 1_000}", ""},
+		{"{a: Infinity}", "{\"a\":null}"},
+		{"{a: -NaN}", "{\"a\":null}"},
+		{"{a: infinity}", ""},
+		{"{a: undefined}", ""},
+		{"{a: 'x\ny'}", ""},
+		{"{a: 'x\\\ny'}", "{\"a\":\"xy\"}"},
+		{"{a: \"\\u00\"}", ""},
+		{"{a: \"\\x4\"}", ""},
+		{"{a: \"\\q\"}", "{\"a\":\"q\"}"},
+		{"{a: \"\\1\"}", ""},
+		{"{a: \"\\01\"}", ""},
+		{"{a: \"tab\there\"}", "{\"a\":\"tab\\there\"}"},
+		{"{a: 1,,}", ""},
+		{"{,}", ""},
+		{"[,]", ""},
+		{"[1,]", "[1]"},
+		{"{a: 1,}", "{\"a\":1}"},
+		{"{a b: 1}", ""},
+		{"{1a: 1}", ""},
+		{"{$a_b: 1}", "{\"$a_b\":1}"},
+		{"{\\u0061: 1}", "{\"a\":1}"},
+		{"{a: 1} x", ""},
+		{"{a: 1}}", ""},
+		{"", ""},
+		{"   ", ""},
+		{"{a: [1, 2}", ""},
+		{"{a: tru}", ""},
+		{"{a: nulls}", ""},
+		{"{'a': 1}", "{\"a\":1}"},
+		{"{\"a\" : 1}", "{\"a\":1}"},
+		{"{a: \"\\u{41}\"}", ""},
+	} {
+		v, err := parseJSON5([]byte(tt.in))
+		if tt.want == "" {
+			if err == nil {
+				t.Errorf("%q: accepted, the json5 package rejects it", tt.in)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("%q: %v, the json5 package accepts it", tt.in, err)
+			continue
+		}
+		b, _ := toJSON(v)
+		var got, want any
+		json.Unmarshal(b, &got)
+		json.Unmarshal([]byte(tt.want), &want)
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("%q: %s, want %s", tt.in, b, tt.want)
 		}
 	}
 }

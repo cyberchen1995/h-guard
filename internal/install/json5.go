@@ -24,6 +24,9 @@ func parseJSON5(b []byte) (any, error) {
 	if p.i < len(p.s) {
 		return nil, p.errorf("unexpected %q after the value", p.s[p.i])
 	}
+	if p.open {
+		return nil, p.errorf("unterminated /* comment")
+	}
 	return v, nil
 }
 
@@ -31,8 +34,9 @@ func parseJSON5(b []byte) (any, error) {
 const json5MaxDepth = 512
 
 type json5Parser struct {
-	s string
-	i int
+	s    string
+	i    int
+	open bool // 有没有结束的 /* 注释（它吞掉了文件其余的部分）
 }
 
 func (p *json5Parser) errorf(format string, args ...any) error {
@@ -56,7 +60,7 @@ func (p *json5Parser) skip() {
 			if j := strings.Index(p.s[p.i+2:], "*/"); j >= 0 {
 				p.i += j + 4
 			} else {
-				p.i = len(p.s)
+				p.i, p.open = len(p.s), true
 			}
 		case c >= utf8.RuneSelf:
 			r, n := utf8.DecodeRuneInString(p.s[p.i:])
@@ -174,25 +178,34 @@ func (p *json5Parser) array(depth int) (any, error) {
 	}
 }
 
-// ident 读一个标识符（不带引号的键与 true、null 等字面量）；不是标识符时返回空。
+// ident 读一个标识符（不带引号的键与 true、null 等字面量），可以含 \uXXXX 转义；不是标识符时返回空。
 func (p *json5Parser) ident() string {
-	start := p.i
+	var b strings.Builder
 	for p.i < len(p.s) {
 		c := p.s[p.i]
-		if c == '_' || c == '$' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || (p.i > start && c >= '0' && c <= '9') {
+		if c == '_' || c == '$' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || (b.Len() > 0 && c >= '0' && c <= '9') {
+			b.WriteByte(c)
 			p.i++
 			continue
+		}
+		if c == '\\' && strings.HasPrefix(p.s[p.i:], `\u`) && p.i+6 <= len(p.s) {
+			if v, err := strconv.ParseUint(p.s[p.i+2:p.i+6], 16, 16); err == nil {
+				b.WriteRune(rune(v))
+				p.i += 6
+				continue
+			}
 		}
 		if c >= utf8.RuneSelf {
 			r, n := utf8.DecodeRuneInString(p.s[p.i:])
 			if r != utf8.RuneError && r != '\u00a0' && r != '\ufeff' && r != '\u2028' && r != '\u2029' {
+				b.WriteRune(r)
 				p.i += n
 				continue
 			}
 		}
 		break
 	}
-	return p.s[start:p.i]
+	return b.String()
 }
 
 func (p *json5Parser) str() (string, error) {
@@ -228,7 +241,12 @@ func (p *json5Parser) str() (string, error) {
 			case 'v':
 				b.WriteByte('\v')
 			case '0':
+				if p.i < len(p.s) && p.s[p.i] >= '0' && p.s[p.i] <= '9' {
+					return "", p.errorf("octal escape")
+				}
 				b.WriteByte(0)
+			case '1', '2', '3', '4', '5', '6', '7', '8', '9':
+				return "", p.errorf("octal escape")
 			case '\n': // 续行
 			case '\r':
 				if p.i < len(p.s) && p.s[p.i] == '\n' {
@@ -293,6 +311,8 @@ func (p *json5Parser) number() (any, error) {
 			return nil, p.errorf("bad number %q", p.s[start:p.i])
 		}
 		return sign * float64(v), nil
+	case len(rest) > 1 && rest[0] == '0' && rest[1] >= '0' && rest[1] <= '9':
+		return nil, p.errorf("number with a leading zero")
 	}
 	for p.i < len(p.s) && strings.IndexByte("0123456789.eE+-", p.s[p.i]) >= 0 {
 		if (p.s[p.i] == '+' || p.s[p.i] == '-') && p.s[p.i-1] != 'e' && p.s[p.i-1] != 'E' {
