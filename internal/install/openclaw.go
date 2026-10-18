@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -114,6 +115,69 @@ func openclawManaged(t Target) string {
 	return ""
 }
 
+// openclawIncludeRe 找出 $include 的值：一个字符串或字符串列表（JSON 与 JSON5 的写法，键可以不带引号）。
+// 只看文本，注释里的 $include 也算：多保护几个文件只会更严。
+var (
+	openclawIncludeRe = regexp.MustCompile(`["']?\$include["']?\s*:\s*(\[[^\]]*\]|"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')`)
+	openclawStringRe  = regexp.MustCompile(`"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'`)
+)
+
+// openclawMaxIncludes 是 OpenClawIncludes 最多跟进的文件数。
+const openclawMaxIncludes = 64
+
+// OpenClawIncludes 返回 OpenClaw 的配置用 $include 引入的文件（逐层跟进，相对路径按引入它的文件所在目录解析），
+// 不含配置文件本身。unresolved 为 true 表示有引入的文件读不到，或超过 openclawMaxIncludes：它们里面的设置看不到。
+func OpenClawIncludes(t Target) (files []string, unresolved bool) {
+	seen := map[string]bool{}
+	queue := []string{OpenClawConfig(t)}
+	for len(queue) > 0 {
+		f := queue[0]
+		queue = queue[1:]
+		b, err := os.ReadFile(f)
+		if err != nil {
+			if len(seen) > 0 { // 配置文件本身不存在不算
+				unresolved = true
+			}
+			seen[f] = true
+			continue
+		}
+		seen[f] = true
+		for _, m := range openclawIncludeRe.FindAllStringSubmatch(string(b), -1) {
+			for _, q := range openclawStringRe.FindAllString(m[1], -1) {
+				inc := unquoteJSON5(q)
+				if strings.TrimSpace(inc) == "" {
+					continue
+				}
+				if !filepath.IsAbs(inc) {
+					inc = filepath.Join(filepath.Dir(f), inc)
+				}
+				inc = filepath.Clean(inc)
+				if seen[inc] || slices.Contains(queue, inc) {
+					continue
+				}
+				if len(files) >= openclawMaxIncludes {
+					return files, true
+				}
+				files = append(files, inc)
+				queue = append(queue, inc)
+			}
+		}
+	}
+	return files, unresolved
+}
+
+// unquoteJSON5 去掉 JSON5 字符串的引号与转义。
+func unquoteJSON5(q string) string {
+	if strings.HasPrefix(q, "'") {
+		q = `"` + strings.ReplaceAll(strings.ReplaceAll(q[1:len(q)-1], `\'`, `'`), `"`, `\"`) + `"`
+	}
+	var v string
+	if json.Unmarshal([]byte(q), &v) != nil {
+		return q[1 : len(q)-1]
+	}
+	return v
+}
+
 // OpenClawPluginDir 是写出的插件目录：<config_dir>/extensions/openclaw。
 func OpenClawPluginDir(t Target) string { return filepath.Join(t.ConfigDir, "extensions", "openclaw") }
 
@@ -168,10 +232,20 @@ func OpenClaw(t Target, remove bool) ([]Step, error) {
 	config := OpenClawConfig(t)
 	managed := openclawManaged(t)
 	if managed != "" && remove {
+		// 配置（及其 $include 引入的文件）里还有 h-guard 的设置，或有引入的文件读不到时拒绝：删掉插件目录后 OpenClaw
+		// 就加载不到它
+		includes, unresolved := OpenClawIncludes(t)
+		refuse := unresolved
 		if b, err := os.ReadFile(config); err == nil {
-			if st, err := readOpenClawState(b, dir, t.samePath, func(p string) string { return openclawPath(t, p) }); err != nil || st.loaded || st.entry {
-				return nil, fmt.Errorf("%s is 1, so OpenClaw's configuration is read-only and h-guard does not edit %s; remove %s from plugins.load.paths and plugins.entries.%s where the configuration is managed, restart the Gateway, then run this again to delete the plugin", managed, config, dir, openclawID)
-			}
+			st, err := readOpenClawState(b, dir, t.samePath, func(p string) string { return openclawPath(t, p) })
+			refuse = refuse || err != nil || st.loaded || st.entry
+		}
+		for _, f := range includes {
+			b, err := os.ReadFile(f)
+			refuse = refuse || err != nil || bytes.Contains(b, []byte(openclawID))
+		}
+		if refuse {
+			return nil, fmt.Errorf("%s is 1, so OpenClaw's configuration is read-only and h-guard does not edit %s or the files it includes; remove %s from plugins.load.paths and plugins.entries.%s where the configuration is managed, restart the Gateway, then run this again to delete the plugin", managed, config, dir, openclawID)
 		}
 	}
 	files, err := openclawFiles(t)

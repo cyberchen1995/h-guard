@@ -373,8 +373,9 @@ lists `h-guard`. When OpenClaw's configuration is read-only
 (`OPENCLAW_NIX_MODE=1`, where Nix manages it, or `OPENCLAW_CONFIG_READONLY=1`),
 `install` writes only the plugin and prints the settings to add where the
 configuration is managed; `install --remove` refuses while the configuration
-still loads the plugin, and `h-guard status` notes the mode. A named profile (`--profile`, `OPENCLAW_PROFILE`) has its own
-state directory; set `OPENCLAW_STATE_DIR` or `OPENCLAW_CONFIG_PATH` to install
+or a file it pulls in with `$include` still mentions `h-guard`, or while such
+a file cannot be read, and `h-guard status` notes the mode. A named profile
+(`--profile`, `OPENCLAW_PROFILE`) has its own state directory; set `OPENCLAW_STATE_DIR` or `OPENCLAW_CONFIG_PATH` to install
 there.
 
 The plugin runs in the Gateway process and starts h-guard through OpenClaw's

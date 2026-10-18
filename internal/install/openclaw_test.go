@@ -432,3 +432,40 @@ func TestOpenClawReadOnly(t *testing.T) {
 		t.Errorf("a value other than 1 made the configuration read-only")
 	}
 }
+
+// TestOpenClawIncludes：$include 引入的文件逐层解析（字符串与列表、JSON5 的写法、相对引入它的文件）；读不到的引入
+// 文件报告出来。配置只读时，引入的文件里还有 h-guard 的设置或有读不到的引入文件，remove 拒绝。
+func TestOpenClawIncludes(t *testing.T) {
+	tg := target(t, "linux")
+	config := OpenClawConfig(tg)
+	dir := filepath.Dir(config)
+	writeFile(t, config, `{"plugins": {"$include": "./plugins.json5"}, "agents": {"$include": ["conf.d/a.json", "conf.d/b.json5"]}}`)
+	writeFile(t, filepath.Join(dir, "plugins.json5"), "{\n  // h-guard\n  entries: {'h-guard': {enabled: true}},\n}\n")
+	writeFile(t, filepath.Join(dir, "conf.d", "a.json"), `{"list": []}`)
+	writeFile(t, filepath.Join(dir, "conf.d", "b.json5"), "{ $include: './nested.json5' }")
+	writeFile(t, filepath.Join(dir, "conf.d", "nested.json5"), "{}")
+	files, unresolved := OpenClawIncludes(tg)
+	want := []string{filepath.Join(dir, "plugins.json5"), filepath.Join(dir, "conf.d", "a.json"), filepath.Join(dir, "conf.d", "b.json5"), filepath.Join(dir, "conf.d", "nested.json5")}
+	if unresolved || strings.Join(files, "\n") != strings.Join(want, "\n") {
+		t.Errorf("includes %v (unresolved %v), want %v", files, unresolved, want)
+	}
+
+	tg.Getenv = env(map[string]string{"OPENCLAW_NIX_MODE": "1"})
+	apply(t, plan(t, tg, "openclaw", false))
+	if _, err := OpenClaw(tg, true); err == nil || !strings.Contains(err.Error(), "the files it includes") {
+		t.Errorf("remove with h-guard in an include: %v, want a refusal", err)
+	}
+	writeFile(t, filepath.Join(dir, "plugins.json5"), "{}")
+	os.Remove(filepath.Join(dir, "conf.d", "nested.json5"))
+	if _, unresolved := OpenClawIncludes(tg); !unresolved {
+		t.Errorf("a missing include was not reported")
+	}
+	if _, err := OpenClaw(tg, true); err == nil {
+		t.Errorf("remove with an unreadable include: want a refusal")
+	}
+	writeFile(t, filepath.Join(dir, "conf.d", "nested.json5"), "{}")
+	apply(t, plan(t, tg, "openclaw", true))
+	if _, err := os.Stat(OpenClawPluginDir(tg)); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("the plugin was not removed once no file mentions it: %v", err)
+	}
+}
