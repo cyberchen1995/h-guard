@@ -198,15 +198,15 @@ func outboundCoverage(s setup, judgeUsable bool) []string {
 		a := s.cfg.Category(name).Action
 		entry := name + " " + string(a)
 		if a == guard.DecisionWarn {
-			entry += " (not shown on Codex)" // Codex 显示不了提示
+			entry += " (not shown on Codex or DeepSeek Harness)" // 这两个 harness 显示不了提示
 		}
 		out = append(out, entry)
 	}
-	// 只有类别题、没有本地规则的类别由模型检查，命中只提示；Codex 显示不了提示，在 Codex 上不检查
+	// 只有类别题、没有本地规则的类别由模型检查，命中只提示；Codex 与 DeepSeek Harness 显示不了提示，在那里不检查
 	if judgeUsable && s.cfg.OutboundJudge() {
 		for _, name := range slices.Sorted(maps.Keys(s.cfg.Outbound.Categories)) {
 			if c := s.cfg.Category(name); c.Enabled && c.Question != nil && !active[name] {
-				out = append(out, name+" warn (judge only, not on Codex)")
+				out = append(out, name+" warn (judge only, not on Codex or DeepSeek Harness)")
 			}
 		}
 	}

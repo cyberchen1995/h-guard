@@ -48,7 +48,7 @@ match:
       # Start-Process 的参数列表）同样请求确认。只打印不写入的用法也会请求确认（与 backend enable 相同的已知误报）
       - '(?<![\w.-])h-guard(?:@\S*)?(?:\.exe)?[''")]*(?:\s+--?(?:config(?:=|\s+)\S+|[\w-]+=\S+))*\s+[''"]?(?:install|init|migrate|allow|config[''"]?(?:\s+--?(?:config(?:=|\s+)\S+|[\w-]+=\S+))*\s+[''"]?init)\b'
       - '\bxargs\b[^\n;&|]*(?<![\w.-])h-guard\b'
-      - '(?i)\b(?:start-process|saps)\s[^\n;&|]*(?<![\w.-])h-guard\b[^\n;&|]*\b(?:install|init|migrate)\b'
+      - '(?i)\b(?:start-process|saps)\s[^\n;&|]*(?<![\w.-])h-guard\b[^\n;&|]*\b(?:install|init|migrate|allow)\b'
       # CLAUDE_CONFIG_DIR、CODEX_HOME 指定的 harness 配置目录（审查 I5）
       - '(?<![\w.])(?<![^\w]-)(?<!^-)[a-z]?(?:rm|unlink|mv|cp|install|ln|truncate|tee|chmod|chown|shred|sed\s+-i|perl\s+-[a-z]*i|python[0-9.]*\s+-c|node\s+-e|jq\b[^\n;&|]*>)\b[^\n;&|]*\$\{?(?:CLAUDE_CONFIG_DIR|CODEX_HOME)\}?[/\\](?:settings(?:\.local)?\.json|hooks\.json|config\.toml)'
       - '>>?\s*[^\n;&|]*\$\{?(?:CLAUDE_CONFIG_DIR|CODEX_HOME)\}?[/\\](?:settings(?:\.local)?\.json|hooks\.json|config\.toml)'
@@ -199,6 +199,7 @@ examples:
     - {shell: posix, command: "\"$(which h-guard)\" install codex --write"}
     - {shell: posix, command: "rm \"$CODEX_HOME/hooks.json\""}
     - {shell: powershell, command: "& 'h-guard.exe' install claudecode --write"}
+    - {shell: powershell, command: "Start-Process -NoNewWindow h-guard -ArgumentList 'allow','0123456789'"}
     - {action: file_write, path: "~/.claude/settings.json"}
     - {action: file_write, path: ".claude/settings.local.json"}
     - {action: file_write, path: "/xdg/config/h-guard/config.yaml"}

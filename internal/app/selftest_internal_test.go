@@ -72,3 +72,14 @@ func TestSelftestNeedsTheConfigDirectory(t *testing.T) {
 		t.Errorf("exit %d, ran %v, %s", code, ran, errb.String())
 	}
 }
+
+// TestSelftestNeedsTheCacheDirectory：没有缓存目录时被测入口记不下自己的版本，自测不运行。
+func TestSelftestNeedsTheCacheDirectory(t *testing.T) {
+	var out, errb bytes.Buffer
+	ran := false
+	code := runSelftest([]string{"claudecode"}, Options{Home: t.TempDir(), ConfigDir: t.TempDir(), Stdout: &out, Stderr: &errb,
+		RunEntry: func([]string, []string, []byte) ([]byte, error) { ran = true; return nil, nil }})
+	if code != 1 || ran || !strings.Contains(errb.String(), "cache directory is unavailable") {
+		t.Errorf("exit %d, ran %v, %s", code, ran, errb.String())
+	}
+}
