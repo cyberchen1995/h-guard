@@ -409,9 +409,15 @@ OpenClaw differences:
   Scheduled, heartbeat, webhook and memory runs, messages handed over from
   another session (sub-agent results, `sessions_send`) or by the system, and
   every run in a sub-agent session count as automated.
-- **Shell.** `exec` runs commands with `$SHELL` on macOS and Linux and with
-  PowerShell on Windows, so h-guard checks them by the Gateway's platform;
-  commands in the sandbox (`host: "sandbox"`) are checked as POSIX. A command
+- **Shell.** `exec` runs commands with `$SHELL` on macOS and Linux, where
+  h-guard checks them as POSIX, in the sandbox as well. On Windows the Gateway
+  uses PowerShell and the sandbox a POSIX shell, and which of the two a command
+  gets is only settled when it runs (`auto` picks the sandbox when the session
+  has one, a session that requires a sandbox overrides a configured
+  `gateway`, and elevated mode moves sandbox commands to the Gateway), so
+  h-guard checks it under both shells and the stricter result wins; only a
+  call that asks for `host: "gateway"` or `elevated` itself is checked as
+  PowerShell alone. A command
   for a paired node runs on another device whose shell and files h-guard
   cannot see: it is checked as POSIX and always asks. Where a command runs is
   taken from the call (`host`, `node`), else from the session's `/exec`

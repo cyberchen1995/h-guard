@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/cyberchen1995/h-guard/pkg/detect/command"
@@ -90,7 +91,9 @@ type params struct {
 	Command  string   `json:"command"`
 	Code     string   `json:"code"` // Code Mode 的 JavaScript
 	Workdir  string   `json:"workdir"`
-	Host     string   `json:"host"` // exec：auto、sandbox、gateway、node
+	Host     string   `json:"host"`     // exec：auto、sandbox、gateway、node
+	Elevated bool     `json:"elevated"` // exec：在 Gateway 上运行（离开 sandbox）
+	asked    string   // 调用自己写的 host（Host 可能被插件解析出的 execHost 替换）
 	Node     string   `json:"node"` // exec：远端节点
 	Path     string   `json:"path"`
 	FilePath string   `json:"file_path"`
@@ -151,6 +154,7 @@ func (Adapter) Parse(raw []byte) (guard.Event, error) {
 				in = params{}
 			}
 		}
+		in.asked = in.Host
 		if d.ExecHost != "" {
 			in.Host = d.ExecHost
 		}
@@ -163,7 +167,7 @@ func (Adapter) Parse(raw []byte) (guard.Event, error) {
 				}
 			}
 			ev.Kind, ev.Text = guard.EventToolOutput, extadapter.Text(r.Content)
-			ev.FileContent = fileContent(d.ToolName, in, shellOf(in, d.Platform), codeMode)
+			ev.FileContent = fileContent(d.ToolName, in, shells(in, d.Platform), codeMode)
 			break
 		}
 		ev.Kind = guard.EventAction
@@ -245,17 +249,33 @@ var openclawReadOnly = map[string]bool{
 // touches 是会执行命令或改动文件的工具。
 var touches = map[string]bool{"exec": true, "process": true, "write": true, "edit": true, "apply_patch": true}
 
-// shellOf 返回 exec 命令的 shell：sandbox 里是 POSIX；在 Gateway 上（host 为 gateway、auto 或省略）按 Gateway 的平台，
-// Windows 上 OpenClaw 用 PowerShell，其余平台用 $SHELL（按 POSIX 检查）。
-func shellOf(in params, platform string) guard.Shell {
-	if platform == "win32" && in.Host != "sandbox" {
-		return guard.ShellPowerShell
+// shells 返回检查 exec 命令用的 shell。macOS 与 Linux 上 Gateway（$SHELL）与 sandbox 都按 POSIX。Windows 上 Gateway
+// 用 PowerShell，sandbox 是 POSIX：命令在哪里运行要到 exec 执行时才定（auto 看这个会话有没有 sandbox；会话要求 sandbox
+// 时配置的 gateway 也进 sandbox；默认开启的 elevated 让 sandbox 的命令回到 Gateway），插件看不全，所以两种 shell 都检查，
+// 取更严的结果。只有调用自己要求 gateway 或 elevated 时才确定在 Gateway 上（不能运行时 OpenClaw 拒绝这次调用）。
+func shells(in params, platform string) []guard.Shell {
+	if platform != "win32" {
+		return []guard.Shell{guard.ShellPOSIX}
 	}
-	return guard.ShellPOSIX
+	if in.asked == "gateway" || in.Elevated {
+		return []guard.Shell{guard.ShellPowerShell}
+	}
+	return []guard.Shell{guard.ShellPowerShell, guard.ShellPOSIX}
 }
 
-// actions 把工具映射为动作：exec 执行命令（host 为 node 时命令在配对的远端设备上运行，那里的 shell 与文件 h-guard 看不到，
-// 按 POSIX 检查并请求确认；插件读不到运行位置（unknown）时按 Gateway 的平台检查并请求确认）；read、grep、view_image 读文件；write、edit 写文件；apply_patch 按补丁里的文件；process 向
+// execActions 返回命令在每种 shell 下的动作。
+func execActions(cmd string, sh []guard.Shell) []guard.Action {
+	var acts []guard.Action
+	for _, s := range sh {
+		if act, ok := extadapter.Exec(cmd, s); ok {
+			acts = append(acts, act)
+		}
+	}
+	return acts
+}
+
+// actions 把工具映射为动作：exec 执行命令（按 shells 的 shell；host 为 node 时命令在配对的远端设备上运行，那里的 shell
+// 与文件 h-guard 看不到，按 POSIX 检查并请求确认；插件读不到运行位置（unknown）时另外请求确认）；read、grep、view_image 读文件；write、edit 写文件；apply_patch 按补丁里的文件；process 向
 // 运行中的进程写入的内容按命令检查并请求确认，提交输入（submit）、关闭 stdin、发送按键、结束进程请求确认，查看进程的
 // 子命令（list、poll、log）与 clear 不产生动作。其余工具不产生动作，或是不认识的工具。
 func actions(tool string, in params, platform string) ([]guard.Action, error) {
@@ -273,13 +293,14 @@ func actions(tool string, in params, platform string) ([]guard.Action, error) {
 			}
 			return nil, ErrNoAction
 		}
-		if in.Host == "unknown" {
-			if act, ok := extadapter.Exec(in.Command, shellOf(in, platform)); ok {
-				return []guard.Action{act}, errUnparsed
-			}
+		acts := execActions(in.Command, shells(in, platform))
+		if len(acts) == 0 {
 			return nil, ErrNoAction
 		}
-		return one(extadapter.Exec(in.Command, shellOf(in, platform)))
+		if in.Host == "unknown" {
+			return acts, errUnparsed
+		}
+		return acts, nil
 	case "read", "grep":
 		return one(extadapter.File(guard.ActionFileRead, in.path()))
 	case "view_image":
@@ -336,7 +357,7 @@ func isURL(p string) bool {
 }
 
 // fileContent 报告工具结果是不是文件内容：读文件的工具，或读文件的命令。
-func fileContent(tool string, in params, shell guard.Shell, codeMode bool) bool {
+func fileContent(tool string, in params, sh []guard.Shell, codeMode bool) bool {
 	if codeMode { // Code Mode 单元里的工具调用（如 read）取回的值可以原样返回
 		return true
 	}
@@ -344,7 +365,12 @@ func fileContent(tool string, in params, shell guard.Shell, codeMode bool) bool 
 	case "read", "grep", "pdf", "memory_get", "skills_read":
 		return true
 	case "exec":
-		return command.ReadsFiles(in.Command, shell)
+		for _, s := range sh {
+			if command.ReadsFiles(in.Command, s) {
+				return true
+			}
+		}
+		return false
 	case "process": // 后台进程的新输出：看不出是哪条命令写的，按文件内容扫描
 		return true
 	case "sessions_history", "sessions_search": // 会话里之前的消息（包括读文件的结果）原文或摘录
@@ -374,13 +400,19 @@ const maxSubject = 300
 func Subject(ev guard.Event) string {
 	var parts []string
 	for _, a := range ev.Actions {
+		var p string
 		switch {
 		case a.Exec != nil:
-			parts = append(parts, a.Exec.Command)
+			p = a.Exec.Command
 		case a.File != nil && a.File.To != "":
-			parts = append(parts, string(a.Kind)+" "+a.File.Path+" -> "+a.File.To)
+			p = string(a.Kind) + " " + a.File.Path + " -> " + a.File.To
 		case a.File != nil:
-			parts = append(parts, string(a.Kind)+" "+a.File.Path)
+			p = string(a.Kind) + " " + a.File.Path
+		default:
+			continue
+		}
+		if !slices.Contains(parts, p) { // Windows 上同一条命令按两种 shell 各有一个动作
+			parts = append(parts, p)
 		}
 	}
 	s := ev.Tool

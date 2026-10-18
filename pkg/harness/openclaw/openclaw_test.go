@@ -75,8 +75,11 @@ func TestActions(t *testing.T) {
 	}{
 		{"exec", "linux", "exec", map[string]any{"command": "rm -rf dist", "workdir": "/tmp/x", "env": map[string]string{"A": "b"}}, []guard.Action{exec("rm -rf dist", guard.ShellPOSIX)}, "/tmp/x"},
 		{"exec relative workdir", "darwin", "exec", map[string]any{"command": "ls", "workdir": "sub"}, []guard.Action{exec("ls", guard.ShellPOSIX)}, "/w/sub"},
-		{"exec on Windows", "win32", "exec", map[string]any{"command": "Remove-Item -Recurse x"}, []guard.Action{exec("Remove-Item -Recurse x", guard.ShellPowerShell)}, "/w"},
-		{"exec in the sandbox on Windows", "win32", "exec", map[string]any{"command": "rm x", "host": "sandbox"}, []guard.Action{exec("rm x", guard.ShellPOSIX)}, "/w"},
+		// Windows 上 auto 与 sandbox 可能在 sandbox（POSIX）也可能在 Gateway（PowerShell）里运行：两种 shell 都检查
+		{"exec on Windows", "win32", "exec", map[string]any{"command": "Remove-Item -Recurse x"}, []guard.Action{exec("Remove-Item -Recurse x", guard.ShellPowerShell), exec("Remove-Item -Recurse x", guard.ShellPOSIX)}, "/w"},
+		{"exec in the sandbox on Windows", "win32", "exec", map[string]any{"command": "rm x", "host": "sandbox"}, []guard.Action{exec("rm x", guard.ShellPowerShell), exec("rm x", guard.ShellPOSIX)}, "/w"},
+		{"exec on the Gateway on Windows", "win32", "exec", map[string]any{"command": "rm x", "host": "gateway"}, []guard.Action{exec("rm x", guard.ShellPowerShell)}, "/w"},
+		{"elevated exec on Windows", "win32", "exec", map[string]any{"command": "rm x", "host": "sandbox", "elevated": true}, []guard.Action{exec("rm x", guard.ShellPowerShell)}, "/w"},
 		{"read", "linux", "read", map[string]any{"path": "/w/.env", "offset": 1}, []guard.Action{file(guard.ActionFileRead, "/w/.env")}, "/w"},
 		{"read with file_path", "linux", "read", map[string]any{"file_path": ".env"}, []guard.Action{file(guard.ActionFileRead, ".env")}, "/w"},
 		{"grep", "linux", "grep", map[string]any{"pattern": "k", "path": "secrets"}, []guard.Action{file(guard.ActionFileRead, "secrets")}, "/w"},
@@ -228,7 +231,8 @@ func TestRender(t *testing.T) {
 	}
 }
 
-// TestExecHost：插件解析出的 execHost 优先于参数里的 host：node 与 unknown 请求确认，sandbox 在 Windows 上按 POSIX。
+// TestExecHost：插件解析出的 execHost 优先于参数里的 host：node 与 unknown 请求确认。Windows 上配置的 gateway 与 sandbox
+// 都可能落到另一处（会话要求 sandbox、默认 elevated），两种 shell 都检查；只有调用自己写 gateway 才只按 PowerShell。
 func TestExecHost(t *testing.T) {
 	withHost := func(platform, host string, params any) []byte {
 		return req("before_tool_call", map[string]any{"toolName": "exec", "toolCallId": "c1", "params": params, "platform": platform, "execHost": host}, nil)
@@ -239,13 +243,29 @@ func TestExecHost(t *testing.T) {
 			t.Errorf("%s: %v, want TargetUnparsedError with the command", host, err)
 		}
 	}
-	ev, err := a.Parse(withHost("win32", "sandbox", map[string]any{"command": "rm x"}))
-	if err != nil || ev.Actions[0].Exec.Shell != guard.ShellPOSIX {
-		t.Errorf("sandbox on Windows: %+v %v", ev, err)
+	both := asJSON([]guard.Action{exec("rm x", guard.ShellPowerShell), exec("rm x", guard.ShellPOSIX)})
+	for _, host := range []string{"sandbox", "gateway", "auto"} {
+		ev, err := a.Parse(withHost("win32", host, map[string]any{"command": "rm x"}))
+		if err != nil || asJSON(ev.Actions) != both {
+			t.Errorf("configured %s on Windows: %+v %v", host, ev, err)
+		}
 	}
-	ev, err = a.Parse(withHost("win32", "gateway", map[string]any{"command": "ls"}))
-	if err != nil || ev.Actions[0].Exec.Shell != guard.ShellPowerShell {
-		t.Errorf("gateway on Windows: %+v %v", ev, err)
+	ev, err := a.Parse(withHost("win32", "gateway", map[string]any{"command": "rm x", "host": "gateway"}))
+	if err != nil || asJSON(ev.Actions) != asJSON([]guard.Action{exec("rm x", guard.ShellPowerShell)}) {
+		t.Errorf("gateway asked for on Windows: %+v %v", ev, err)
+	}
+	if _, err := a.Parse(withHost("win32", "unknown", map[string]any{"command": "rm x"})); !errors.As(err, &tu) || asJSON(tu.Event.Actions) != both {
+		t.Errorf("unknown on Windows: %v", err)
+	}
+	// 工具结果：Windows 上任一 shell 下读文件的命令，输出按文件内容扫描
+	b := req("tool_result", map[string]any{"toolName": "exec", "toolCallId": "c1", "args": map[string]string{"command": "cat .env"}, "platform": "win32"},
+		map[string]any{"content": []map[string]string{{"type": "text", "text": "x"}}})
+	if ev, err := a.Parse(b); err != nil || !ev.FileContent {
+		t.Errorf("exec result on Windows: %+v %v", ev, err)
+	}
+	// 摘要里同一条命令只出现一次
+	if s := openclaw.Subject(guard.Event{Tool: "exec", Actions: []guard.Action{exec("rm x", guard.ShellPowerShell), exec("rm x", guard.ShellPOSIX)}}); s != "exec: rm x" {
+		t.Errorf("subject %q", s)
 	}
 }
 
