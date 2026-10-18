@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -108,7 +109,9 @@ func (l *includeLoader) resolve(v any, file string, depth int, chain []string) (
 			}
 		}
 		rest := map[string]any{}
-		for k, item := range x {
+		// 按键排序展开，引入文件的顺序与第一个错误都是确定的
+		for _, k := range slices.Sorted(maps.Keys(x)) {
+			item := x[k]
 			if k == "$include" {
 				continue
 			}

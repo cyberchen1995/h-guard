@@ -15,8 +15,14 @@ import (
 // snake_case 写法（resolveSnakeCaseParamKey），一并取。
 type refSpec struct {
 	keys       []string
-	nested     map[string][]string
+	nested     []nestedRefs
 	mediaLines []string
+}
+
+// nestedRefs 是取值为对象列表的参数（list）及其中引用文件的键。按顺序列出，动作的顺序固定。
+type nestedRefs struct {
+	list string
+	keys []string
 }
 
 // fileRefs 是会读取本地文件、却不是读文件工具的 OpenClaw 工具（2026.10.4）：这些文件的内容会离开本机（发到频道、
@@ -32,7 +38,7 @@ var fileRefs = map[string]refSpec{
 	"view_image": {keys: []string{"path", "paths", "filePath"}},
 	"message": {
 		keys:   []string{"media", "mediaUrl", "path", "filePath", "fileUrl", "image", "mediaUrls"},
-		nested: map[string][]string{"attachments": {"media", "mediaUrl", "path", "filePath", "fileUrl", "url"}},
+		nested: []nestedRefs{{"attachments", []string{"media", "mediaUrl", "path", "filePath", "fileUrl", "url"}}},
 	},
 	"pdf":            {keys: []string{"pdf", "pdfs"}},
 	"image_generate": {keys: []string{"image", "images"}},
@@ -98,11 +104,11 @@ func refsOf(tool string, raw json.RawMessage) []string {
 	for _, k := range both(spec.keys) {
 		refs = append(refs, stringsOf(m[k])...)
 	}
-	for list, keys := range spec.nested {
-		items, _ := m[list].([]any)
+	for _, n := range spec.nested {
+		items, _ := m[n.list].([]any)
 		for _, it := range items {
 			obj, _ := it.(map[string]any)
-			for _, k := range both(keys) {
+			for _, k := range both(n.keys) {
 				refs = append(refs, stringsOf(obj[k])...)
 			}
 		}
