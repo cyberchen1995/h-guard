@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -514,6 +515,7 @@ func TestOpenClawIncludes(t *testing.T) {
 	writeFile(t, filepath.Join(dir, "conf.d", "nested.json5"), "{}")
 	files, unresolved := OpenClawIncludes(tg)
 	want := []string{filepath.Join(dir, "plugins.json5"), filepath.Join(dir, "conf.d", "a.json"), filepath.Join(dir, "conf.d", "b.json5"), filepath.Join(dir, "conf.d", "nested.json5")}
+	slices.Sort(want)
 	if unresolved || strings.Join(files, "\n") != strings.Join(want, "\n") {
 		t.Errorf("includes %v (unresolved %v), want %v", files, unresolved, want)
 	}

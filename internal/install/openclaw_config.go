@@ -16,7 +16,7 @@ type OpenClawEffective struct {
 	Path     string         // 配置文件（OpenClawConfig）
 	Exists   bool           // 配置文件存在
 	Merged   map[string]any // 合并后的配置；Err 不为空时可能缺少读不到的部分
-	Includes []string       // $include 引入的文件（逐层，不含配置文件本身，按出现顺序）
+	Includes []string       // $include 引入的文件（逐层，不含配置文件本身）
 	Include  bool           // 配置里有 $include
 	Err      error          // 配置或引入的文件读不到、不是 JSON5、引入成环或太深；这时 Merged 不可信
 }

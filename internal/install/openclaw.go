@@ -143,6 +143,7 @@ func OpenClawIncludes(t Target) (files []string, unresolved bool) {
 			files = append(files, f)
 		}
 	}
+	slices.Sort(files) // 合并时按对象遍历，顺序不固定
 	return files, e.Err != nil || scanUnresolved
 }
 
