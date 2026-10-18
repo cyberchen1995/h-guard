@@ -259,3 +259,15 @@ func TestRememberRedactsEachRequest(t *testing.T) {
 		t.Errorf("cached %q", got)
 	}
 }
+
+// TestNoGrantOnOpencode：opencode 同样不能请求确认，但单次授权目前只在 Codex 上提供：拦下的命令不带 h-guard allow。
+func TestNoGrantOnOpencode(t *testing.T) {
+	e := newEnv(t)
+	b, _ := json.Marshal(map[string]any{"protocol": extproto.Protocol, "harness": "opencode", "hook": "tool.execute.before",
+		"session": map[string]string{"id": "s1", "cwd": t.TempDir()},
+		"data":    map[string]any{"tool": "bash", "callID": "c", "args": map[string]string{"command": "echo bHMK | base64 -d | sh"}}})
+	out, _, _ := e.run(b, "hook", "opencode", "--event", "tool.execute.before")
+	if extAction(t, out) != "deny" || strings.Contains(out, "h-guard allow") {
+		t.Errorf("reply: %s", out)
+	}
+}

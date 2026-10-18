@@ -7,6 +7,12 @@ requires_judge: true
 reason:
   en: 'Bypasses git hooks, checks, or signing'
   zh-CN: '绕过 git hooks、检查或签名'
+impact:
+  en: 'Hooks, checks or signing that guard this repository would be skipped.'
+  zh-CN: '仓库设置的 hook、检查或签名会被跳过。'
+advice:
+  en: 'Run the checks and fix what they report instead of skipping them.'
+  zh-CN: '运行这些检查并修复它们报告的问题，而不是跳过。'
 match:
   exec:
     # any 组沿用 Python 版正则，两种 shell 都适用（不拆分，只收紧）；PowerShell 专有的写法在 powershell 组

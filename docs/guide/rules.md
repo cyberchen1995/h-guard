@@ -79,6 +79,8 @@ examples:
 | `action` | required | `ask` or `deny`. |
 | `on` | required | Action kinds: `exec`, `file_read`, `file_write`, `file_delete`, `file_rename`. |
 | `reason` | required | Reason text by locale; `en` is required, `zh-CN` is used when the locale is Chinese. |
+| `impact` | none | What the operation would cause, by locale (`en` required when given). Shown after the reason as "Impact: …" when the rule interrupts. |
+| `advice` | none | A safer way to continue, by locale (`en` required when given). Shown as "Safer way: …". |
 | `match` | required | `match.exec` for `exec`, `match.file` for file actions. |
 | `requires_judge` | `false` | The rule interrupts only when the judge is on; with the judge off its hits are only logged. Needs a `question`. |
 | `question` | none | Question sent to the judge (`exec` rules only), see below. |

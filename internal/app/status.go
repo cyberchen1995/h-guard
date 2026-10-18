@@ -17,7 +17,7 @@ import (
 	"github.com/cyberchen1995/h-guard/pkg/detect/secrets"
 )
 
-// runStatus 报告状态：配置与缓存目录；判断层（模型开关、后端与目标、取答方式、同意、校准）；不生效的
+// runStatus 报告状态：配置与缓存目录；保护摘要（statusProtection）；判断层（模型开关、后端与目标、取答方式、同意、校准）；不生效的
 // 规则及原因；各 harness 的入口是否安装、与期望是否一致、shell 配置与版本；近 7 天的降级汇总与日志位置。
 // 不发任何请求（只运行 harness 的 --version）。
 // --config 与 hook、check、eval 一致：报告叠加了该文件之后的状态。
@@ -43,6 +43,7 @@ func runStatus(args []string, o Options) int {
 	}
 	fmt.Fprintln(o.Stdout, "config dir:", dir(o.ConfigDir))
 	fmt.Fprintln(o.Stdout, "cache dir: ", dir(o.CacheDir))
+	statusProtection(s, o)
 	statusJudge(s, o)
 	statusOutbound(s, o)
 	statusRules(s, o)

@@ -263,8 +263,11 @@ func inspectCodex(t Target) []string {
 		Hooks map[string][]struct {
 			Matcher json.RawMessage `json:"matcher"`
 			Hooks   []struct {
-				Command string `json:"command"`
-				Timeout int    `json:"timeout"`
+				Type           string `json:"type"`
+				Command        string `json:"command"`
+				CommandWindows string `json:"commandWindows"`
+				Timeout        int    `json:"timeout"`
+				Async          bool   `json:"async"`
 			} `json:"hooks"`
 		} `json:"hooks"`
 	}
@@ -280,20 +283,29 @@ func inspectCodex(t Target) []string {
 		n := 0
 		for _, g := range file.Hooks[ev] {
 			for _, h := range g.Hooks {
-				if !isOurCodexHook(h.Command) {
+				cmd := effectiveCommand(t, h.Command, h.CommandWindows)
+				if !isOurCodexHook(cmd) {
 					continue
 				}
 				n++
+				if !strings.Contains(cmd, " --event "+ev+" ") {
+					// 写在别的事件下的入口按命令里的事件处理（读不懂输入时按那个事件兜底），拦不住这个事件
+					problems = append(problems, fmt.Sprintf("problem: the h-guard hook under %s is the command for another event; run h-guard install codex --write", ev))
+				}
+				if h.Async || h.Type != "command" {
+					// 后台运行的 hook 拦不住操作（Codex 不等它的结论）；Codex 只认写明 type: command 的命令 hook
+					problems = append(problems, fmt.Sprintf("problem: the h-guard hook for %s does not run as a blocking command hook; run h-guard install codex --write", ev))
+				}
 				if m := strings.TrimSpace(string(g.Matcher)); m != "" && m != "null" {
 					// 本项目的入口不写 matcher；加了就只对匹配的工具生效
 					problems = append(problems, fmt.Sprintf("problem: the h-guard hook for %s only runs for tools matching %s; run h-guard install codex --write", ev, m))
 				}
-				if m := commandTimeout.FindStringSubmatch(h.Command); m != nil {
+				if m := commandTimeout.FindStringSubmatch(cmd); m != nil {
 					if given, _ := strconv.Atoi(m[1]); h.Timeout != given {
 						problems = append(problems, fmt.Sprintf("problem: %s waits %ds but h-guard is given %ds; run h-guard install codex --write", ev, h.Timeout, given))
 					}
 				}
-				if bin := commandBin(h.Command); bin != "" {
+				if bin := commandBin(cmd); bin != "" {
 					if _, err := os.Stat(bin); err != nil {
 						problems = append(problems, fmt.Sprintf("problem: h-guard is not at %s; run h-guard install codex --write", bin))
 					}

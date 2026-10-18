@@ -48,6 +48,18 @@
       "required": ["en"],
       "additionalProperties": {"type": "string"}
     },
+    "impact": {
+      "description": "Optional: what the operation would cause, shown after the reason when it interrupts, by locale (en is required when given).",
+      "type": "object",
+      "required": ["en"],
+      "additionalProperties": {"type": "string"}
+    },
+    "advice": {
+      "description": "Optional: a safer way to continue, shown after the impact when it interrupts, by locale (en is required when given).",
+      "type": "object",
+      "required": ["en"],
+      "additionalProperties": {"type": "string"}
+    },
     "match": {
       "description": "Local detection: match.exec for exec rules, match.file for file rules.",
       "type": "object",
