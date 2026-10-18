@@ -67,10 +67,10 @@ match:
       - '(?<![\w.])(?<![^\w]-)(?<!^-)[a-z]?(?:rm|unlink|mv|cp|install|ln|truncate|tee|chmod|chown|shred|sed\s+-i|perl\s+-[a-z]*i|python[0-9.]*\s+-c|node\s+-e|jq\b[^\n;&|]*>)\b[^\n;&|]*(?:\.hermes/(?:profiles/[^\n;&|/]+/)?(?:config\.yaml|shell-hooks-allowlist\.json|plugins/h-guard(?![\w-]))|\$\{?HERMES_HOME\}?[/\\](?:profiles[/\\][^\n;&|/\\]+[/\\])?(?:config\.yaml|shell-hooks-allowlist\.json|plugins[/\\]h-guard(?![\w-])))'
       - '>>?\s*[^\n;&|]*(?:\.hermes/(?:profiles/[^\n;&|/]+/)?(?:config\.yaml|shell-hooks-allowlist\.json|plugins/h-guard(?![\w-]))|\$\{?HERMES_HOME\}?[/\\](?:profiles[/\\][^\n;&|/\\]+[/\\])?(?:config\.yaml|shell-hooks-allowlist\.json|plugins[/\\]h-guard(?![\w-])))'
       - '(?:\.hermes/(?:profiles/[^\n;&|/]+/)?(?:config\.yaml|shell-hooks-allowlist\.json|plugins/h-guard(?![\w-]))|\$\{?HERMES_HOME\}?[/\\](?:profiles[/\\][^\n;&|/\\]+[/\\])?(?:config\.yaml|shell-hooks-allowlist\.json|plugins[/\\]h-guard(?![\w-])))[^\n;&|]*\|\s*(?:tee|sponge)\b'
-      # 移动、删除 Hermes 的主目录或插件目录；hermes 命令停用、删除插件，改 plugins 下的设置或整个替换、去掉 plugins（unset、set --force）
-      - '(?<![\w.])(?<![^\w]-)(?<!^-)[a-z]?(?:rm|unlink|mv|cp|install|ln|truncate|tee|chmod|chown|shred|sed\s+-i|perl\s+-[a-z]*i|python[0-9.]*\s+-c|node\s+-e|jq\b[^\n;&|]*>)\b[^\n;&|]*(?:\.hermes(?:/plugins)?|\$\{?HERMES_HOME\}?(?:[/\\]plugins)?)/?(?=$|[\s''\"`;&|)])'
+      # 移动、删除 Hermes 的主目录、配置档目录或插件目录；hermes 命令停用、删除 h-guard 插件，改 plugins 下的设置或整个替换、去掉 plugins（unset、set --force）
+      - '(?<![\w.])(?<![^\w]-)(?<!^-)[a-z]?(?:rm|unlink|mv|cp|install|ln|truncate|tee|chmod|chown|shred|sed\s+-i|perl\s+-[a-z]*i|python[0-9.]*\s+-c|node\s+-e|jq\b[^\n;&|]*>)\b[^\n;&|]*(?:\.hermes(?:/profiles/[^\n;&|/]+)?(?:/plugins)?|\$\{?HERMES_HOME\}?(?:[/\\]profiles[/\\][^\n;&|/\\]+)?(?:[/\\]plugins)?)/?(?=$|[\s''\"`;&|)])'
       # 从子命令开始匹配、向前找 hermes（后顾）：从每个 hermes 开始向后找会在一长串 hermes 上退化成平方
-      - '(?<=(?<![\w.-])hermes(?:\.exe)?[''\")]*\s(?:[^\n;&|]*\s)?)plugins\s+(?:disable|remove|rm|uninstall)\b'
+      - '(?<=(?<![\w.-])hermes(?:\.exe)?[''\")]*\s(?:[^\n;&|]*\s)?)plugins\s+(?:disable|remove|rm|uninstall)\s+(?:-[^\s;&|]+\s+)*[''\"]?h-guard[''\"]?(?=$|[\s;&|)])'
       - '(?<=(?<![\w.-])hermes(?:\.exe)?[''\")]*\s(?:[^\n;&|]*\s)?)config\s+(?:set|unset)\s+[''\"]?plugins(?:\.|[''\"]?(?=$|[\s;&|)]))'
     # PowerShell：写入、删除、移动、复制到受保护路径的 cmdlet 及其别名，.NET 的文件写入，重定向；
     # 路径可用 \ 或 /，也可拆在 Join-Path 的几个参数里；另覆盖 Windows 的配置与缓存目录（$env:APPDATA、${env:APPDATA}、
@@ -95,7 +95,7 @@ match:
       - '(?<![\w.-])(?:set-content|sc|add-content|ac|out-file|clear-content|clc|remove-item|rm|ri|del|erase|rd|rmdir|move-item|mi|mv|move|copy-item|cpi|cp|copy|rename-item|rni|ren|new-item|ni|set-item|si|set-itemproperty|sp|tee-object|tee)\b[^\n;&|]*(?:\.hermes|appdata[\\/]local[\\/]hermes|\$(?:\{env:|env:)(?:localappdata\}?[\\/]hermes|hermes_home\}?))[\\/](?:profiles[\\/][^\n;&|\\/]+[\\/])?(?:config\.yaml|shell-hooks-allowlist\.json|plugins[\\/]h-guard(?![\w-]))'
       - '\[(?:system\.)?io\.file\]::(?:write|append|delete|move|copy|replace|create|open)\w*\s*\([^\n]*(?:\.hermes|appdata[\\/]local[\\/]hermes|\$(?:\{env:|env:)(?:localappdata\}?[\\/]hermes|hermes_home\}?))[\\/](?:profiles[\\/][^\n;&|\\/]+[\\/])?(?:config\.yaml|shell-hooks-allowlist\.json|plugins[\\/]h-guard(?![\w-]))'
       - '>>?\s*[^\n;&|]*(?:\.hermes|appdata[\\/]local[\\/]hermes|\$(?:\{env:|env:)(?:localappdata\}?[\\/]hermes|hermes_home\}?))[\\/](?:profiles[\\/][^\n;&|\\/]+[\\/])?(?:config\.yaml|shell-hooks-allowlist\.json|plugins[\\/]h-guard(?![\w-]))'
-      - '(?<![\w.-])(?:set-content|sc|add-content|ac|out-file|clear-content|clc|remove-item|rm|ri|del|erase|rd|rmdir|move-item|mi|mv|move|copy-item|cpi|cp|copy|rename-item|rni|ren|new-item|ni|set-item|si|set-itemproperty|sp|tee-object|tee)\b[^\n;&|]*(?:\.hermes|appdata[\\/]local[\\/]hermes|\$(?:\{env:|env:)(?:localappdata\}?[\\/]hermes|hermes_home\}?))(?:[\\/]plugins)?[\\/]?(?=$|[\s''\"`;&|),])'
+      - '(?<![\w.-])(?:set-content|sc|add-content|ac|out-file|clear-content|clc|remove-item|rm|ri|del|erase|rd|rmdir|move-item|mi|mv|move|copy-item|cpi|cp|copy|rename-item|rni|ren|new-item|ni|set-item|si|set-itemproperty|sp|tee-object|tee)\b[^\n;&|]*(?:\.hermes|appdata[\\/]local[\\/]hermes|\$(?:\{env:|env:)(?:localappdata\}?[\\/]hermes|hermes_home\}?))(?:[\\/]profiles[\\/][^\n;&|\\/]+)?(?:[\\/]plugins)?[\\/]?(?=$|[\s''\"`;&|),])'
   file:
     # 文件动作（Write、Edit、NotebookEdit 等）按路径匹配，不调模型。
     # {config}、{cache} 是 h-guard 实际使用的目录；~ 开头的写法另覆盖默认位置。
@@ -176,6 +176,9 @@ match:
       - '{hermes_home}/plugins/h-guard'
       - '{hermes_home}/plugins/h-guard/**'
       - '{hermes_home}/profiles/*/config.yaml'
+      - '{hermes_home}/profiles/*'
+      - '{hermes_home}/profiles/*/plugins'
+      - '{hermes_home}/profiles/*/plugins/h-guard'
       - '{hermes_home}/profiles/*/plugins/h-guard/**'
       - '~/.hermes/config.yaml'
       - '~/.hermes/shell-hooks-allowlist.json'
@@ -183,6 +186,9 @@ match:
       - '~/.hermes/plugins/h-guard'
       - '~/.hermes/plugins/h-guard/**'
       - '~/.hermes/profiles/*/config.yaml'
+      - '~/.hermes/profiles/*'
+      - '~/.hermes/profiles/*/plugins'
+      - '~/.hermes/profiles/*/plugins/h-guard'
       - '~/.hermes/profiles/*/plugins/h-guard/**'
       - '/etc/hermes/config.yaml'
 bypassable_by_request: false
@@ -274,6 +280,13 @@ examples:
     - {shell: posix, command: "rm \"$HERMES_HOME/plugins/h-guard/__init__.py\""}
     - {shell: posix, command: "cp /tmp/c.yaml ~/.hermes/profiles/work/config.yaml"}
     - {shell: posix, command: "hermes plugins disable h-guard"}
+    - {shell: posix, command: "hermes plugins rm --yes 'h-guard'"}
+    - {shell: posix, command: "rm -rf ~/.hermes/profiles/work/plugins"}
+    - {shell: posix, command: "mv ~/.hermes/profiles/work /tmp/x"}
+    - {shell: posix, command: "rm -rf \"$HERMES_HOME/profiles/work/plugins\""}
+    - {shell: powershell, command: "Remove-Item -Recurse ~\\.hermes\\profiles\\work\\plugins"}
+    - {action: file_delete, path: "~/.hermes/profiles/work/plugins"}
+    - {action: file_rename, path: "~/.hermes/profiles/work"}
     - {shell: posix, command: "hermes -p work plugins remove h-guard"}
     - {shell: posix, command: "hermes config set plugins.disabled '[h-guard]'"}
     - {shell: posix, command: "hermes config unset plugins"}
@@ -316,6 +329,10 @@ examples:
     - {shell: posix, command: "hermes plugins list"}
     - {shell: posix, command: "hermes config set approvals.timeout 600"}
     - {shell: posix, command: "hermes config get plugins"}
+    - {shell: posix, command: "hermes plugins disable disk-cleanup"}
+    - {shell: posix, command: "hermes plugins remove h-guard-notes"}
+    - {shell: posix, command: "rm -rf ~/.hermes/profiles/work/plugins/other"}
+    - {action: file_write, path: "~/.hermes/profiles/work/skills/x/SKILL.md"}
     - {shell: posix, command: "hermes config set plugins_note x"}
     - {shell: posix, command: "echo plugins disable h-guard"}
     - {shell: posix, command: "rm -rf ~/.hermes/plugins/other-plugin"}
