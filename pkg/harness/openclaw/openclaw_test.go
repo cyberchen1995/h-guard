@@ -317,6 +317,8 @@ func TestPartlyReadOnly(t *testing.T) {
 		{"message", map[string]any{"action": "reply", "mediaUrls": []string{"a.png", "https://x/b.png"}, "attachments": []map[string]string{{"url": "C:\\x\\c.txt"}}}, []guard.Action{file(guard.ActionFileRead, "a.png"), file(guard.ActionFileRead, "C:\\x\\c.txt")}},
 		{"sessions", map[string]any{"action": "patch", "label": "x"}, nil},
 		{"transcripts", map[string]any{"action": "list"}, nil},
+		{"canvas", map[string]any{"action": "hide"}, nil},
+		{"canvas", map[string]any{"action": "snapshot"}, nil},
 	} {
 		ev, err := a.Parse(call(tt.tool, tt.params))
 		if tt.want == nil {
@@ -335,6 +337,7 @@ func TestPartlyReadOnly(t *testing.T) {
 		"message":     {"edit", "unsend", "delete", "pin", "kick", "ban", "timeout", "role-add", "channel-delete", "set-profile", "addParticipant", "leaveGroup", "", "frob"},
 		"sessions":    {"reset", "delete", "group_delete", "assign_owner", ""},
 		"transcripts": {"start", ""},
+		"canvas":      {"present", "navigate", "eval", "a2ui_push", ""},
 	} {
 		for _, action := range actions {
 			if _, err := a.Parse(call(tool, map[string]any{"action": action})); !errors.As(err, &ut) || ut.Event.Tool != tool {

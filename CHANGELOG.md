@@ -71,7 +71,7 @@ minor releases. Every such change is recorded in this file.
   `OPENCLAW_CONFIG_READONLY`) alone, printing the settings to add there. Tool calls are checked in `before_tool_call` (`ask` becomes a
   plugin approval), tool output in the tool result middleware and prompts in
   `before_agent_run`. OpenClaw's own tools are classified like pi's, and for
-  `browser`, `message`, `sessions` and `transcripts` by action (only
+  `browser`, `message`, `sessions`, `transcripts` and `canvas` by action (only
   observing the browser, reading and sending messages pass; local message
   attachments are checked as file reads); other tools and actions ask
   (`tool_unknown`). An opt-in channel notifier

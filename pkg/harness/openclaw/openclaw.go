@@ -255,8 +255,8 @@ func SourceOf(trigger, provenance, sessionKey string) guard.Source {
 // openclawReadOnly 是 OpenClaw 自带的、不执行命令、不改动用户文件、也不替用户在外部操作的工具
 // （src/agents/tool-catalog.ts，2026.10.4）：目录与搜索、网页、记忆的查询、会话与子 agent（子 agent 的工具调用各自经过
 // 检查）、目标与进度、向用户提问、技能的查找与读取、图片与 PDF 的理解、媒体生成（写进 OpenClaw 管理的媒体目录）、
-// 操作界面的布局、主题、仪表盘与组件、节点上的 Canvas 面板、Code Mode 的 wait、tool_search 等。browser、message、
-// sessions、transcripts 只有部分子命令在内（见 openclawActions）。
+// 操作界面的布局、主题、仪表盘与组件、Code Mode 的 wait、tool_search 等。browser、message、sessions、transcripts、
+// canvas 只有部分子命令在内（见 openclawActions）。
 // 其余 OpenClaw 自带的工具（向终端或运行中的进程输入、控制桌面与手机、节点、Gateway 更新与配置、插件管理、定时任务、
 // 技能与个人指令的改写、凭据、发布 GitHub PR、暴露本地服务、远端代码执行等）与插件提供的工具 h-guard 不认识，请求确认；
 // 用户可以在 harnesses.openclaw.read_only_tools 里补充只读的工具。MCP 工具（<服务>__<工具>）与其他 harness 一样不检查。
@@ -270,7 +270,7 @@ var openclawReadOnly = map[string]bool{
 	"agents_list": true, "agents_wait": true, "subagents": true, "suggest_task": true, "dismiss_task": true,
 	"get_goal": true, "create_goal": true, "update_goal": true, "progress_card": true, "ask_user": true,
 	"skills_search": true, "skills_read": true, "github_identity_status": true,
-	"screen": true, "theme": true, "dashboard": true, "canvas": true, "show_widget": true,
+	"screen": true, "theme": true, "dashboard": true, "show_widget": true,
 	"heartbeat_respond": true,
 	"pdf":               true, "image_generate": true, "music_generate": true, "video_generate": true, "tts": true,
 }
@@ -284,6 +284,8 @@ var openclawReadOnly = map[string]bool{
 //     成员、身份、事件的管理请求确认。
 //   - sessions 放行查看与改标签、分组、模型等会话设置，重置与删除会话（及其记录）、删除分组、转交所有者请求确认。
 //   - transcripts 放行查看、导入与总结会议记录，开始录制会议（start）请求确认。
+//   - canvas 控制配对的 Mac 上的 WebView 面板：放行隐藏面板（hide）与截取面板（snapshot，较新的版本）；present 与
+//     navigate 让面板加载文档或 URL，较新版本的 eval 在面板里执行 JavaScript，请求确认。
 var openclawActions = map[string]map[string]bool{
 	"browser": set("doctor", "status", "profiles", "tabs", "snapshot", "console", "requests", "errors", "text", "screenshot", "pdf"),
 	"message": set(
@@ -293,6 +295,7 @@ var openclawActions = map[string]map[string]bool{
 		"react", "poll-vote"),
 	"sessions":    set("cloud_profiles", "patch", "stop", "group_list", "group_set", "group_rename"),
 	"transcripts": set("stop", "status", "import", "summarize", "list", "show"),
+	"canvas":      set("hide", "snapshot"),
 }
 
 func set(names ...string) map[string]bool {

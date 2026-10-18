@@ -451,8 +451,10 @@ OpenClaw differences:
   editing, deleting and pinning messages and managing groups, channels,
   members, roles, profiles and events ask. `sessions` asks to reset or delete
   a session, delete a group or hand a session to another owner, and
-  `transcripts` asks to start recording a meeting. An action h-guard does not
-  know asks.
+  `transcripts` asks to start recording a meeting. `canvas` passes hiding the
+  panel on a paired Mac (and `snapshot` on newer versions); `present` and
+  `navigate`, which load a document or URL into the panel's WebView, and
+  `eval` on newer versions ask. An action h-guard does not know asks.
 - **Processes.** Text written or pasted into a running process (`process`
   with `write` or `paste`) is checked as a POSIX command and always asks;
   submitting pending input (`submit`), closing a process's input (`write`
