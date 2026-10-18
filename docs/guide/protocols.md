@@ -267,14 +267,18 @@ The built-in extensions send these hooks:
 | `pi`, `omp` | `input` | `{text, source}`; oh-my-pi also sends prompts found on its `context` event, with `source: "context"` | |
 | `dsh` | `tools/pre-execute`, `tools/post-execute` | `{name, callId, arguments, nested}` | `{isError, content}` (`tools/post-execute`) |
 | `dsh` | `agent/pre-step` | `{messages: [{source: {kind}, content}], session: {origin, delegationDepth}}` | |
-| `openclaw` | `before_tool_call` | `{toolName, params, toolKind, toolInputKind, toolCallId, derivedPaths, platform}` | |
+| `openclaw` | `before_tool_call` | `{toolName, params, toolKind, toolInputKind, toolCallId, derivedPaths, platform, execHost}` | |
 | `openclaw` | `tool_result` (the tool result middleware) | `{toolName, toolCallId, args, isError, platform}` | `{content}` |
 | `openclaw` | `before_agent_run` | `{prompt, trigger, provenance, sessionKey, channel}` | |
 
 Only text content blocks are passed on; images are left out.
 
 **Reply:** `{"protocol": "h-guard.ext/v1", "action": "pass|deny|ask|warn",
-"message": "...", "hint": "..."}`. `message` and `hint` are localized. Every
+"message": "...", "hint": "...", "subject": "..."}`. `message` and `hint` are
+localized. `subject` is optional: a summary of the call (tool, command, files)
+with the credentials h-guard recognizes masked, which some adapters (OpenClaw)
+add to `ask` so the extension can show it to a person instead of the raw
+arguments. Every
 reply other than `pass` carries a non-empty `message`; a reply without one is
 not valid. There is no `allow`. Every request that h-guard understands gets a
 reply, `pass` included; a tool call that has nothing to check (such as an MCP

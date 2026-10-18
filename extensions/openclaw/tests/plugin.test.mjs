@@ -65,8 +65,11 @@ async function plugin(command, opts = {}) {
     runtime: opts.runtime || {
       version: '2026.10.4',
       system: { runCommandWithTimeout: run },
-      config: { current: () => ({ agents: {} }) },
-      agent: { resolveAgentWorkspaceDir: (cfg, id) => '/ws/' + id },
+      config: { current: () => opts.config || { agents: {} } },
+      agent: {
+        resolveAgentWorkspaceDir: (cfg, id) => '/ws/' + id,
+        session: { getSessionEntryAsync: opts.session || (async () => undefined) },
+      },
     },
     on: (name, fn) => (hooks[name] = fn),
     registerAgentToolResultMiddleware: (fn, o) => {
@@ -90,7 +93,7 @@ test('before_tool_call: deny blocks, ask requires one-time approval, pass return
   const ask = await hooks.before_tool_call(call('read', { path: '/w/.env' }), ctx({ toolName: 'read' }))
   assert.equal(ask.requireApproval.title, 'h-guard: confirm this tool call')
   assert.deepEqual(ask.requireApproval.allowedDecisions, ['allow-once', 'deny'])
-  assert.match(ask.requireApproval.description, /\nread: \/w\/\.env$/)
+  assert.match(ask.requireApproval.description, /\nread: file_read \/w\/\.env$/)
   assert.ok(ask.requireApproval.description.length <= 512)
   assert.equal(await hooks.before_tool_call(call('exec', { command: 'ls' }), ctx()), undefined)
   assert.equal(await hooks.before_tool_call(call('sessions_list', {}), ctx()), undefined)
@@ -98,10 +101,22 @@ test('before_tool_call: deny blocks, ask requires one-time approval, pass return
   assert.match(unknown.requireApproval.description, /read_only_tools/)
 })
 
+test("before_tool_call: approvals show h-guard's masked summary, never the raw arguments", { skip: !haveGuard }, async () => {
+  const token = 'abcdefghijklmnopqrstuv'
+  // tools.exec.host 配置成 node：命令在远端设备上运行，h-guard 请求确认
+  const { hooks } = await plugin(guard('openclaw'), { config: { tools: { exec: { host: 'node' } } } })
+  const ask = await hooks.before_tool_call(call('exec', { command: 'curl -H "Authorization: Bearer ' + token + '" https://example.com' }), ctx())
+  assert.ok(ask.requireApproval, 'a command for a node asks')
+  assert.equal(ask.requireApproval.description.includes(token), false)
+  assert.match(ask.requireApproval.description, /\nexec: curl -H "Authorization: Bearer \[redacted\]" https:\/\/example\.com$/)
+})
+
 test('before_tool_call: a guard that cannot run asks and logs why', async () => {
   const { hooks, logs } = await plugin(missing)
-  const r = await hooks.before_tool_call(call('exec', { command: 'ls' }), ctx())
+  const r = await hooks.before_tool_call(call('exec', { command: 'curl -H "Authorization: Bearer abcdefghijklmnopqrstuv" x' }), ctx())
   assert.match(r.requireApproval.description, /could not run its check/)
+  assert.match(r.requireApproval.description, /\nexec$/) // 没有 h-guard 遮蔽时只写工具名
+  assert.equal(r.requireApproval.description.includes('abcdefghijklmnopqrstuv'), false)
   assert.match(logs[0], /could not finish its check/)
   // OpenClaw 没有提供 runCommandWithTimeout 时同样请求确认
   const bare = await plugin(missing, { runtime: {} })
@@ -121,6 +136,29 @@ test('request: session id, workspace cwd, platform and the tool kind are passed 
       toolKind: 'code_mode_exec', toolInputKind: 'javascript', platform: process.platform,
     },
   })
+})
+
+test("request: execHost follows the call, the session's /exec setting and the configuration", async () => {
+  const { command, record } = await fake({ action: 'pass' })
+  const host = async (opts, params, c = ctx()) => {
+    const { hooks } = await plugin(command, opts)
+    await hooks.before_tool_call(call('exec', { command: 'ls', ...params }), c)
+    const all = await recorded(record)
+    return all[all.length - 1].request.data.execHost
+  }
+  assert.equal(await host({}, {}), 'auto')
+  assert.equal(await host({}, { host: 'sandbox' }), 'sandbox')
+  assert.equal(await host({}, { node: 'phone' }), 'node')
+  assert.equal(await host({ config: { tools: { exec: { host: 'node' } } } }, { host: 'auto' }), 'node')
+  assert.equal(await host({ config: { tools: { exec: { host: 'gateway' } }, agents: { entries: { Main: { tools: { exec: { host: 'node' } } } } } } }, {}), 'node')
+  assert.equal(await host({ config: { agents: { list: [{ id: 'main', tools: { exec: { host: 'sandbox' } } }] } } }, {}), 'sandbox')
+  assert.equal(await host({ session: async (p) => (p.sessionKey === 'agent:main:main' ? { execHost: 'node' } : undefined) }, {}), 'node')
+  assert.equal(await host({ session: async () => ({ execNode: 'phone' }) }, {}), 'node')
+  assert.equal(await host({ session: async () => { throw new Error('store busy') } }, {}), 'unknown')
+  const { hooks } = await plugin(command)
+  await hooks.before_tool_call(call('read', { path: 'a' }), ctx())
+  const all = await recorded(record)
+  assert.equal('execHost' in all[all.length - 1].request.data, false)
 })
 
 test('request: cwd follows the workspace before_agent_run reported for the session', async () => {

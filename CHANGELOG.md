@@ -52,6 +52,9 @@ minor releases. Every such change is recorded in this file.
 - New adapters `pkg/harness/opencode`, `pkg/harness/pi` (registers `pi` and
   `omp`), `pkg/harness/dsh` and `pkg/harness/openclaw`.
 - `pkg/harness` adds `UnknownToolError` for tools an adapter does not know.
+- `pkg/harness/extproto`: `Reply` has an optional `Subject`, a summary of the
+  call with recognized credentials masked, for extensions that show the call to
+  a person.
 - `pkg/harness` adds `ErrNoAction` and the optional `NoActionRenderer`: an
   adapter that answers every request (extension protocol) replies `pass` to a
   tool call with nothing to check, so an empty reply always means h-guard could

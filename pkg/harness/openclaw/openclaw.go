@@ -3,9 +3,9 @@
 // 决定（block、requireApproval、替换工具结果、拦下这一轮）。
 //
 // 请求的 data 是事件里能序列化的部分：
-//   - before_tool_call：{toolName, params, toolKind, toolInputKind, toolCallId, derivedPaths, platform}，toolKind 为
+//   - before_tool_call：{toolName, params, toolKind, toolInputKind, toolCallId, derivedPaths, platform, execHost}，toolKind 为
 //     code_mode_exec 时这是 Code Mode 的 JavaScript 单元（其中的工具调用各自经过检查），platform 是 Gateway 所在平台
-//     （process.platform）；
+//     （process.platform），execHost 是 exec 实际运行的位置（见 toolData）；
 //   - tool_result（工具结果 middleware）：{toolName, toolCallId, args, isError, platform}，result 是 {content}；
 //   - before_agent_run：{prompt, trigger, provenance, sessionKey, channel}，trigger 是这一轮的起因（user、cron、
 //     heartbeat 等），provenance 是用户消息的来源（external_user、inter_session、internal_system）。
@@ -20,6 +20,7 @@ import (
 	"strings"
 
 	"github.com/cyberchen1995/h-guard/pkg/detect/command"
+	"github.com/cyberchen1995/h-guard/pkg/detect/secrets"
 	"github.com/cyberchen1995/h-guard/pkg/guard"
 	"github.com/cyberchen1995/h-guard/pkg/harness"
 	"github.com/cyberchen1995/h-guard/pkg/harness/internal/applypatch"
@@ -79,6 +80,9 @@ type toolData struct {
 	Args       json.RawMessage `json:"args"` // tool_result 的参数
 	ToolKind   string          `json:"toolKind"`
 	Platform   string          `json:"platform"`
+	// ExecHost 是插件解析出的 exec 实际运行的位置：调用自己的 host（或 node），没有时依次取会话的 /exec 设置、agent 与
+	// tools.exec 的配置（auto、gateway、sandbox、node）；读不到这些设置时为 unknown。没有这个字段时用参数里的 host。
+	ExecHost string `json:"execHost"`
 }
 
 // params 是工具参数里 h-guard 用到的字段。path、file_path、filePath 是 OpenClaw 文件工具接受的路径写法（依次取第一个）。
@@ -145,6 +149,9 @@ func (Adapter) Parse(raw []byte) (guard.Event, error) {
 				}
 				in = params{}
 			}
+		}
+		if d.ExecHost != "" {
+			in.Host = d.ExecHost
 		}
 		codeMode := d.ToolKind == codeModeExec || (d.ToolName == "exec" && in.Code != "" && in.Command == "")
 		if req.Hook == "tool_result" {
@@ -247,7 +254,7 @@ func shellOf(in params, platform string) guard.Shell {
 }
 
 // actions 把工具映射为动作：exec 执行命令（host 为 node 时命令在配对的远端设备上运行，那里的 shell 与文件 h-guard 看不到，
-// 按 POSIX 检查并请求确认）；read、grep、view_image 读文件；write、edit 写文件；apply_patch 按补丁里的文件；process 向
+// 按 POSIX 检查并请求确认；插件读不到运行位置（unknown）时按 Gateway 的平台检查并请求确认）；read、grep、view_image 读文件；write、edit 写文件；apply_patch 按补丁里的文件；process 向
 // 运行中的进程写入的内容按命令检查并请求确认，发送按键、结束进程请求确认，其余子命令（list、poll、log、submit、clear）
 // 不产生动作。其余工具不产生动作，或是不认识的工具。
 func actions(tool string, in params, platform string) ([]guard.Action, error) {
@@ -261,6 +268,12 @@ func actions(tool string, in params, platform string) ([]guard.Action, error) {
 	case "exec":
 		if in.Host == "node" || strings.TrimSpace(in.Node) != "" {
 			if act, ok := extadapter.Exec(in.Command, guard.ShellPOSIX); ok {
+				return []guard.Action{act}, errUnparsed
+			}
+			return nil, ErrNoAction
+		}
+		if in.Host == "unknown" {
+			if act, ok := extadapter.Exec(in.Command, shellOf(in, platform)); ok {
 				return []guard.Action{act}, errUnparsed
 			}
 			return nil, ErrNoAction
@@ -340,7 +353,38 @@ func (Adapter) RenderNoAction() ([]byte, int) {
 	return extadapter.Render(guard.Outcome{Verdict: guard.Verdict{Decision: guard.DecisionPass}}), 0
 }
 
-// Render 渲染扩展接入协议的回复，pass 也有回复。
-func (Adapter) Render(_ guard.Event, out guard.Outcome) ([]byte, int) {
+// Render 渲染扩展接入协议的回复，pass 也有回复。请求确认时带上调用摘要（Subject）：插件把它放进会出现在聊天里的审批说明。
+func (Adapter) Render(ev guard.Event, out guard.Outcome) ([]byte, int) {
+	if out.Verdict.Decision == guard.DecisionAsk {
+		return extadapter.RenderSubject(out, Subject(ev)), 0
+	}
 	return extadapter.Render(out), 0
+}
+
+// maxSubject 是调用摘要的长度上限（字符）：OpenClaw 把审批说明截在 512 个字符，还要放 h-guard 的说明。
+const maxSubject = 300
+
+// Subject 返回给人看的调用摘要：工具名，后接命令或文件（重命名写出新名字），每个动作一行；h-guard 认出的凭据换成
+// [redacted]，太长时截断。没有动作（不认识的工具）时只有工具名。
+func Subject(ev guard.Event) string {
+	var parts []string
+	for _, a := range ev.Actions {
+		switch {
+		case a.Exec != nil:
+			parts = append(parts, a.Exec.Command)
+		case a.File != nil && a.File.To != "":
+			parts = append(parts, string(a.Kind)+" "+a.File.Path+" -> "+a.File.To)
+		case a.File != nil:
+			parts = append(parts, string(a.Kind)+" "+a.File.Path)
+		}
+	}
+	s := ev.Tool
+	if len(parts) > 0 {
+		s += ": " + strings.Join(parts, "\n")
+	}
+	s = secrets.Redact(s)
+	if r := []rune(s); len(r) > maxSubject {
+		s = string(r[:maxSubject-1]) + "…"
+	}
+	return s
 }

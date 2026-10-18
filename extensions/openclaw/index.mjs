@@ -42,6 +42,7 @@ export default {
           toolInputKind: event.toolInputKind,
           derivedPaths: event.derivedPaths,
           platform: process.platform,
+          execHost: event.toolName === 'exec' && event.toolKind !== 'code_mode_exec' ? await execHost(api, event, ctx) : undefined,
         },
       }, ctx.abortSignal)
       if (reply.action === 'deny') {
@@ -55,7 +56,7 @@ export default {
         return {
           requireApproval: {
             title: TITLE,
-            description: clip(reason + describe(event)),
+            description: clip(reason + describe(event, reply)),
             severity: 'warning',
             // OpenClaw 不替插件记住 allow-always，只给一次性的放行
             allowedDecisions: ['allow-once', 'deny'],
@@ -153,15 +154,49 @@ function sessionOf(api, workspaces, ctx) {
   return { id: c.sessionId || c.sessionKey || HARNESS + '-' + process.pid, cwd: typeof cwd === 'string' && cwd !== '' ? cwd : process.cwd() }
 }
 
-// describe 是审批说明里的调用本身：命令或文件，审批的人看到的就是这些
-function describe(event) {
+// describe 是审批说明里的调用本身。审批说明会出现在聊天里，所以不放原始参数：用 h-guard 回复里的摘要（subject，命令与
+// 文件，认出的凭据已遮蔽）；没有摘要时（h-guard 无法运行）只写工具名
+function describe(event, reply) {
+  if (reply && typeof reply.subject === 'string' && reply.subject.trim() !== '') return '\n' + reply.subject
+  return '\n' + event.toolName
+}
+
+// execHost 返回 exec 实际运行的位置：调用自己给了 node 或 host（auto 以外）时就是它；否则依次是会话的 /exec 设置、
+// agent 的 tools.exec.host、全局的 tools.exec.host，都没有时是 auto。读这些设置出错时是 unknown，h-guard 请求确认
+async function execHost(api, event, ctx) {
   const p = event && event.params && typeof event.params === 'object' ? event.params : {}
-  const s = (v) => (typeof v === 'string' && v.trim() !== '' ? v : '')
-  const target = s(p.command) || s(p.path) || s(p.file_path) || s(p.filePath) || s(p.data) || s(p.text)
-  let out = '\n' + event.toolName
-  if (target) out += ': ' + target
-  else if (event.toolName === 'apply_patch' && Array.isArray(event.derivedPaths) && event.derivedPaths.length > 0) out += ': ' + event.derivedPaths.join(', ')
-  return out
+  if (typeof p.node === 'string' && p.node.trim() !== '') return 'node'
+  if (typeof p.host === 'string' && p.host !== '' && p.host !== 'auto') return p.host
+  try {
+    if (ctx.sessionKey) {
+      // 2026.10.4 只有同步的 getSessionEntry；之后的版本另有 getSessionEntryAsync。两个都没有时读不到，按 unknown 处理
+      const store = api.runtime.agent.session
+      const params = { agentId: ctx.agentId, sessionKey: ctx.sessionKey }
+      const entry = typeof store.getSessionEntryAsync === 'function' ? await store.getSessionEntryAsync(params) : store.getSessionEntry(params)
+      if (entry && typeof entry.execNode === 'string' && entry.execNode !== '') return 'node'
+      if (entry && typeof entry.execHost === 'string' && entry.execHost !== '' && entry.execHost !== 'auto') return entry.execHost
+    }
+    const cfg = api.runtime.config.current() || {}
+    const agent = agentEntry(cfg, ctx.agentId) || {}
+    for (const exec of [agent.tools && agent.tools.exec, cfg.tools && cfg.tools.exec]) {
+      if (exec && typeof exec.host === 'string' && exec.host !== '' && exec.host !== 'auto') return exec.host
+    }
+    return 'auto'
+  } catch (err) {
+    return 'unknown'
+  }
+}
+
+// agentEntry 按 id（不分大小写）找 agent 的配置：agents.entries 是以 id 为键的对象，旧写法 agents.list 是带 id 的列表
+function agentEntry(cfg, id) {
+  if (typeof id !== 'string' || id === '' || !cfg.agents) return undefined
+  const want = id.toLowerCase()
+  const { entries, list } = cfg.agents
+  if (entries && typeof entries === 'object') {
+    for (const [k, v] of Object.entries(entries)) if (k.toLowerCase() === want) return v
+  }
+  if (Array.isArray(list)) return list.find((a) => a && typeof a.id === 'string' && a.id.toLowerCase() === want)
+  return undefined
 }
 
 function clip(s) {

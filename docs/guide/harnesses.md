@@ -354,7 +354,10 @@ OpenClaw differences:
 
 - **Ask is a plugin approval.** It offers "allow once" and "deny" only
   (OpenClaw does not remember "allow always" for a plugin hook), and its
-  description holds h-guard's reason and the command or file. OpenClaw
+  description holds h-guard's reason and a summary of the command or files
+  in which the credentials h-guard recognizes are masked; it never holds the
+  raw arguments (approvals can appear in chats). When h-guard cannot run, the
+  description names only the tool. OpenClaw
   delivers it like its other plugin approvals: to the chat the run came from
   (buttons or `/approve`) and to connected approval clients, and it waits up
   to 2 minutes. A run with nobody to answer blocks the call, which is the safe
@@ -373,8 +376,12 @@ OpenClaw differences:
 - **Shell.** `exec` runs commands with `$SHELL` on macOS and Linux and with
   PowerShell on Windows, so h-guard checks them by the Gateway's platform;
   commands in the sandbox (`host: "sandbox"`) are checked as POSIX. A command
-  for a paired node (`host: "node"`) runs on another device whose shell and
-  files h-guard cannot see: it is checked as POSIX and always asks.
+  for a paired node runs on another device whose shell and files h-guard
+  cannot see: it is checked as POSIX and always asks. Where a command runs is
+  taken from the call (`host`, `node`), else from the session's `/exec`
+  setting, else from the agent's or the global `tools.exec.host`; when the
+  plugin cannot read these settings, the command asks. A scheduled job's own
+  exec target is not visible to the plugin.
 - **Working directory.** Relative paths are resolved against the workspace
   OpenClaw reports for the run (or the agent's configured workspace), or the
   command's `workdir`. A session that works somewhere else (a configured

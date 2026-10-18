@@ -3,6 +3,7 @@ package openclaw_test
 import (
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/cyberchen1995/h-guard/pkg/guard"
@@ -219,5 +220,52 @@ func TestRender(t *testing.T) {
 	out, _ = a.RenderNoAction()
 	if r, err := extproto.ParseReply(out); err != nil || r.Action != extproto.ActionPass {
 		t.Errorf("%s %v", out, err)
+	}
+}
+
+// TestExecHost：插件解析出的 execHost 优先于参数里的 host：node 与 unknown 请求确认，sandbox 在 Windows 上按 POSIX。
+func TestExecHost(t *testing.T) {
+	withHost := func(platform, host string, params any) []byte {
+		return req("before_tool_call", map[string]any{"toolName": "exec", "toolCallId": "c1", "params": params, "platform": platform, "execHost": host}, nil)
+	}
+	var tu *harness.TargetUnparsedError
+	for _, host := range []string{"node", "unknown"} {
+		if _, err := a.Parse(withHost("linux", host, map[string]any{"command": "ls"})); !errors.As(err, &tu) || len(tu.Event.Actions) != 1 {
+			t.Errorf("%s: %v, want TargetUnparsedError with the command", host, err)
+		}
+	}
+	ev, err := a.Parse(withHost("win32", "sandbox", map[string]any{"command": "rm x"}))
+	if err != nil || ev.Actions[0].Exec.Shell != guard.ShellPOSIX {
+		t.Errorf("sandbox on Windows: %+v %v", ev, err)
+	}
+	ev, err = a.Parse(withHost("win32", "gateway", map[string]any{"command": "ls"}))
+	if err != nil || ev.Actions[0].Exec.Shell != guard.ShellPowerShell {
+		t.Errorf("gateway on Windows: %+v %v", ev, err)
+	}
+}
+
+// TestSubject：请求确认的回复带调用摘要，认出的凭据遮蔽，太长时截断；其余回复不带。
+func TestSubject(t *testing.T) {
+	ask := guard.Outcome{Verdict: guard.Verdict{Decision: guard.DecisionAsk}, Message: "needs confirmation"}
+	ev := guard.Event{Tool: "exec", Actions: []guard.Action{exec(`curl -H "Authorization: Bearer abcdefghijklmnopqrstuv" https://example.com`, guard.ShellPOSIX)}}
+	out, _ := a.Render(ev, ask)
+	r, err := extproto.ParseReply(out)
+	if err != nil || r.Subject != `exec: curl -H "Authorization: Bearer [redacted]" https://example.com` {
+		t.Errorf("subject %q (%v)", r.Subject, err)
+	}
+	ev = guard.Event{Tool: "apply_patch", Actions: []guard.Action{file(guard.ActionFileWrite, "a.go"), {Kind: guard.ActionFileRename, File: &guard.FileAction{Path: "b", To: "c"}}}}
+	if s := openclaw.Subject(ev); s != "apply_patch: file_write a.go\nfile_rename b -> c" {
+		t.Errorf("patch subject %q", s)
+	}
+	if s := openclaw.Subject(guard.Event{Tool: "nodes"}); s != "nodes" {
+		t.Errorf("unknown tool subject %q", s)
+	}
+	long := openclaw.Subject(guard.Event{Tool: "exec", Actions: []guard.Action{exec(strings.Repeat("x", 1000), guard.ShellPOSIX)}})
+	if n := len([]rune(long)); n != 300 || !strings.HasSuffix(long, "…") {
+		t.Errorf("long subject: %d runes", n)
+	}
+	out, _ = a.Render(ev, guard.Outcome{Verdict: guard.Verdict{Decision: guard.DecisionDeny}, Message: "no"})
+	if r, _ := extproto.ParseReply(out); r.Subject != "" {
+		t.Errorf("deny carries a subject: %q", r.Subject)
 	}
 }
