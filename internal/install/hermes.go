@@ -26,8 +26,15 @@ const HermesWritten = "2026.9.24"
 // hermesPluginName 是插件的名字：$HERMES_HOME/plugins/ 下的目录名、plugin.yaml 的 name，也是 plugins.enabled 里的一项。
 const hermesPluginName = "h-guard"
 
-// hermesHookTimeout 是 Hermes 等待 pre_tool_call 等插件回调的默认秒数（plugins.hook_callback_timeout）。
-const hermesHookTimeout = 30
+// hermesHookTimeout 是 Hermes 等待 pre_tool_call 等插件回调的默认秒数（plugins.hook_callback_timeout）；
+// hermesHookTimeoutMax 是 Hermes 接受的上限，更大的值被截到它。
+const (
+	hermesHookTimeout    = 30
+	hermesHookTimeoutMax = 600
+)
+
+// HermesMaxTimeout 是 install hermes 接受的 --timeout 上限：Hermes 等待插件回调的时间要比它多 5 秒，最多 600 秒。
+const HermesMaxTimeout = hermesHookTimeoutMax - 5
 
 // hermesConfigLine 是内嵌插件里由 install 填写的一行（Python 的写法）。
 var hermesConfigLine = regexp.MustCompile(`(?m)^CONFIG = (.*)  # h-guard install$`)
@@ -122,6 +129,9 @@ func hermesSnapshot(dir string) (map[string][]byte, error) {
 //
 // 移除先从 plugins.enabled 里去掉 h-guard，再删插件目录；不读 h-guard 的配置。只计划，不写入（Apply 执行）。
 func Hermes(t Target, remove bool) ([]Step, error) {
+	if !remove && t.Timeout > HermesMaxTimeout {
+		return nil, fmt.Errorf("--timeout for hermes is at most %d seconds: Hermes waits at most %d seconds for a plugin hook (plugins.hook_callback_timeout), and it has to wait longer than h-guard", HermesMaxTimeout, hermesHookTimeoutMax)
+	}
 	dir := HermesPluginDir(t)
 	files, err := hermesFiles(t)
 	if err != nil {

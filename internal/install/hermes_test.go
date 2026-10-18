@@ -136,6 +136,25 @@ func TestHermesHookTimeout(t *testing.T) {
 	}
 }
 
+// TestHermesTimeoutLimit：Hermes 把 plugins.hook_callback_timeout 截到 600 秒，它要比 h-guard 的超时多 5 秒，所以
+// --timeout 最多 595；移除不受限制。
+func TestHermesTimeoutLimit(t *testing.T) {
+	tg := target(t, "linux")
+	tg.Timeout = HermesMaxTimeout
+	steps := hermesPlan(t, tg, false)
+	apply(t, steps)
+	if b, _ := os.ReadFile(HermesConfig(tg)); !strings.Contains(string(b), "hook_callback_timeout: 600") {
+		t.Errorf("config:\n%s", b)
+	}
+	tg.Timeout = HermesMaxTimeout + 1
+	if _, err := Hermes(tg, false); err == nil || !strings.Contains(err.Error(), "at most 595 seconds") {
+		t.Errorf("--timeout 596: %v", err)
+	}
+	if _, err := Hermes(tg, true); err != nil {
+		t.Errorf("remove: %v", err)
+	}
+}
+
 // TestHermesConfigErrors：plugins 或 plugins.enabled 不是期望的类型时报错，不写入。
 func TestHermesConfigErrors(t *testing.T) {
 	for _, body := range []string{"- a\n", "plugins: [x]\n", "plugins: {enabled: h-guard}\n"} {
