@@ -107,6 +107,7 @@ func TestNoAction(t *testing.T) {
 		call("message", map[string]any{"action": "send", "message": "done"}),
 		call("github__create_issue", map[string]any{"title": "x"}),
 		call("process", map[string]any{"action": "poll", "sessionId": "p1"}),
+		call("process", map[string]any{"action": "clear", "sessionId": "p1"}),
 		call("exec", map[string]any{"command": ""}),
 		// Code Mode 的单元：参数是 JavaScript，里面的工具调用各自检查
 		req("before_tool_call", map[string]any{"toolName": "exec", "toolKind": "code_mode_exec", "params": map[string]string{"code": "await tools.exec({command: 'ls'})", "command": "await tools.exec({command: 'ls'})"}}, nil),
@@ -142,10 +143,14 @@ func TestAsks(t *testing.T) {
 			t.Errorf("%s: %v, want UnknownToolError", tool, err)
 		}
 	}
-	for _, action := range []string{"kill", "send-keys", "remove", "frob"} {
+	// submit 发送回车、write 的 eof 关闭 stdin：都会让进程执行之前写入的输入
+	for _, action := range []string{"submit", "kill", "send-keys", "remove", "frob"} {
 		if _, err := a.Parse(call("process", map[string]any{"action": action, "sessionId": "p1"})); !errors.As(err, &ut) {
 			t.Errorf("process %s: %v, want UnknownToolError", action, err)
 		}
+	}
+	if _, err := a.Parse(call("process", map[string]any{"action": "write", "sessionId": "p1", "data": "", "eof": true})); !errors.As(err, &ut) {
+		t.Errorf("process write eof: %v, want UnknownToolError", err)
 	}
 }
 

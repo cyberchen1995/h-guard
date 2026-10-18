@@ -428,7 +428,8 @@ OpenClaw differences:
   content.
 - **Processes.** Text written or pasted into a running process (`process`
   with `write` or `paste`) is checked as a POSIX command and always asks;
-  sending keys, killing or removing a process asks.
+  submitting pending input (`submit`), closing a process's input (`write`
+  with `eof`), sending keys, killing or removing a process asks.
 
 ### Channel notifications
 

@@ -100,6 +100,7 @@ type params struct {
 	Action   string   `json:"action"`
 	Data     string   `json:"data"` // process write
 	Text     string   `json:"text"` // process paste
+	EOF      bool     `json:"eof"`  // process write：写完后关闭 stdin
 }
 
 func (p params) path() string {
@@ -255,8 +256,8 @@ func shellOf(in params, platform string) guard.Shell {
 
 // actions 把工具映射为动作：exec 执行命令（host 为 node 时命令在配对的远端设备上运行，那里的 shell 与文件 h-guard 看不到，
 // 按 POSIX 检查并请求确认；插件读不到运行位置（unknown）时按 Gateway 的平台检查并请求确认）；read、grep、view_image 读文件；write、edit 写文件；apply_patch 按补丁里的文件；process 向
-// 运行中的进程写入的内容按命令检查并请求确认，发送按键、结束进程请求确认，其余子命令（list、poll、log、submit、clear）
-// 不产生动作。其余工具不产生动作，或是不认识的工具。
+// 运行中的进程写入的内容按命令检查并请求确认，提交输入（submit）、关闭 stdin、发送按键、结束进程请求确认，查看进程的
+// 子命令（list、poll、log）与 clear 不产生动作。其余工具不产生动作，或是不认识的工具。
 func actions(tool string, in params, platform string) ([]guard.Action, error) {
 	one := func(act guard.Action, ok bool) ([]guard.Action, error) {
 		if !ok {
@@ -305,7 +306,7 @@ func actions(tool string, in params, platform string) ([]guard.Action, error) {
 		return acts, nil
 	case "process":
 		switch in.Action {
-		case "list", "poll", "log", "submit", "clear":
+		case "list", "poll", "log", "clear": // 查看进程与输出；clear 只清掉已结束的进程
 			return nil, ErrNoAction
 		case "write", "paste":
 			// 写进运行中进程的内容多半是一条命令，但那是哪种 shell（或别的程序）这里看不出：按 POSIX 命令检查，另外请求确认
@@ -316,9 +317,13 @@ func actions(tool string, in params, platform string) ([]guard.Action, error) {
 			if act, ok := extadapter.Exec(text, guard.ShellPOSIX); ok {
 				return []guard.Action{act}, errUnparsed
 			}
+			if in.Action == "write" && in.EOF { // 关闭 stdin 会让进程执行还没换行的输入
+				return nil, errUnknownTool
+			}
 			return nil, ErrNoAction
 		}
-		return nil, errUnknownTool // send-keys、kill、remove 与读不懂的子命令
+		// submit（发送回车，执行之前写入还没提交的输入）、send-keys、kill、remove 与读不懂的子命令
+		return nil, errUnknownTool
 	}
 	if openclawReadOnly[tool] || strings.Contains(tool, "__") {
 		return nil, ErrNoAction
