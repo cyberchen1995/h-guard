@@ -136,6 +136,25 @@ Options:
 
 An `exec` rule needs at least one pattern or `encoded: true`.
 
+Patterns can use the same placeholders as file patterns (see the table under
+`match.file`), anywhere in the pattern except inside a character class. A
+placeholder becomes the directory or file h-guard sees, matched literally
+(regular-expression characters in it are escaped), case-insensitively, with
+`/` and `\` both accepted as separators and a space optionally preceded by
+`\`. When the value is under your home directory, the home part may also be
+written `~`, `$HOME`, `${HOME}`, `$env:HOME`, `$env:USERPROFILE` or
+`%USERPROFILE%`. A placeholder without a value (the variable is unset) never
+matches, so the part of the pattern that needs it does not match; the rest of
+the pattern and the rule still work. Write `\{name}` for literal braces; other
+names in braces are left as they are.
+
+```yaml
+match:
+  exec:
+    any:
+      - '\brm\b[^\n;&|]*{pi_agent_dir}[/\\]+extensions[/\\]+my-ext\.js'
+```
+
 ### `match.file`
 
 File rules match the target path of a file operation (and the destination of a
@@ -174,6 +193,10 @@ write patterns with `**/` or `~/` (not a drive letter). Placeholders:
 | `{extra_config}` | the file passed with `--config` (no match without one) |
 | `{claude_config}` | `$CLAUDE_CONFIG_DIR` (no match when unset) |
 | `{codex_home}` | `$CODEX_HOME` (no match when unset) |
+| `{xdg_config}` | `$XDG_CONFIG_HOME` (no match when unset) |
+| `{pi_agent_dir}` | `$PI_CODING_AGENT_DIR`, with a leading `~` expanded (no match when unset) |
+| `{omp_config}` | `$PI_CONFIG_DIR` under the home directory (no match when unset) |
+| `{dsh_home}` | `$DSH_HOME`, with a leading `~` expanded (no match when unset) |
 
 Relative targets are resolved against the working directory and symbolic links
 are resolved, so a link to a protected file matches too. `exclude` patterns are
@@ -189,7 +212,10 @@ commands recognized as reading files is scanned by outbound rules.
 File examples (`{action, path}`) are matched literally, without touching the
 file system, with the home directory `/home/user`, the working directory
 `/home/user/project`, `{config}` = `/xdg/config/h-guard`, `{cache}` =
-`/xdg/cache/h-guard` and `{extra_config}` = `/etc/guard/extra.yaml`.
+`/xdg/cache/h-guard`, `{extra_config}` = `/etc/guard/extra.yaml`,
+`{pi_agent_dir}` = `/opt/pi/agent` and `{dsh_home}` = `/home/user/my dsh`; the
+other placeholders are unset. Command examples use the same values for
+placeholders in `exec` patterns.
 
 ### `question`
 

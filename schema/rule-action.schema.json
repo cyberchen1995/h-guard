@@ -118,7 +118,7 @@
       "items": {"type": "string"}
     },
     "execMatch": {
-      "description": "Command regular expressions (case-insensitive), grouped by shell. Needs at least one pattern, or encoded.",
+      "description": "Command regular expressions (case-insensitive), grouped by shell. Needs at least one pattern, or encoded. Patterns may use the file placeholders ({config}, {pi_agent_dir}, {dsh_home} and the others) outside character classes: each becomes the escaped directory, with / and \\ as separators; an unset placeholder never matches.",
       "type": "object",
       "additionalProperties": false,
       "properties": {
@@ -132,7 +132,7 @@
       }
     },
     "fileMatch": {
-      "description": "Path patterns for file actions. A pattern may start with {config}, {cache}, {extra_config}, {claude_config} or {codex_home}.",
+      "description": "Path patterns for file actions. A pattern may start with {config}, {cache}, {extra_config}, {claude_config}, {codex_home}, {xdg_config}, {pi_agent_dir}, {omp_config} or {dsh_home}.",
       "type": "object",
       "additionalProperties": false,
       "required": ["paths"],

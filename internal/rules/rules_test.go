@@ -34,7 +34,7 @@ func hits(t *testing.T, s *rules.Set, cmd string) map[string]bool {
 	}
 	out := map[string]bool{}
 	for _, r := range s.All() {
-		res, err := r.MatchExec(context.Background(), e)
+		res, err := r.MatchExec(context.Background(), e, rules.ExampleEnv)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -297,7 +297,7 @@ match:
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer cancel()
 	start := time.Now()
-	res, err := s.Get("slow").MatchExec(ctx, e)
+	res, err := s.Get("slow").MatchExec(ctx, e, paths.Env{})
 	if err == nil || !res.TimedOut || time.Since(start) > 2*rules.MatchTimeout+100*time.Millisecond {
 		t.Errorf("res = %+v, err = %v after %v", res, err, time.Since(start))
 	}
@@ -321,7 +321,7 @@ match:
 		t.Fatal(err)
 	}
 	e, _ := command.Expand(context.Background(), strings.Repeat("a", 40)+"!", guard.ShellPOSIX)
-	res, err := s.Get("slow").MatchExec(context.Background(), e)
+	res, err := s.Get("slow").MatchExec(context.Background(), e, paths.Env{})
 	if err != nil || !res.Hit || res.TimedOut {
 		t.Errorf("res = %+v, err = %v; want a definite hit", res, err)
 	}
@@ -343,7 +343,7 @@ match:
 		t.Fatal(err)
 	}
 	e, _ := command.Expand(context.Background(), strings.Repeat("a", 40)+"!", guard.ShellPOSIX)
-	res, err := s.Get("slow").MatchExec(context.Background(), e)
+	res, err := s.Get("slow").MatchExec(context.Background(), e, paths.Env{})
 	if err != nil || !res.Hit || !res.TimedOut {
 		t.Errorf("res = %+v, err = %v", res, err)
 	}
@@ -622,7 +622,7 @@ func pwshHits(t *testing.T, s *rules.Set, cmd string) []string {
 	}
 	var out []string
 	for _, r := range s.All() {
-		res, err := r.MatchExec(context.Background(), e)
+		res, err := r.MatchExec(context.Background(), e, rules.ExampleEnv)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -792,6 +792,81 @@ func TestCustomHarnessDirsAreGuarded(t *testing.T) {
 		if !hits(t, s, cmd)["guard_tampering"] {
 			t.Errorf("%q did not match guard_tampering", cmd)
 		}
+	}
+}
+
+// TestCustomDirsInCommands：PI_CODING_AGENT_DIR、DSH_HOME 等设到自定义目录时，命令里直接写出实际路径的改动同样命中
+// guard_tampering（exec 模式的占位符）；没有设置时这些写法不命中，也不影响默认路径的模式。
+func TestCustomDirsInCommands(t *testing.T) {
+	r := builtinSet(t).Get("guard_tampering")
+	env := paths.Env{Home: "/home/u", Vars: map[string]string{
+		rules.VarPiAgentDir: "/opt/pi", rules.VarDSHHome: "/home/u/work/dsh", rules.VarOMPConfig: "/home/u/.omp-alt",
+		rules.VarXDGConfig: "/cfg", rules.VarConfig: "/cfg/h-guard", rules.VarCache: "/var/cache/h-guard",
+		rules.VarClaudeConfig: `D:\claude`, rules.VarCodexHome: "/srv/codex",
+	}}
+	match := func(cmd string, sh guard.Shell, env paths.Env) bool {
+		t.Helper()
+		e, err := command.Expand(context.Background(), cmd, sh)
+		if err != nil {
+			t.Fatal(err)
+		}
+		res, err := r.MatchExec(context.Background(), e, env)
+		if err != nil || res.TimedOut {
+			t.Fatalf("%q: %+v %v", cmd, res, err)
+		}
+		return res.Hit
+	}
+	hit := map[string]guard.Shell{
+		"rm /opt/pi/extensions/h-guard.js":                                  guard.ShellPOSIX,
+		"echo x >> /opt/pi/config.yml":                                      guard.ShellPOSIX,
+		"mv /opt/pi/extensions /tmp/x":                                      guard.ShellPOSIX,
+		"rm -rf /opt/pi":                                                    guard.ShellPOSIX,
+		"sed -i d ~/work/dsh/profiles/a/cordis.patch.yml":                   guard.ShellPOSIX,
+		"rm -r $HOME/work/dsh/":                                             guard.ShellPOSIX,
+		"cp /tmp/x ~/.omp-alt/agent/config.yml":                             guard.ShellPOSIX,
+		"rm /cfg/opencode/plugins/h-guard.js":                               guard.ShellPOSIX,
+		"echo x > /cfg/h-guard/config.yaml":                                 guard.ShellPOSIX,
+		"jq . /var/cache/h-guard/requests/s.json | sponge x":                guard.ShellPOSIX,
+		"rm /srv/codex/hooks.json":                                          guard.ShellPOSIX,
+		`Remove-Item D:\claude\settings.json`:                               guard.ShellPowerShell,
+		`Remove-Item C:\opt\pi\extensions\h-guard.js`:                       guard.ShellPowerShell,
+		`[IO.File]::WriteAllText("/opt/pi/settings.json", "{}")`:            guard.ShellPowerShell,
+		`Move-Item $HOME\work\dsh C:\x`:                                     guard.ShellPowerShell,
+		`Set-Content "$env:USERPROFILE\work\dsh\cordis.patch.yml" -Value x`: guard.ShellPowerShell,
+	}
+	for cmd, sh := range hit {
+		if !match(cmd, sh, env) {
+			t.Errorf("%s %q did not match", sh, cmd)
+		}
+	}
+	for _, cmd := range []string{
+		"cat /opt/pi/extensions/h-guard.js", "rm /opt/pi/extensions/other.js", "rm /opt/pi2/settings.json",
+		"rm ~/work/dsh/sessions/s.jsonl", "rm /cfg/h-guard-notes/x", "rm /cfg/opencode/plugins/other.js",
+	} {
+		if match(cmd, guard.ShellPOSIX, env) {
+			t.Errorf("%q matched", cmd)
+		}
+	}
+	// 没有设置：这些写法不命中（不会变成匹配一切），默认路径照常命中
+	unset := paths.Env{Home: "/home/u"}
+	for _, cmd := range []string{"rm /opt/pi/extensions/h-guard.js", "rm -rf /opt/pi", "rm /srv/codex/hooks.json", "rm x", "mv a b"} {
+		if match(cmd, guard.ShellPOSIX, unset) {
+			t.Errorf("%q matched with nothing set", cmd)
+		}
+	}
+	if !match("rm ~/.pi/agent/extensions/h-guard.js", guard.ShellPOSIX, unset) {
+		t.Error("the default pi extension is no longer guarded")
+	}
+}
+
+// TestBadPlaceholderPatternIsRejected：含占位符的模式写错时加载报错，与普通模式一样不回显原文。
+func TestBadPlaceholderPatternIsRejected(t *testing.T) {
+	dir := t.TempDir()
+	writeRule(t, dir, "r.yaml", strings.Replace(userPublish, `'\bship-it\b'`, `'rm {pi_agent_dir}(secret'`, 1))
+	_, err := rules.Load(dir)
+	var re *rules.Error
+	if !errors.As(err, &re) || re.Path != "match.exec.any[0]" || strings.Contains(err.Error(), "secret") {
+		t.Errorf("err = %v", err)
 	}
 }
 

@@ -138,7 +138,7 @@ func (c *Check) evalExec(ctx context.Context, ev guard.Event, ex *guard.ExecActi
 			ID: r.ID, Action: r.Action, Bypassable: r.Bypassable(), Vetoable: r.Vetoable(), RadiusFloor: r.RadiusFloor,
 			RequiresJudge: r.RequiresJudge, Asked: judgeOn && hasQ,
 		}
-		res, err := r.MatchExec(ctx, exp)
+		res, err := r.MatchExec(ctx, exp, c.Paths)
 		if res.Hit {
 			hits = append(hits, RegexHit{Rule: r.ID, TimedOut: res.TimedOut})
 		}
