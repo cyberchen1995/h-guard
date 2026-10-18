@@ -324,7 +324,14 @@ func (c *Check) evalExec(ctx context.Context, ev guard.Event, ex *guard.ExecActi
 		}
 		if !committed && r.Action == guard.DecisionDeny && res.Hit && !res.TimedOut {
 			in := Input{Rules: policyRules, Regex: hits, Judge: JudgeOff}
-			commit(c.render(Decide(in), in))
+			// 提前提交的结论同样写明操作、后果与建议：之后的匹配卡住、由看门狗兜底时用的就是它
+			v := c.render(Decide(in), in)
+			done := make([]Hit, 0, len(hits))
+			for _, h := range hits {
+				done = append(done, Hit{Rule: h.Rule})
+			}
+			c.explain(&v, done, ex.Command, ev.Cwd)
+			commit(v)
 			committed = true
 		}
 	}

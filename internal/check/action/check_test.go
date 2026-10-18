@@ -1001,3 +1001,17 @@ func TestIncompleteDirectoryScanIsFlagged(t *testing.T) {
 		t.Errorf("an unrelated file with an incomplete scan = %+v", v)
 	}
 }
+
+// TestEarlyDenyCommitIsExplained：灾难性命中提前提交的结论同样写明操作：之后卡住由看门狗兜底时用的就是它。
+func TestEarlyDenyCommitIsExplained(t *testing.T) {
+	c := newCheck(t, false, action.Judge{})
+	var commits []guard.Verdict
+	if _, err := c.Evaluate(context.Background(), event(nil, "rm -rf /"), func(v guard.Verdict) { commits = append(commits, v) }); err != nil {
+		t.Fatal(err)
+	}
+	if len(commits) == 0 || !slices.ContainsFunc(commits[0].Reasons, func(r guard.Reason) bool {
+		return r.Code == i18n.KeyActionOperation || r.Code == i18n.KeyActionOperationHere
+	}) {
+		t.Errorf("commits = %+v", commits)
+	}
+}

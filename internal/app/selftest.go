@@ -218,6 +218,11 @@ func runSelftest(args []string, o Options) int {
 		fmt.Fprintln(o.Stderr, "h-guard: the home directory is unavailable")
 		return 1
 	}
+	if o.ConfigDir == "" {
+		// 没有配置目录时插件目录会解析成相对路径：不能运行当前目录里碰巧放着的入口
+		fmt.Fprintln(o.Stderr, "h-guard: the configuration directory is unavailable")
+		return 1
+	}
 	t := install.Target{Home: o.Home, ConfigDir: o.ConfigDir, CacheDir: o.CacheDir, GOOS: o.GOOS, Getenv: o.Getenv, Run: o.RunHarness, Now: o.Now}
 	cwd, _ := os.Getwd()
 	tested, failed := 0, 0
@@ -261,10 +266,11 @@ func runSelftest(args []string, o Options) int {
 		// 入口能跑不等于 harness 会运行它（插件没登记、h-guard 不在记下的路径……）：install 报告的问题都算失败
 		for _, line := range install.Inspect(t, h) {
 			if p, ok := strings.CutPrefix(line, "problem: "); ok {
+				// 配置原文（matcher、记下的路径）可能带着凭据形状的文本或终端控制字符：遮蔽、转义之后再显示与记录
+				p = action.Visible(secrets.Redact(p))
 				fmt.Fprintf(o.Stdout, "  FAIL configuration: %s\n", p)
 				st.Passed = false
-				// 记进缓存的说明先遮蔽凭据（matcher 等配置原文可能带着凭据形状的文本）
-				st.Cases = append(st.Cases, seen.Case{Name: "configuration", Detail: secrets.Redact(p)})
+				st.Cases = append(st.Cases, seen.Case{Name: "configuration", Detail: p})
 			}
 		}
 		for _, c := range selftestCases(h) {

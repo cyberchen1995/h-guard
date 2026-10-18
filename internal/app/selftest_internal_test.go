@@ -61,3 +61,14 @@ func TestBuildIDTracksTheExecutable(t *testing.T) {
 		t.Errorf("buildID = %q", buildID())
 	}
 }
+
+// TestSelftestNeedsTheConfigDirectory：没有配置目录时不运行入口（插件目录会解析成相对路径，可能指向当前目录里的文件）。
+func TestSelftestNeedsTheConfigDirectory(t *testing.T) {
+	var out, errb bytes.Buffer
+	ran := false
+	code := runSelftest([]string{"claudecode"}, Options{Home: t.TempDir(), Stdout: &out, Stderr: &errb,
+		RunEntry: func([]string, []string, []byte) ([]byte, error) { ran = true; return nil, nil }})
+	if code != 1 || ran || !strings.Contains(errb.String(), "configuration directory is unavailable") {
+		t.Errorf("exit %d, ran %v, %s", code, ran, errb.String())
+	}
+}
