@@ -171,7 +171,9 @@ Git operation that discards uncommitted changes or untracked files [rule+judge 0
 Blast radius 2.0/3. The user's recent instructions do not explicitly ask for it (0.03).
 Operation: `git reset --hard HEAD~1` in /home/me/proj. Impact: Uncommitted changes or
 untracked files in this working tree would be lost; git cannot bring them back.
-Safer way: Save them first: git stash push --include-untracked, or commit them, then retry.
+Safer way: Save them first: commit them, or git stash push --all (which also keeps
+ignored files that git clean -x removes); before git stash drop or clear, note their
+commit ids (git stash list --format=%H) so they can be restored. Then retry.
 ```
 
 In Claude Code this is the text of the permission prompt: approve it if you

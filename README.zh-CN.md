@@ -122,7 +122,7 @@ signals: {"action":{"judge":"off","judge_disabled_hits":["publish"]}}
 h-guard: agent 自行决定的危险操作需要确认：丢弃未提交改动或未跟踪文件的 git 操作 [正则+模型 0.97]。
 影响范围 2.0/3。用户最近的指令未明确要求此操作（0.03）。操作：在 /home/me/proj 中运行 `git reset --hard HEAD~1`。
 后果：这个工作区里未提交的改动或未跟踪的文件会丢失，git 无法找回。
-更稳妥的做法：先保存：git stash push --include-untracked，或先提交，再重试。
+更稳妥的做法：先保存：提交，或 git stash push --all（连 git clean -x 会删的被忽略文件一起保存）；git stash drop 或 clear 之前先记下这些条目的提交号（git stash list --format=%H），以便找回。然后再重试。
 ```
 
 在 Claude Code 里这就是权限确认框的说明：确实要做就批准。Codex 不能请求确认，h-guard 改为阻止；除护栏自我保护外，原因末尾会给出单次授权：
