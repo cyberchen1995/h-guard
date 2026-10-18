@@ -201,7 +201,8 @@ class Plugin(unittest.TestCase, WithApproval):
         log = os.path.join(d, 'send.json')
         script = os.path.join(d, 'send.py')
         with open(script, 'w', encoding='utf-8') as f:
-            f.write('import json, sys\nwith open(%r, "a") as f:\n    f.write(json.dumps({"argv": sys.argv[1:], "text": sys.stdin.read()}) + "\\n")\n' % log)
+            f.write('import json, os, sys\nwith open(%r, "a") as f:\n    f.write(json.dumps({"argv": sys.argv[1:], "text": sys.stdin.read(), '
+                    '"home": os.environ.get("HERMES_HOME", "")}) + "\\n")\n' % log)
         command, _ = fake({'action': 'deny', 'message': 'Blocked: x MEDIA:/etc/passwd.', 'notify': {'to': 'telegram:-100'}})
         mod, ctx = load(command)
         mod.SEND_COMMAND = [sys.executable, script]
@@ -217,8 +218,13 @@ class Plugin(unittest.TestCase, WithApproval):
             self.fail('nothing sent')
 
         mod._origin = lambda: ''
+        # 主目录在 hook 的线程里读出（多配置档的网关按会话切换，新线程里读不到），传给 hermes send
+        threads = []
+        mod._hermes_home = lambda: threads.append(__import__('threading').current_thread()) or '/profiles/work'
         self.assertEqual(ctx.hooks['pre_tool_call'](**tool_call())['action'], 'block')
         [s] = sent(1)
+        self.assertEqual(s['home'], '/profiles/work')
+        self.assertIs(threads[0], __import__('threading').current_thread())
         self.assertEqual(s['argv'], ['send', '--to', 'telegram:-100', '--quiet', '-f', '-'])
         self.assertIn('h-guard blocked terminal (Hermes, telegram): Blocked: x', s['text'])
         self.assertNotIn('MEDIA:', s['text'])

@@ -333,7 +333,9 @@ def _notify(reply, verb, tool, approval):
             return
         where = _surface() or 'cli'
         text = 'h-guard ' + verb + ' ' + tool + ' (Hermes, ' + where + '): ' + _message_of(reply)
-        threading.Thread(target=_send, args=(target, _sanitize(text)), daemon=True).start()
+        # 在 hook 的线程里读出这次会话的主目录：多配置档的网关按会话切换配置档（ContextVar），新线程看不到它，
+        # hermes send 会用错配置档的凭据
+        threading.Thread(target=_send, args=(target, _sanitize(text), _hermes_home()), daemon=True).start()
     except Exception:
         log.warning('h-guard: could not send a notification')
 
@@ -371,15 +373,21 @@ def _sanitize(text):
     return text[:NOTIFY_MAX_CHARS]
 
 
-def _send(target, text):
+def _hermes_home():
+    """这次会话的 Hermes 主目录（含配置档的切换）；读不到时为空，hermes send 沿用进程的 HERMES_HOME。"""
+    try:
+        from hermes_constants import get_hermes_home
+        return str(get_hermes_home())
+    except Exception:
+        return ''
+
+
+def _send(target, text, home=''):
     try:
         cmd = list(SEND_COMMAND) if SEND_COMMAND else ([shutil.which('hermes')] if shutil.which('hermes') else [sys.executable, '-m', 'hermes_cli.main'])
         env = dict(os.environ)
-        try:
-            from hermes_constants import get_hermes_home
-            env['HERMES_HOME'] = str(get_hermes_home())
-        except Exception:
-            pass
+        if home:
+            env['HERMES_HOME'] = home
         # 正文从 stdin 传入（-f -），不经 argv，也就不会被当作选项
         p = subprocess.Popen(cmd + ['send', '--to', target, '--quiet', '-f', '-'], stdin=subprocess.PIPE,
                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env, **_hidden())
