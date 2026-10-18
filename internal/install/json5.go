@@ -201,13 +201,13 @@ func (p *json5Parser) str() (string, error) {
 	var b strings.Builder
 	for p.i < len(p.s) {
 		c := p.s[p.i]
-		switch {
-		case c == q:
+		switch c {
+		case q:
 			p.i++
 			return b.String(), nil
-		case c == '\n' || c == '\r':
+		case '\n', '\r':
 			return "", p.errorf("unterminated string")
-		case c == '\\':
+		case '\\':
 			p.i++
 			if p.i >= len(p.s) {
 				return "", p.errorf("unterminated string")
@@ -242,15 +242,14 @@ func (p *json5Parser) str() (string, error) {
 				if p.i+n > len(p.s) {
 					return "", p.errorf("bad escape")
 				}
-				v, err := strconv.ParseUint(p.s[p.i:p.i+n], 16, 32)
-				if err != nil {
+				r, ok := hexRune(p.s[p.i : p.i+n])
+				if !ok {
 					return "", p.errorf("bad escape")
 				}
 				p.i += n
-				r := rune(v)
 				if e == 'u' && r >= 0xd800 && r < 0xdc00 && strings.HasPrefix(p.s[p.i:], `\u`) && p.i+6 <= len(p.s) {
-					if lo, err := strconv.ParseUint(p.s[p.i+2:p.i+6], 16, 32); err == nil && lo >= 0xdc00 && lo < 0xe000 {
-						r = (r-0xd800)<<10 + (rune(lo) - 0xdc00) + 0x10000
+					if lo, ok := hexRune(p.s[p.i+2 : p.i+6]); ok && lo >= 0xdc00 && lo < 0xe000 {
+						r = (r-0xd800)<<10 + (lo - 0xdc00) + 0x10000
 						p.i += 6
 					}
 				}
@@ -336,4 +335,25 @@ func finite(v any) any {
 		return out
 	}
 	return v
+}
+
+// hexRune 把 2 或 4 位十六进制数字读成 rune。
+func hexRune(h string) (rune, bool) {
+	var r rune
+	for i := 0; i < len(h); i++ {
+		c := h[i]
+		var d rune
+		switch {
+		case c >= '0' && c <= '9':
+			d = rune(c - '0')
+		case c >= 'a' && c <= 'f':
+			d = rune(c-'a') + 10
+		case c >= 'A' && c <= 'F':
+			d = rune(c-'A') + 10
+		default:
+			return 0, false
+		}
+		r = r<<4 | d
+	}
+	return r, true
 }
