@@ -48,12 +48,15 @@ type Rule struct {
 	Locked        bool               `yaml:"locked"`
 	RequiresJudge bool               `yaml:"requires_judge"`
 	Reason        map[string]string  `yaml:"reason"`
-	Match         Match              `yaml:"match"`
-	RadiusFloor   float64            `yaml:"radius_floor"`
-	BypassableRaw *bool              `yaml:"bypassable_by_request"`
-	VetoableRaw   *bool              `yaml:"vetoable_by_judge"`
-	Question      *Question          `yaml:"question"`
-	Examples      Examples           `yaml:"examples"`
+	// Impact 与 Advice 是拦截说明的后两部分（可选，按语言）：这个操作会造成什么后果，继续之前怎样更稳妥。
+	Impact        map[string]string `yaml:"impact"`
+	Advice        map[string]string `yaml:"advice"`
+	Match         Match             `yaml:"match"`
+	RadiusFloor   float64           `yaml:"radius_floor"`
+	BypassableRaw *bool             `yaml:"bypassable_by_request"`
+	VetoableRaw   *bool             `yaml:"vetoable_by_judge"`
+	Question      *Question         `yaml:"question"`
+	Examples      Examples          `yaml:"examples"`
 
 	Builtin bool   `yaml:"-"` // 来自内置包
 	Origin  string `yaml:"-"` // 来源文件，用于错误信息
@@ -171,6 +174,12 @@ func (r *Rule) AppliesTo(kind guard.ActionKind) bool { return slices.Contains(r.
 // ReasonText 返回 locale 的原因文本（缺失时回落 en）。
 func (r *Rule) ReasonText(locale string) string { return i18n.Pick(r.Reason, locale) }
 
+// ImpactText 返回 locale 的后果说明（缺失时回落 en）；规则没有写时为空。
+func (r *Rule) ImpactText(locale string) string { return i18n.Pick(r.Impact, locale) }
+
+// AdviceText 返回 locale 的处置建议（缺失时回落 en）；规则没有写时为空。
+func (r *Rule) AdviceText(locale string) string { return i18n.Pick(r.Advice, locale) }
+
 // JudgeQuestion 返回发给模型的题目；规则没有题目时返回 false。
 func (r *Rule) JudgeQuestion() (judge.Question, bool) {
 	if r.Question == nil {
@@ -283,6 +292,13 @@ func (r *Rule) validate() error {
 	}
 	if r.Reason["en"] == "" {
 		return fieldErr("reason.en", "missing")
+	}
+	// 写了就要有 en（impact: {} 同样算写了）
+	if r.Impact != nil && r.Impact["en"] == "" {
+		return fieldErr("impact.en", "missing")
+	}
+	if r.Advice != nil && r.Advice["en"] == "" {
+		return fieldErr("advice.en", "missing")
 	}
 	if len(r.On) == 0 {
 		return fieldErr("on", "missing")

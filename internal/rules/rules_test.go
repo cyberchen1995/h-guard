@@ -89,6 +89,26 @@ func TestBuiltinRules(t *testing.T) {
 	}
 }
 
+// TestBuiltinRulesExplainTheirInterruptions：每条内置 action 规则都写明后果与更稳妥的做法（en 与 zh-CN），
+// 打断时说明不只是一个规则名；用户规则写了 impact 或 advice 就必须有 en。
+func TestBuiltinRulesExplainTheirInterruptions(t *testing.T) {
+	for _, r := range builtinSet(t).All() {
+		for _, loc := range []string{"en", "zh-CN"} {
+			if r.Impact[loc] == "" || r.Advice[loc] == "" {
+				t.Errorf("%s: impact or advice missing for %s", r.ID, loc)
+			}
+		}
+	}
+	for _, field := range []string{"impact", "advice"} {
+		for _, value := range []string{"{zh-CN: y}", "{}"} {
+			src := "schema: 1\nid: mine\naction: ask\non: [exec]\nreason: {en: x}\n" + field + ": " + value + "\nmatch: {exec: {any: ['zzz']}}\n"
+			if _, err := rules.ParseUser([]byte(src), "mine.yaml"); err == nil || !strings.Contains(err.Error(), field+".en") {
+				t.Errorf("%s: %s without en: %v", field, value, err)
+			}
+		}
+	}
+}
+
 func TestBuiltinExamples(t *testing.T) {
 	for _, r := range builtinSet(t).All() {
 		if len(r.Examples.Hit) == 0 || len(r.Examples.Miss) == 0 {

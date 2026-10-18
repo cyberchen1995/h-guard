@@ -101,8 +101,11 @@ and `status`.
 recognized by that exact form; other entries are kept.
 
 **Trust the hooks.** Codex does not run new or changed hooks until you trust
-them: open Codex and run `/hooks`. Until then h-guard does nothing, and
-`h-guard status` cannot tell, because it only sees the file.
+them: open Codex and run `/hooks`. Until then h-guard does nothing. h-guard
+cannot read Codex's trust state, so `h-guard status` shows the hooks as
+"unverified" until Codex actually runs one of them (each hook run is recorded
+in the cache directory); `h-guard selftest codex` checks that the registered
+commands run h-guard and block what they should, but not that Codex trusts them.
 
 | Hook | What h-guard does |
 |---|---|
@@ -115,8 +118,30 @@ Codex differences:
 - **No ask.** A Codex hook cannot ask you to confirm; the tool call would just
   run. h-guard therefore turns every `ask` into `deny` on Codex
   (`policy.when_ask_unsupported`, default `deny`, recorded as
-  `ask_unsupported`). The hint tells the agent what you can do instead: run it
-  yourself, or name the operation explicitly in your next message when the
+  `ask_unsupported`). For an operation you can approve (any `ask` except
+  guard self-protection), the reason carries an id, and you can let exactly
+  that operation run once: run `h-guard allow <id>` in your own terminal
+  (`h-guard allow` alone lists what was stopped in the last hour), confirm,
+  then ask the agent to retry it unchanged. The approval covers that command
+  in that working directory only, expires after 10 minutes (`--ttl`, at most
+  1h), is used up by the first retry, and `h-guard allow --revoke <id>`
+  withdraws it. Approvals are signed with a key in h-guard's configuration
+  directory (`grant.key`), and so are the stopped operations `h-guard allow`
+  shows; records written to the cache without the key are ignored, and a used
+  approval is recorded next to the key so putting the same record back does not
+  work. The approval is bound to the Codex session it was stopped in, to the
+  exact tool input Codex sent, which `h-guard allow` shows, and to the real working directory and its file identity (a
+  symlinked one that is retargeted, or another directory moved into the same
+  path after approval, does not match; an event without a working directory
+  gets no approval). Text written into a running interactive process
+  (`write_stdin`) gets none either: the process's directory and state can
+  change after approval. Only shell commands get
+  one: tool calls with file actions (the approval could not cover what is
+  written, or where a path points when it is read) and operations h-guard could
+  not fully parse get no approval. An agent that can read that key could still forge one (see the
+  known limitations in the README). `allow` only approves in an interactive terminal, and running
+  it through a harness asks (guard self-protection). Otherwise run the
+  operation yourself, or name it explicitly in your next message when the
   judge is on.
 - **No warnings.** Codex hooks cannot show a warning, so `warn` is not
   delivered (recorded as `warn_undelivered`). Because the judge's outbound

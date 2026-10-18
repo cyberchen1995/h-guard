@@ -123,7 +123,7 @@ func TestJudgeOff(t *testing.T) {
 		t.Errorf("git push with the judge off = %+v", v)
 	}
 	v := run(t, c, event(nil, "rm ~/.claude/settings.json"))
-	if v.Decision != guard.DecisionAsk || !slices.Equal(codes(v), []string{i18n.KeyActionGuardSelf, i18n.KeyHintManual}) {
+	if v.Decision != guard.DecisionAsk || !slices.Equal(codes(v), []string{i18n.KeyActionGuardSelf, i18n.KeyHintManual, i18n.KeyActionOperation, i18n.KeyActionImpact, i18n.KeyActionAdvice}) {
 		t.Errorf("guard tampering = %+v", v)
 	}
 	if v := run(t, c, event(nil, "rm -rf /")); v.Decision != guard.DecisionDeny || codes(v)[0] != i18n.KeyActionBlocked {
@@ -175,7 +175,8 @@ func TestExemptionsSurviveTheFullFlow(t *testing.T) {
 func TestDangerousReasonsAndHint(t *testing.T) {
 	b := &fakeBackend{answers: with(low(), "publish", 0.9, action.SignalRequested, 0.1, action.SignalRadius, []float64{0, 0, 1, 0})}
 	v := run(t, newCheck(t, true, action.Judge{Backend: b}), event([]guard.Request{user("fix the tests")}, "git push origin main"))
-	want := []string{i18n.KeyActionDangerous, i18n.KeyActionRadius, i18n.KeyActionNotRequested, i18n.KeyHintRequest}
+	want := []string{i18n.KeyActionDangerous, i18n.KeyActionRadius, i18n.KeyActionNotRequested, i18n.KeyHintRequest,
+		i18n.KeyActionOperation, i18n.KeyActionImpact, i18n.KeyActionAdvice}
 	if !slices.Equal(codes(v), want) {
 		t.Errorf("reasons = %v, want %v", codes(v), want)
 	}
@@ -744,7 +745,7 @@ func TestFileActionsOnProtectedPaths(t *testing.T) {
 		} {
 			ev.Requests = []guard.Request{user("update my claude settings")}
 			v := run(t, c, ev)
-			if v.Decision != guard.DecisionAsk || !slices.Equal(codes(v), []string{i18n.KeyActionGuardSelfFile, i18n.KeyHintManual}) ||
+			if v.Decision != guard.DecisionAsk || !slices.Equal(codes(v), []string{i18n.KeyActionGuardSelfFile, i18n.KeyHintManual, i18n.KeyActionImpact, i18n.KeyActionAdvice}) ||
 				len(v.Findings) != 1 || v.Findings[0].Rule != "guard_tampering" {
 				t.Errorf("judge %v, %s %+v = %+v", judgeOn, ev.Actions[0].Kind, *ev.Actions[0].File, v)
 			}
@@ -796,7 +797,7 @@ func TestSensitiveRead(t *testing.T) {
 		ev := fileEvent(guard.ActionFileRead, p, "")
 		ev.Requests = []guard.Request{user("read " + p)}
 		v := run(t, c, ev)
-		if v.Decision != guard.DecisionAsk || !slices.Equal(codes(v), []string{i18n.KeyActionFileRule, i18n.KeyHintManual}) ||
+		if v.Decision != guard.DecisionAsk || !slices.Equal(codes(v), []string{i18n.KeyActionFileRule, i18n.KeyHintManual, i18n.KeyActionImpact, i18n.KeyActionAdvice}) ||
 			v.Reasons[0].Params["paths"] != p || len(v.Findings) != 1 || v.Findings[0].Rule != "sensitive_read" {
 			t.Errorf("read %s = %+v", p, v)
 		}
@@ -998,5 +999,31 @@ func TestIncompleteDirectoryScanIsFlagged(t *testing.T) {
 	ev.Cwd = root
 	if v := run(t, c, ev); v.Decision != guard.DecisionPass || !slices.Contains(v.Fallbacks, action.FallbackPathUnresolved) {
 		t.Errorf("an unrelated file with an incomplete scan = %+v", v)
+	}
+}
+
+// TestEarlyDenyCommitIsExplained：灾难性命中提前提交的结论同样写明操作：之后卡住由看门狗兜底时用的就是它。
+func TestEarlyDenyCommitIsExplained(t *testing.T) {
+	c := newCheck(t, false, action.Judge{})
+	var commits []guard.Verdict
+	if _, err := c.Evaluate(context.Background(), event(nil, "rm -rf /"), func(v guard.Verdict) { commits = append(commits, v) }); err != nil {
+		t.Fatal(err)
+	}
+	if len(commits) == 0 || !slices.ContainsFunc(commits[0].Reasons, func(r guard.Reason) bool {
+		return r.Code == i18n.KeyActionOperation || r.Code == i18n.KeyActionOperationHere
+	}) {
+		t.Errorf("commits = %+v", commits)
+	}
+}
+
+// TestMergedReasonsAreBounded：一次调用里大量同样结论的动作，说明总数有上限。
+func TestMergedReasonsAreBounded(t *testing.T) {
+	c := newCheck(t, false, action.Judge{})
+	cmds := make([]string, 200)
+	for i := range cmds {
+		cmds[i] = "rm -rf /"
+	}
+	if v := run(t, c, event(nil, cmds...)); v.Decision != guard.DecisionDeny || len(v.Reasons) > 30 {
+		t.Errorf("decision %s, %d reasons", v.Decision, len(v.Reasons))
 	}
 }

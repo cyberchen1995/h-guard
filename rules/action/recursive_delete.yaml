@@ -7,6 +7,12 @@ requires_judge: true
 reason:
   en: 'Deletes files or directories recursively'
   zh-CN: '递归删除文件或目录'
+impact:
+  en: 'Everything under the deleted directories would be gone; there is no trash to restore from.'
+  zh-CN: '被删目录下的所有内容都会消失，没有回收站可以恢复。'
+advice:
+  en: 'Check the paths first (ls them), or move them aside instead of deleting.'
+  zh-CN: '先核对路径（ls 看一下），或改为移到别处而不是删除。'
 match:
   exec:
     # any 组沿用 Python 版正则，两种 shell 都适用（不拆分，只收紧）；PowerShell 专有的写法在 powershell 组

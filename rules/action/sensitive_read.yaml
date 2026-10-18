@@ -8,6 +8,12 @@ on: [file_read]
 reason:
   en: 'Reads a file that usually holds secrets (.env, private keys, cloud or SSH credentials)'
   zh-CN: '读取通常存放秘密的文件（.env、私钥、云服务或 SSH 凭据）'
+impact:
+  en: 'Its contents (keys, tokens, passwords) would enter the agent''s context and may be sent to the model provider.'
+  zh-CN: '文件内容（密钥、token、密码）会进入 agent 的上下文，可能被发给模型服务商。'
+advice:
+  en: 'Let the agent use the value without reading the file (an environment variable), or read it yourself.'
+  zh-CN: '让 agent 不读文件就能用到这个值（例如通过环境变量），或由你自己查看。'
 match:
   file:
     # Python 版 outbound 设计的敏感路径（credentials* 收窄为常见的凭据文件名），加上常见的密钥目录与凭据文件
