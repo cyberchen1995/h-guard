@@ -228,8 +228,8 @@ same `session_id`.
 ## Extension protocol v1
 
 Some harnesses deliver events only to code running inside them (Claude Code's
-mods, opencode's plugins, pi's and oh-my-pi's extensions and DeepSeek Harness's
-Cordis plugins are the built-in cases). A thin extension inside the harness forwards each
+mods, opencode's plugins, pi's and oh-my-pi's extensions, DeepSeek Harness's
+Cordis plugins and OpenClaw's native plugins are the built-in cases). A thin extension inside the harness forwards each
 event to h-guard and turns the reply into the harness's own return value. It
 makes no decisions itself; the harness-specific parsing lives in h-guard's
 adapter for that harness.
@@ -248,7 +248,7 @@ the reply is valid. Requests are limited to 16 MiB.
 | Field | Meaning |
 |---|---|
 | `protocol` | `h-guard.ext/v1`. |
-| `harness` | Harness name, matching an adapter registered in h-guard (`claudecode`, `opencode`, `pi`, `omp`, `dsh`). |
+| `harness` | Harness name, matching an adapter registered in h-guard (`claudecode`, `opencode`, `pi`, `omp`, `dsh`, `openclaw`). |
 | `harness_version` | The version string the harness reports, passed on as is. Optional. |
 | `hook` | The harness's hook name (table below). |
 | `session` | `{"id": ..., "cwd": ...}`; `id` is required. |
@@ -267,6 +267,9 @@ The built-in extensions send these hooks:
 | `pi`, `omp` | `input` | `{text, source}`; oh-my-pi also sends prompts found on its `context` event, with `source: "context"` | |
 | `dsh` | `tools/pre-execute`, `tools/post-execute` | `{name, callId, arguments, nested}` | `{isError, content}` (`tools/post-execute`) |
 | `dsh` | `agent/pre-step` | `{messages: [{source: {kind}, content}], session: {origin, delegationDepth}}` | |
+| `openclaw` | `before_tool_call` | `{toolName, params, toolKind, toolInputKind, toolCallId, derivedPaths, platform}` | |
+| `openclaw` | `tool_result` (the tool result middleware) | `{toolName, toolCallId, args, isError, platform}` | `{content}` |
+| `openclaw` | `before_agent_run` | `{prompt, trigger, provenance, sessionKey, channel}` | |
 
 Only text content blocks are passed on; images are left out.
 
@@ -290,7 +293,7 @@ through and tell the user. It must also apply `deny` and `ask` even if
 `message` is somehow empty, using a fixed text.
 
 The stock binary has adapters for `claudecode`, `codex`, `opencode`, `pi`,
-`omp`, `dsh` and `generic`; all but `codex` and `generic` read extension
+`omp`, `dsh`, `openclaw` and `generic`; all but `codex` and `generic` read extension
 requests. Connecting a new harness this way needs
 an adapter for it, written against `pkg/harness` and `pkg/harness/extproto` and
 registered in your own build of h-guard (see

@@ -22,3 +22,8 @@ var Pi []byte
 //
 //go:embed dsh/h-guard.mjs
 var DSH []byte
+
+// OpenClaw 是 OpenClaw 的原生插件（清单、package.json 与入口），根目录为 openclaw/。
+//
+//go:embed openclaw/openclaw.plugin.json openclaw/package.json openclaw/index.mjs
+var OpenClaw embed.FS

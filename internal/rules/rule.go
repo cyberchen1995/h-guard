@@ -92,11 +92,14 @@ const (
 	VarDSHHome    = "dsh_home"
 	// VarOMPConfig 是 oh-my-pi 的配置根目录：主目录下的 $PI_CONFIG_DIR（没有设置时为空）。
 	VarOMPConfig = "omp_config"
+	// VarOpenClawConfig 是 OpenClaw 的配置文件 openclaw.json：$OPENCLAW_CONFIG_PATH，或 $OPENCLAW_STATE_DIR、
+	// $OPENCLAW_HOME 下的默认位置（都没有设置时是 ~/.openclaw/openclaw.json）。
+	VarOpenClawConfig = "openclaw_config"
 )
 
 // placeholders 是路径模式可以用的占位符。
 var placeholders = map[string]bool{VarConfig: true, VarCache: true, VarExtraConfig: true, VarClaudeConfig: true, VarCodexHome: true,
-	VarXDGConfig: true, VarPiAgentDir: true, VarDSHHome: true, VarOMPConfig: true}
+	VarXDGConfig: true, VarPiAgentDir: true, VarDSHHome: true, VarOMPConfig: true, VarOpenClawConfig: true}
 
 // ExecMatch 是命令正则，按 shell 分组：any 用于所有 shell。
 type ExecMatch struct {

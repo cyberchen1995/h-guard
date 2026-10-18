@@ -30,7 +30,7 @@ func extAction(t *testing.T, out string) string {
 	return string(r.Action)
 }
 
-// TestExtHarnessHooks：opencode、pi、omp、dsh 的扩展请求得到扩展协议的回复。灾难性命令拒绝；读 .env 请求确认
+// TestExtHarnessHooks：opencode、pi、omp、dsh、openclaw 的扩展请求得到扩展协议的回复。灾难性命令拒绝；读 .env 请求确认
 // （opencode 不能请求确认，按 when_ask_unsupported 降级为拒绝）；不产生动作的工具调用回复放行；带凭据的提示词拒绝。
 func TestExtHarnessHooks(t *testing.T) {
 	e := newEnv(t)
@@ -54,6 +54,11 @@ func TestExtHarnessHooks(t *testing.T) {
 		{"dsh", "tools/pre-execute", map[string]any{"name": "pwsh", "callId": "c", "arguments": map[string]string{"command": "Remove-Item -Recurse -Force C:\\"}}, "deny"},
 		{"dsh", "tools/pre-execute", map[string]any{"name": "read", "callId": "c", "arguments": map[string]string{"file_path": "/w/.env"}}, "ask"},
 		{"dsh", "agent/pre-step", map[string]any{"messages": []map[string]any{{"source": map[string]string{"kind": "user"}, "content": []map[string]string{{"type": "text", "text": key}}}}}, "deny"},
+		{"openclaw", "before_tool_call", map[string]any{"toolName": "exec", "toolCallId": "c", "params": map[string]string{"command": "rm -rf /"}, "platform": "linux"}, "deny"},
+		{"openclaw", "before_tool_call", map[string]any{"toolName": "exec", "toolCallId": "c", "params": map[string]string{"command": "Remove-Item -Recurse -Force C:\\"}, "platform": "win32"}, "deny"},
+		{"openclaw", "before_tool_call", map[string]any{"toolName": "read", "toolCallId": "c", "params": map[string]string{"path": "/w/.env"}}, "ask"},
+		{"openclaw", "before_tool_call", map[string]any{"toolName": "sessions_list", "toolCallId": "c", "params": map[string]string{}}, "pass"},
+		{"openclaw", "before_agent_run", map[string]any{"prompt": key, "trigger": "user"}, "deny"},
 	} {
 		out, errs, code := e.run(extReq(c.harness, c.hook, c.data), "hook", c.harness, "--event", c.hook)
 		if code != 0 {
@@ -85,8 +90,11 @@ func TestExtToolOutput(t *testing.T) {
 		"dsh": mustJSON(map[string]any{"protocol": extproto.Protocol, "harness": "dsh", "hook": "tools/post-execute",
 			"session": map[string]string{"id": "s1", "cwd": "/w"}, "data": map[string]any{"name": "bash", "arguments": map[string]string{"command": "cat .env"}},
 			"result": map[string]any{"content": []map[string]string{{"type": "text", "text": secret}}}}),
+		"openclaw": mustJSON(map[string]any{"protocol": extproto.Protocol, "harness": "openclaw", "hook": "tool_result",
+			"session": map[string]string{"id": "s1", "cwd": "/w"}, "data": map[string]any{"toolName": "exec", "args": map[string]string{"command": "cat .env"}, "platform": "linux"},
+			"result": map[string]any{"content": []map[string]string{{"type": "text", "text": secret}}}}),
 	} {
-		event := map[string]string{"opencode": "tool.execute.after", "pi": "tool_result", "dsh": "tools/post-execute"}[harness]
+		event := map[string]string{"opencode": "tool.execute.after", "pi": "tool_result", "dsh": "tools/post-execute", "openclaw": "tool_result"}[harness]
 		out, _, _ := e.run(in, "hook", harness, "--event", event)
 		if got := extAction(t, out); got != "deny" {
 			t.Errorf("%s: %s", harness, out)
@@ -96,7 +104,9 @@ func TestExtToolOutput(t *testing.T) {
 
 func mustJSON(v any) []byte { b, _ := json.Marshal(v); return b }
 
-// TestInstallExtHarnesses：install 写出 opencode、pi、omp、dsh 的扩展，status 报告已安装，重装不改动，移除删掉。
+func mustJSONString(s string) string { return string(mustJSON(s)) }
+
+// TestInstallExtHarnesses：install 写出 opencode、pi、omp、dsh、openclaw 的扩展，status 报告已安装，重装不改动，移除删掉。
 func TestInstallExtHarnesses(t *testing.T) {
 	e := installEnv(t, nil)
 	files := map[string]string{
@@ -104,10 +114,15 @@ func TestInstallExtHarnesses(t *testing.T) {
 		"pi":       filepath.Join(e.home, ".pi", "agent", "extensions", "h-guard.js"),
 		"omp":      filepath.Join(e.home, ".omp", "agent", "extensions", "h-guard-omp.js"),
 		"dsh":      filepath.Join(e.configDir, "extensions", "dsh", "h-guard.mjs"),
+		"openclaw": filepath.Join(e.configDir, "extensions", "openclaw", "index.mjs"),
 	}
 	for h, path := range files {
 		out, errs, code := e.run(nil, "install", h)
-		if code != 0 || !strings.Contains(out, "would write") || !strings.Contains(out, path) {
+		written := path
+		if h == "openclaw" { // OpenClaw 的插件是一个目录
+			written = filepath.Dir(path)
+		}
+		if code != 0 || !strings.Contains(out, "would write") || !strings.Contains(out, written) {
 			t.Errorf("%s dry run: exit %d\n%s\n%s", h, code, out, errs)
 		}
 		if _, err := os.Stat(path); err == nil {
@@ -127,8 +142,11 @@ func TestInstallExtHarnesses(t *testing.T) {
 	if b, _ := os.ReadFile(filepath.Join(e.home, ".dsh", "cordis.patch.yml")); !strings.Contains(string(b), files["dsh"]) {
 		t.Errorf("dsh patch: %s", b)
 	}
+	if b, _ := os.ReadFile(filepath.Join(e.home, ".openclaw", "openclaw.json")); !strings.Contains(string(b), mustJSONString(filepath.Dir(files["openclaw"]))) {
+		t.Errorf("openclaw.json: %s", b)
+	}
 	out, _, _ := e.run(nil, "status")
-	for _, h := range []string{"opencode", "pi", "omp", "dsh"} {
+	for _, h := range []string{"opencode", "pi", "omp", "dsh", "openclaw"} {
 		if !strings.Contains(out, h+": installed") {
 			t.Errorf("status lacks %s:\n%s", h, out)
 		}
@@ -217,6 +235,16 @@ func TestUnknownTools(t *testing.T) {
 	if got := extAction(t, mustOut(e, dsh, "dsh", "tools/pre-execute")); got != "pass" {
 		t.Errorf("dsh listed tool: %s", got)
 	}
+	e.config("version: 1\nharnesses:\n  openclaw: {read_only_tools: [my_search]}\n")
+	openclaw := func(tool string) []byte {
+		return extReq("openclaw", "before_tool_call", map[string]any{"toolName": tool, "toolCallId": "c", "params": map[string]string{}})
+	}
+	if got := extAction(t, mustOut(e, openclaw("my_search"), "openclaw", "before_tool_call")); got != "pass" {
+		t.Errorf("openclaw listed tool: %s", got)
+	}
+	if got := extAction(t, mustOut(e, openclaw("nodes"), "openclaw", "before_tool_call")); got != "ask" {
+		t.Errorf("openclaw unlisted tool: %s", got)
+	}
 	e.config("version: 1\nharnesses:\n  omp: {read_only_tools: ['[']}\n")
 	if _, errs, code := e.run(nil, "config", "validate"); code == 0 || !strings.Contains(errs+"", "read_only_tools") {
 		t.Errorf("invalid pattern: exit %d %s", code, errs)
@@ -237,6 +265,18 @@ func TestPiAgentDirTilde(t *testing.T) {
 		"hook", "pi", "--event", "tool_call")
 	if code != 0 || extAction(t, out) == "pass" {
 		t.Errorf("overwrite the pi extension: %s (exit %d, %s)", out, code, errs)
+	}
+}
+
+// TestOpenClawConfigPath：OPENCLAW_CONFIG_PATH 指定的 openclaw.json（install openclaw 改写的文件）受防篡改规则保护。
+func TestOpenClawConfigPath(t *testing.T) {
+	e := newEnv(t)
+	e.vars["OPENCLAW_CONFIG_PATH"] = "~/oc/main.json"
+	config := filepath.Join(e.home, "oc", "main.json")
+	out, errs, code := e.run(extReq("openclaw", "before_tool_call", map[string]any{"toolName": "write", "toolCallId": "c", "params": map[string]string{"path": config, "content": "{}"}}),
+		"hook", "openclaw", "--event", "before_tool_call")
+	if code != 0 || extAction(t, out) == "pass" {
+		t.Errorf("overwrite openclaw.json: %s (exit %d, %s)", out, code, errs)
 	}
 }
 

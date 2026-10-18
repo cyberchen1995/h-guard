@@ -1,7 +1,7 @@
 # Harnesses
 
-h-guard connects to Claude Code, Codex, opencode, pi, oh-my-pi and DeepSeek
-Harness with `h-guard install`, and to any other agent harness through the
+h-guard connects to Claude Code, Codex, opencode, pi, oh-my-pi, DeepSeek
+Harness and OpenClaw with `h-guard install`, and to any other agent harness through the
 [generic contract](protocols.md#generic-harness-contract-v1).
 This guide describes how each connection works, what each harness can do with
 h-guard's decisions, and what happens when it cannot.
@@ -9,7 +9,7 @@ h-guard's decisions, and what happens when it cannot.
 ## Installing and removing
 
 ```sh
-h-guard install claudecode|codex|opencode|pi|omp|dsh [--write] [--remove] [--timeout <seconds>] [--shell posix|powershell]
+h-guard install claudecode|codex|opencode|pi|omp|dsh|openclaw [--write] [--remove] [--timeout <seconds>] [--shell posix|powershell]
 ```
 
 - Without `--write`, `install` prints what it would change and writes nothing.
@@ -303,13 +303,180 @@ DeepSeek Harness differences:
 When h-guard cannot run, the plugin asks before a tool call and lets tool
 output and prompts through with a line in dsh's log.
 
+## OpenClaw
+
+Supported: OpenClaw (`openclaw`), written against and smoke-tested with
+2026.10.4 (the npm release, on Linux, through the Gateway with a simulated
+model server); no recorded sessions yet.
+
+`install openclaw --write`:
+
+1. writes h-guard's native plugin (`openclaw.plugin.json`, `package.json` and
+   `index.mjs`; plain JavaScript without dependencies) to `extensions/openclaw`
+   in h-guard's configuration directory, with the h-guard path and timeout in
+   it;
+2. in `openclaw.json`, adds that directory to `plugins.load.paths` and sets
+   `plugins.entries.h-guard`: `enabled: true`,
+   `hooks.allowConversationAccess: true` (OpenClaw only gives prompts to a
+   plugin that has it) and `hooks.timeouts` for `before_tool_call`,
+   `before_agent_run` and `after_tool_call` (the timeout plus 5 seconds; the
+   tool result middleware runs on the `after_tool_call` budget). When
+   `plugins.allow` is not empty, `h-guard` is added to it. The rest of the file
+   is kept, and so are other keys of the entry, such as the notification
+   settings below.
+
+`openclaw.json` is `$OPENCLAW_CONFIG_PATH`, or `openclaw.json` in
+`$OPENCLAW_STATE_DIR` (default `~/.openclaw`; `$OPENCLAW_HOME` replaces `~`).
+Restart the Gateway afterwards (`openclaw gateway restart`). Removing deletes
+the load path and the entry (and `h-guard` from `plugins.allow` when other
+plugins remain listed there), then the plugin.
+
+OpenClaw reads `openclaw.json` as JSON5 and can split it with `$include`, but
+it writes plain JSON itself. `install` only edits plain JSON: when the file has
+comments, trailing commas, unquoted keys or `$include`, it changes nothing and
+prints the settings to add yourself. It also refuses while `plugins.deny`
+lists `h-guard`. A named profile (`--profile`, `OPENCLAW_PROFILE`) has its own
+state directory; set `OPENCLAW_STATE_DIR` or `OPENCLAW_CONFIG_PATH` to install
+there.
+
+The plugin runs in the Gateway process and starts h-guard through OpenClaw's
+`runtime.system.runCommandWithTimeout`, without a shell. Because it was not
+installed with `openclaw plugins install`, the Gateway logs at startup that it
+"can't verify where this plugin came from"; the plugin loads anyway.
+
+| Plugin hook | What h-guard does |
+|---|---|
+| `before_tool_call` | checks the actions (`exec` commands; `read`, `grep`, `view_image`; `write`, `edit`; the files in an `apply_patch`; text written to a running `process`); `deny` blocks the call and the model reads h-guard's reason; `ask` becomes a plugin approval |
+| tool result middleware | scans the output before the model sees it; `deny` replaces it with h-guard's reason |
+| `before_agent_run` | scans the prompt of each run; `deny` blocks the run, and the reply is OpenClaw's "Your message could not be sent: …" with h-guard's reason |
+
+OpenClaw differences:
+
+- **Ask is a plugin approval.** It offers "allow once" and "deny" only
+  (OpenClaw does not remember "allow always" for a plugin hook), and its
+  description holds h-guard's reason and the command or file. OpenClaw
+  delivers it like its other plugin approvals: to the chat the run came from
+  (buttons or `/approve`) and to connected approval clients, and it waits up
+  to 2 minutes. A run with nobody to answer blocks the call, which is the safe
+  direction: the smoke test saw this for `openclaw agent` run from a script,
+  and OpenClaw rejects approvals for unattended runs such as scheduled ones. To send
+  approvals to a fixed chat, see `approvals.plugin` below.
+- **No warnings in the conversation.** A plugin cannot show you a message, so
+  `warn` is recorded as `warn_undelivered` and goes to the Gateway log, and the
+  judge's outbound findings are not requested, as on Codex. Channel
+  notifications (below) can send warnings to a chat.
+- **Prompt origin.** A run triggered by a user (OpenClaw's `user` and `manual`
+  triggers) whose message came from an external user counts as yours.
+  Scheduled, heartbeat, webhook and memory runs, messages handed over from
+  another session (sub-agent results, `sessions_send`) or by the system, and
+  every run in a sub-agent session count as automated.
+- **Shell.** `exec` runs commands with `$SHELL` on macOS and Linux and with
+  PowerShell on Windows, so h-guard checks them by the Gateway's platform;
+  commands in the sandbox (`host: "sandbox"`) are checked as POSIX. A command
+  for a paired node (`host: "node"`) runs on another device whose shell and
+  files h-guard cannot see: it is checked as POSIX and always asks.
+- **Working directory.** Relative paths are resolved against the workspace
+  OpenClaw reports for the run (or the agent's configured workspace), or the
+  command's `workdir`. A session that works somewhere else (a configured
+  `cwd`, a project worktree) can have its relative paths resolved against the
+  wrong directory.
+- **Code Mode.** A Code Mode `exec` cell is JavaScript; it is not checked
+  itself, but each tool call it makes is. Its output is scanned as file
+  content.
+- **Processes.** Text written or pasted into a running process (`process`
+  with `write` or `paste`) is checked as a POSIX command and always asks;
+  sending keys, killing or removing a process asks.
+
+### Channel notifications
+
+h-guard can tell a chat when it blocks something. This is off by default and
+lives in OpenClaw's configuration, under the plugin's entry:
+
+```json
+{
+  "plugins": {
+    "entries": {
+      "h-guard": {
+        "config": {
+          "notify": {
+            "on": ["deny", "warn"],
+            "targets": [
+              {"channel": "telegram", "to": "123456789"},
+              {"channel": "slack", "to": "channel:C0123456", "account": "work", "thread": "1712345678.000100"}
+            ]
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `on` | Which decisions to report: `deny` (blocked tool calls, withheld tool output, blocked prompts), `warn`, `ask`. Default `["deny", "warn"]`. |
+| `targets` | Where to send: `channel` and `to` as for `openclaw message send --channel … --target …`, optional `account` and `thread` (`--thread-id`). |
+| `command` | How to run the OpenClaw command line. Default: the Gateway's own `node` and `openclaw.mjs`, otherwise `openclaw` from `PATH`. |
+
+For each decision and target the plugin runs
+`openclaw message send --channel <channel> --target <to> --message <text>` in
+the background, with a 60-second limit. Sending never delays or changes the
+decision; failures go to the Gateway log, and when 20 messages are pending the
+next ones are dropped. The text is h-guard's reason (credentials h-guard
+recognizes are masked) with the tool name and the agent, for example
+`h-guard blocked a tool call (exec) (agent main): Blocked: …`; it never
+contains the command, the tool's arguments or the prompt. OpenClaw checks these
+settings against the plugin's schema and reloads the plugin when they change;
+`install` keeps them. The smoke test checked that the Gateway runs the command
+with these arguments; delivery to a real channel has not been tested.
+
+Approvals already reach the chat a run came from. For runs that did not come
+from a chat, OpenClaw can forward plugin approvals to fixed targets
+(`approvals.plugin`, separate from `approvals.exec`):
+
+```json
+{
+  "approvals": {
+    "plugin": {
+      "enabled": true,
+      "mode": "targets",
+      "targets": [{"channel": "telegram", "to": "123456789"}]
+    }
+  }
+}
+```
+
+`install` does not write either setting: it cannot know your chats.
+
+**Not covered:**
+
+- Runs outside the Gateway: in the smoke test `openclaw agent exec` loaded the
+  plugin only for discovery, so its tool calls, tool output and prompts were
+  not checked.
+- The Codex and Copilot agent runtimes: OpenClaw does not promise
+  `before_agent_run` there, and the plugin's tool result middleware is
+  registered for OpenClaw's own runtime only. Tool calls those runtimes relay
+  to `before_tool_call` have not been tested.
+- A parameter rewrite returned by another plugin's `before_tool_call`: every
+  plugin sees the original parameters, so h-guard checks the call as the model
+  made it.
+- Tools of other plugins and of channels ask (`tool_unknown`, see
+  [Tools h-guard does not know](#tools-h-guard-does-not-know)); MCP tools
+  (`<server>__<tool>`) pass.
+- Gateway's `/tools/invoke` HTTP endpoint goes through `before_tool_call` but
+  not through the tool result middleware.
+
+When h-guard cannot run, the plugin asks before a tool call (blocked when
+nobody can answer) and lets tool output and prompts through with a line in the
+Gateway log.
+
 ## Tools h-guard does not know
 
-For pi, oh-my-pi and DeepSeek Harness, h-guard knows every tool the harness ships:
+For pi, oh-my-pi, DeepSeek Harness and OpenClaw, h-guard knows every tool the harness ships:
 
 - tools that run commands or change files are checked as actions;
 - tools that only read, search, plan or coordinate pass;
-- MCP tools (`mcp__…`) pass, as on the other harnesses;
+- MCP tools (`mcp__…`, on OpenClaw `<server>__<tool>`) pass, as on the other harnesses;
 - anything else asks, with the reason `tool_unknown`. That covers the
   harness's remaining tools, which can run code, install plugins, schedule
   runs or change remote repositories, and tools added by extensions or
@@ -323,6 +490,7 @@ harnesses:
   pi: {read_only_tools: [web_*]}
   omp: {read_only_tools: [my_search, docs_*]}
   dsh: {read_only_tools: [plugin_market]}
+  openclaw: {read_only_tools: [my_lookup, docs_*]}
 ```
 
 The list only applies to tools h-guard does not know: a shell or file tool
@@ -332,16 +500,16 @@ there.
 
 ## What each harness can do
 
-| Event | Claude Code | Codex | opencode | pi, oh-my-pi | DeepSeek Harness | Generic |
-|---|---|---|---|---|---|---|
-| Action: deny | yes | yes | yes | yes | yes | caller applies it |
-| Action: ask | yes (permission prompt) | no, becomes `deny` | no, becomes `deny` | yes (dialog) | yes (approval service) | caller applies it |
-| Action: warn | yes (shown to you) | no | yes (toast) | yes (notification) | no | caller applies it |
-| Prompt: block | yes | yes | yes | yes | yes | caller applies it |
-| Prompt: warn | yes (added as context for Claude) | no | yes (toast) | yes (notification) | no | caller applies it |
-| Tool output: replace | yes (result withheld) | yes (result replaced) | yes | yes | yes (result replaced) | caller applies it |
-| Tool output: warn | yes (shown to you) | no | yes (toast) | yes (notification) | no | caller applies it |
-| Prompt origin | labeled by Claude Code | inferred from known formats | sub-agent sessions | `source` of the prompt | `source.kind` of each message | `requests[].source` |
+| Event | Claude Code | Codex | opencode | pi, oh-my-pi | DeepSeek Harness | OpenClaw | Generic |
+|---|---|---|---|---|---|---|---|
+| Action: deny | yes | yes | yes | yes | yes | yes | caller applies it |
+| Action: ask | yes (permission prompt) | no, becomes `deny` | no, becomes `deny` | yes (dialog) | yes (approval service) | yes (plugin approval) | caller applies it |
+| Action: warn | yes (shown to you) | no | yes (toast) | yes (notification) | no | no (channel notification if configured) | caller applies it |
+| Prompt: block | yes | yes | yes | yes | yes | yes | caller applies it |
+| Prompt: warn | yes (added as context for Claude) | no | yes (toast) | yes (notification) | no | no (channel notification if configured) | caller applies it |
+| Tool output: replace | yes (result withheld) | yes (result replaced) | yes | yes | yes (result replaced) | yes (result replaced) | caller applies it |
+| Tool output: warn | yes (shown to you) | no | yes (toast) | yes (notification) | no | no (channel notification if configured) | caller applies it |
+| Prompt origin | labeled by Claude Code | inferred from known formats | sub-agent sessions | `source` of the prompt | `source.kind` of each message | the run's trigger and input provenance | `requests[].source` |
 
 How h-guard adjusts a decision a harness cannot carry out:
 
@@ -365,7 +533,7 @@ rules would not have given.
 | Configuration or rules invalid | asks | passes, recorded in the health log |
 | Input too large, or time running out | asks (a deny already reached stays) | passes (a deny already reached stays), recorded |
 | Judge on but unavailable (no consent, error, timeout) | local matches ask; otherwise `policy.on_unavailable` | local rules only |
-| h-guard itself cannot run | Claude Code wrapper asks; Codex follows its own hook-failure handling; opencode blocks; pi, oh-my-pi and DeepSeek Harness ask | the extension passes and tells you (DeepSeek Harness: in its log) |
+| h-guard itself cannot run | Claude Code wrapper asks; Codex follows its own hook-failure handling; opencode blocks; pi, oh-my-pi, DeepSeek Harness and OpenClaw ask | the extension passes and tells you (DeepSeek Harness and OpenClaw: in their logs) |
 
 `h-guard status` summarizes degradations of the last 7 days from the health
 log.

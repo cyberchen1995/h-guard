@@ -55,6 +55,18 @@ match:
       # 目录里别的文件（plugins/other.js）不算
       - '(?<![\w.])(?<![^\w]-)(?<!^-)[a-z]?(?:rm|unlink|mv|cp|install|ln|truncate|tee|chmod|chown|shred|sed\s+-i|perl\s+-[a-z]*i|python[0-9.]*\s+-c|node\s+-e|jq\b[^\n;&|]*>)\b[^\n;&|]*(?:\.config/opencode(?:/plugins?)?|\.pi(?:/agent(?:/extensions)?)?|\.omp(?:/agent(?:/extensions)?)?|\.dsh)/?(?=$|[\s''"`;&|)])'
       - '(?<![\w.])(?<![^\w]-)(?<!^-)[a-z]?(?:rm|unlink|mv|cp|install|ln|truncate|tee|chmod|chown|shred|sed\s+-i|perl\s+-[a-z]*i|python[0-9.]*\s+-c|node\s+-e|jq\b[^\n;&|]*>)\b[^\n;&|]*\$\{?(?:XDG_CONFIG_HOME\}?[/\\]opencode(?:[/\\]plugins?)?|(?:PI_CODING_AGENT_DIR|DSH_HOME)\}?(?:[/\\]extensions)?|PI_CONFIG_DIR\}?(?:[/\\]agent(?:[/\\]extensions)?)?)[/\\]?(?=$|[\s''"`;&|)])'
+      # OpenClaw 的 openclaw.json（加载并启用 h-guard 的插件；含 --profile 的 ~/.openclaw-<名字>），OPENCLAW_CONFIG_PATH、
+      # OPENCLAW_STATE_DIR 指定的位置，与整个 ~/.openclaw 目录
+      - '(?<![\w.])(?<![^\w]-)(?<!^-)[a-z]?(?:rm|unlink|mv|cp|install|ln|truncate|tee|chmod|chown|shred|sed\s+-i|perl\s+-[a-z]*i|python[0-9.]*\s+-c|node\s+-e|jq\b[^\n;&|]*>)\b[^\n;&|]*\.openclaw(?:-[^\n;&|/]+)?/openclaw\.json'
+      - '>>?\s*[^\n;&|]*\.openclaw(?:-[^\n;&|/]+)?/openclaw\.json'
+      - '\.openclaw(?:-[^\n;&|/]+)?/openclaw\.json[^\n;&|]*\|\s*(?:tee|sponge)\b'
+      - '(?<![\w.])(?<![^\w]-)(?<!^-)[a-z]?(?:rm|unlink|mv|cp|install|ln|truncate|tee|chmod|chown|shred|sed\s+-i|perl\s+-[a-z]*i|python[0-9.]*\s+-c|node\s+-e|jq\b[^\n;&|]*>)\b[^\n;&|]*\$\{?(?:OPENCLAW_CONFIG_PATH\}?|OPENCLAW_STATE_DIR\}?[/\\]openclaw\.json)'
+      - '>>?\s*[^\n;&|]*\$\{?(?:OPENCLAW_CONFIG_PATH\}?|OPENCLAW_STATE_DIR\}?[/\\]openclaw\.json)'
+      - '(?<![\w.])(?<![^\w]-)(?<!^-)[a-z]?(?:rm|unlink|mv|cp|install|ln|truncate|tee|chmod|chown|shred|sed\s+-i|perl\s+-[a-z]*i|python[0-9.]*\s+-c|node\s+-e|jq\b[^\n;&|]*>)\b[^\n;&|]*\.openclaw(?:-[\w-]+)?/?(?=$|[\s''"`;&|)])'
+      # OpenClaw 的命令行改插件设置、停用或卸载 h-guard 的插件（config patch 的内容看不到，一律请求确认）
+      - '(?<![\w.-])openclaw\b[^\n;&|]*\bconfig\s+(?:set|unset)\b[^\n;&|]*\bplugins\b'
+      - '(?<![\w.-])openclaw\b[^\n;&|]*\bconfig\s+patch\b'
+      - '(?<![\w.-])openclaw\b[^\n;&|]*\bplugins\s+(?:disable|uninstall)\b[^\n;&|]*\bh-guard\b'
     # PowerShell：写入、删除、移动、复制到受保护路径的 cmdlet 及其别名，.NET 的文件写入，重定向；
     # 路径可用 \ 或 /，也可拆在 Join-Path 的几个参数里；另覆盖 Windows 的配置与缓存目录（$env:APPDATA、${env:APPDATA}、
     # %LOCALAPPDATA% 下的 h-guard）与 macOS 上 PowerShell 用的 ~/Library 目录。
@@ -74,6 +86,11 @@ match:
       # 整个扩展目录（或它的上级目录），含 $env: 写法
       - '(?<![\w.-])(?:set-content|sc|add-content|ac|out-file|clear-content|clc|remove-item|rm|ri|del|erase|rd|rmdir|move-item|mi|mv|move|copy-item|cpi|cp|copy|rename-item|rni|ren|new-item|ni|set-item|si|set-itemproperty|sp|tee-object|tee)\b[^\n;&|]*(?:\.config[\\/]opencode(?:[\\/]plugins?)?|\.pi(?:[\\/]agent(?:[\\/]extensions)?)?|\.omp(?:[\\/]agent(?:[\\/]extensions)?)?|\.dsh)[\\/]?(?=$|[\s''"`;&|),])'
       - '(?<![\w.-])(?:set-content|sc|add-content|ac|out-file|clear-content|clc|remove-item|rm|ri|del|erase|rd|rmdir|move-item|mi|mv|move|copy-item|cpi|cp|copy|rename-item|rni|ren|new-item|ni|set-item|si|set-itemproperty|sp|tee-object|tee)\b[^\n;&|]*\$(?:\{env:|env:)(?:xdg_config_home\}?[\\/]opencode(?:[\\/]plugins?)?|(?:pi_coding_agent_dir|dsh_home)\}?(?:[\\/]extensions)?|pi_config_dir\}?(?:[\\/]agent(?:[\\/]extensions)?)?)[\\/]?(?=$|[\s''"`;&|),])'
+      # OpenClaw 的 openclaw.json，含 $env:OPENCLAW_CONFIG_PATH、$env:OPENCLAW_STATE_DIR 的写法，与整个 .openclaw 目录
+      - '(?<![\w.-])(?:set-content|sc|add-content|ac|out-file|clear-content|clc|remove-item|rm|ri|del|erase|rd|rmdir|move-item|mi|mv|move|copy-item|cpi|cp|copy|rename-item|rni|ren|new-item|ni|set-item|si|set-itemproperty|sp|tee-object|tee)\b[^\n;&|]*(?:\.openclaw(?:-[^\n;&|\\/]+)?[\\/]openclaw\.json|\$(?:\{env:|env:)(?:openclaw_config_path\}?|openclaw_state_dir\}?[\\/]openclaw\.json))'
+      - '\[(?:system\.)?io\.file\]::(?:write|append|delete|move|copy|replace|create|open)\w*\s*\([^\n]*(?:\.openclaw(?:-[^\n;&|\\/]+)?[\\/]openclaw\.json|\$(?:\{env:|env:)(?:openclaw_config_path\}?|openclaw_state_dir\}?[\\/]openclaw\.json))'
+      - '>>?\s*[^\n;&|]*(?:\.openclaw(?:-[^\n;&|\\/]+)?[\\/]openclaw\.json|\$(?:\{env:|env:)(?:openclaw_config_path\}?|openclaw_state_dir\}?[\\/]openclaw\.json))'
+      - '(?<![\w.-])(?:set-content|sc|add-content|ac|out-file|clear-content|clc|remove-item|rm|ri|del|erase|rd|rmdir|move-item|mi|mv|move|copy-item|cpi|cp|copy|rename-item|rni|ren|new-item|ni|set-item|si|set-itemproperty|sp|tee-object|tee)\b[^\n;&|]*\.openclaw(?:-[\w-]+)?[\\/]?(?=$|[\s''"`;&|),])'
   file:
     # 文件动作（Write、Edit、NotebookEdit 等）按路径匹配，不调模型。
     # {config}、{cache} 是 h-guard 实际使用的目录；~ 开头的写法另覆盖默认位置。
@@ -124,6 +141,12 @@ match:
       - '{omp_config}/profiles/*/agent/config.yaml'
       - '{dsh_home}/cordis.patch.yml'
       - '{dsh_home}/profiles/*/cordis.patch.yml'
+      # OpenClaw 的 openclaw.json（插件本身在 {config} 下）：OPENCLAW_CONFIG_PATH、OPENCLAW_STATE_DIR、OPENCLAW_HOME
+      # 解析出的位置，默认位置与 --profile 的配置档，以及整个 ~/.openclaw 目录
+      - '{openclaw_config}'
+      - '~/.openclaw/openclaw.json'
+      - '~/.openclaw-*/openclaw.json'
+      - '~/.openclaw'
       - '~/.config/opencode/plugins/h-guard.js'
       # 扩展所在的目录本身（改名、删除时整个目录不再被加载；目录里别的文件不受影响）
       - '~/.config/opencode/plugins'
@@ -225,6 +248,21 @@ examples:
     - {shell: powershell, command: "Move-Item ~\\.omp\\agent\\extensions C:\\x"}
     - {shell: powershell, command: "Move-Item $env:PI_CODING_AGENT_DIR\\extensions C:\\x"}
     - {action: file_rename, path: "~/.omp/agent/extensions"}
+    - {shell: posix, command: "sed -i 's/\"enabled\": true/\"enabled\": false/' ~/.openclaw/openclaw.json"}
+    - {shell: posix, command: "echo '{}' > ~/.openclaw-work/openclaw.json"}
+    - {shell: posix, command: "mv ~/.openclaw /tmp/x"}
+    - {shell: posix, command: "rm \"$OPENCLAW_CONFIG_PATH\""}
+    - {shell: posix, command: "cp /tmp/x.json \"$OPENCLAW_STATE_DIR/openclaw.json\""}
+    - {shell: posix, command: "openclaw config set plugins.entries.h-guard.enabled false"}
+    - {shell: posix, command: "openclaw config unset plugins.load.paths"}
+    - {shell: posix, command: "openclaw config patch --file ./x.json5"}
+    - {shell: posix, command: "openclaw plugins disable h-guard"}
+    - {shell: powershell, command: "Set-Content ~\\.openclaw\\openclaw.json -Value '{}'"}
+    - {shell: powershell, command: "Remove-Item $env:OPENCLAW_CONFIG_PATH"}
+    - {action: file_write, path: "~/.openclaw/openclaw.json"}
+    - {action: file_write, path: "~/.openclaw-dev/openclaw.json"}
+    - {action: file_rename, path: "~/.openclaw"}
+    - {action: file_write, path: "~/.config/h-guard/extensions/openclaw/index.mjs"}
   miss:
     - {shell: powershell, command: "Get-Content ~\\.claude\\settings.json"}
     - {shell: posix, command: "cat ~/.claude/settings.json"}
@@ -250,3 +288,9 @@ examples:
     - {shell: posix, command: "rm ~/.config/opencode/plugins/other.js"}
     - {shell: posix, command: "cat ~/.pi/agent/extensions/notes.md"}
     - {action: file_write, path: "~/.pi/agent/extensions/other.js"}
+    - {shell: posix, command: "cat ~/.openclaw/openclaw.json"}
+    - {shell: posix, command: "openclaw config get plugins.entries"}
+    - {shell: posix, command: "openclaw config set agents.defaults.heartbeat.every 2h"}
+    - {shell: posix, command: "openclaw plugins disable other-plugin"}
+    - {shell: posix, command: "ls ~/.openclaw/workspace"}
+    - {action: file_write, path: "~/.openclaw/workspace/notes.md"}

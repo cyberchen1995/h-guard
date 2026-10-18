@@ -31,10 +31,26 @@ minor releases. Every such change is recorded in this file.
   `$env:` form. Path patterns can use `{xdg_config}`, `{pi_agent_dir}`,
   `{omp_config}` and `{dsh_home}`.
 
+- `h-guard install openclaw` connects OpenClaw (written against and
+  smoke-tested with 2026.10.4). It writes a native plugin to h-guard's
+  configuration directory and loads it from `openclaw.json`
+  (`plugins.load.paths`, `plugins.entries.h-guard`); it refuses an
+  `openclaw.json` that uses JSON5 syntax or `$include` and prints the settings
+  to add instead. Tool calls are checked in `before_tool_call` (`ask` becomes a
+  plugin approval), tool output in the tool result middleware and prompts in
+  `before_agent_run`. OpenClaw's own tools are classified like pi's; other
+  tools ask (`tool_unknown`). An opt-in channel notifier
+  (`plugins.entries.h-guard.config.notify` in OpenClaw's configuration) sends
+  denials and warnings to chats with `openclaw message send`.
+- The locked `guard_tampering` rule also protects `openclaw.json` (including
+  `OPENCLAW_CONFIG_PATH`, `OPENCLAW_STATE_DIR` and named profiles), the
+  `~/.openclaw` directory, and OpenClaw commands that change plugin settings or
+  disable the plugin. Path patterns can use `{openclaw_config}`.
+
 ### Public packages
 
 - New adapters `pkg/harness/opencode`, `pkg/harness/pi` (registers `pi` and
-  `omp`) and `pkg/harness/dsh`.
+  `omp`), `pkg/harness/dsh` and `pkg/harness/openclaw`.
 - `pkg/harness` adds `UnknownToolError` for tools an adapter does not know.
 - `pkg/harness` adds `ErrNoAction` and the optional `NoActionRenderer`: an
   adapter that answers every request (extension protocol) replies `pass` to a
