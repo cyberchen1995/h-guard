@@ -330,6 +330,15 @@ func openclawConfig(o Options) string {
 	return install.OpenClawConfig(install.Target{Home: o.Home, Getenv: o.Getenv})
 }
 
+// openclawIncludes 是 OpenClaw 的配置用 $include 引入的文件。
+func openclawIncludes(o Options) []string {
+	if o.Home == "" {
+		return nil
+	}
+	files, _ := install.OpenClawIncludes(install.Target{Home: o.Home, Getenv: o.Getenv})
+	return files
+}
+
 // newEngine 组装 Engine：action 检查与 outbound 检查。文件动作的保护路径用主目录、h-guard 实际的配置与缓存目录，
 // 以及这次 --config 加载的文件展开。
 func (s setup) newEngine(o Options, j action.Judge, oj outbound.Judge) *engine.Engine {
@@ -338,7 +347,8 @@ func (s setup) newEngine(o Options, j action.Judge, oj outbound.Judge) *engine.E
 			Vars: map[string]string{rules.VarConfig: o.ConfigDir, rules.VarCache: o.CacheDir, rules.VarExtraConfig: s.extra,
 				rules.VarClaudeConfig: o.Getenv("CLAUDE_CONFIG_DIR"), rules.VarCodexHome: o.Getenv("CODEX_HOME"),
 				rules.VarXDGConfig: o.Getenv("XDG_CONFIG_HOME"), rules.VarPiAgentDir: piAgentDir(o), rules.VarDSHHome: install.ExpandDSHHome(o.Home, o.Getenv("DSH_HOME")), rules.VarOMPConfig: ompConfig(o),
-				rules.VarOpenClawConfig: openclawConfig(o)}}}
+				rules.VarOpenClawConfig: openclawConfig(o)},
+			Lists: map[string][]string{rules.VarOpenClawIncludes: openclawIncludes(o)}}}
 	o2 := &outbound.Check{Rules: s.rules, Config: s.cfg, Judge: oj}
 	return &engine.Engine{
 		Checks: []guard.Check{c, o2}, Catalog: s.catalog, Locale: s.locale,

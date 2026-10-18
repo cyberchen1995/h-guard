@@ -64,12 +64,12 @@ match:
       - '(?<![\w.])(?<![^\w]-)(?<!^-)[a-z]?(?:rm|unlink|mv|cp|install|ln|truncate|tee|chmod|chown|shred|sed\s+-i|perl\s+-[a-z]*i|python[0-9.]*\s+-c|node\s+-e|jq\b[^\n;&|]*>)\b[^\n;&|]*\$\{?(?:XDG_CONFIG_HOME\}?[/\\]opencode(?:[/\\]plugins?)?|(?:PI_CODING_AGENT_DIR|DSH_HOME)\}?(?:[/\\]extensions)?|PI_CONFIG_DIR\}?(?:[/\\]agent(?:[/\\]extensions)?)?)[/\\]?(?=$|[\s''"`;&|)])'
       # OpenClaw 的 openclaw.json（加载并启用 h-guard 的插件；含 --profile 的 ~/.openclaw-<名字>），OPENCLAW_CONFIG_PATH、
       # OPENCLAW_STATE_DIR 指定的位置，与整个 ~/.openclaw 目录；改名前的 ~/.clawdbot 与 clawdbot.json 同样（升级来的
-      # 安装没有 ~/.openclaw 时 OpenClaw 用它们）
-      - '(?<![\w.])(?<![^\w]-)(?<!^-)[a-z]?(?:rm|unlink|mv|cp|install|ln|truncate|tee|chmod|chown|shred|sed\s+-i|perl\s+-[a-z]*i|python[0-9.]*\s+-c|node\s+-e|jq\b[^\n;&|]*>)\b[^\n;&|]*\.(?:openclaw(?:-[^\n;&|/]+)?|clawdbot)/(?:openclaw|clawdbot)\.json'
-      - '>>?\s*[^\n;&|]*\.(?:openclaw(?:-[^\n;&|/]+)?|clawdbot)/(?:openclaw|clawdbot)\.json'
-      - '\.(?:openclaw(?:-[^\n;&|/]+)?|clawdbot)/(?:openclaw|clawdbot)\.json[^\n;&|]*\|\s*(?:tee|sponge)\b'
-      - '(?<![\w.])(?<![^\w]-)(?<!^-)[a-z]?(?:rm|unlink|mv|cp|install|ln|truncate|tee|chmod|chown|shred|sed\s+-i|perl\s+-[a-z]*i|python[0-9.]*\s+-c|node\s+-e|jq\b[^\n;&|]*>)\b[^\n;&|]*\$\{?(?:OPENCLAW_CONFIG_PATH\}?|OPENCLAW_STATE_DIR\}?[/\\](?:openclaw|clawdbot)\.json)'
-      - '>>?\s*[^\n;&|]*\$\{?(?:OPENCLAW_CONFIG_PATH\}?|OPENCLAW_STATE_DIR\}?[/\\](?:openclaw|clawdbot)\.json)'
+      # 安装没有 ~/.openclaw 时 OpenClaw 用它们）；状态目录里同一层的 .json5 文件（$include 引入的片段）也算
+      - '(?<![\w.])(?<![^\w]-)(?<!^-)[a-z]?(?:rm|unlink|mv|cp|install|ln|truncate|tee|chmod|chown|shred|sed\s+-i|perl\s+-[a-z]*i|python[0-9.]*\s+-c|node\s+-e|jq\b[^\n;&|]*>)\b[^\n;&|]*\.(?:openclaw(?:-[^\n;&|/]+)?|clawdbot)/(?:(?:openclaw|clawdbot)\.json|[^\n;&|\s''"/]*\.json5)'
+      - '>>?\s*[^\n;&|]*\.(?:openclaw(?:-[^\n;&|/]+)?|clawdbot)/(?:(?:openclaw|clawdbot)\.json|[^\n;&|\s''"/]*\.json5)'
+      - '\.(?:openclaw(?:-[^\n;&|/]+)?|clawdbot)/(?:(?:openclaw|clawdbot)\.json|[^\n;&|\s''"/]*\.json5)[^\n;&|]*\|\s*(?:tee|sponge)\b'
+      - '(?<![\w.])(?<![^\w]-)(?<!^-)[a-z]?(?:rm|unlink|mv|cp|install|ln|truncate|tee|chmod|chown|shred|sed\s+-i|perl\s+-[a-z]*i|python[0-9.]*\s+-c|node\s+-e|jq\b[^\n;&|]*>)\b[^\n;&|]*\$\{?(?:OPENCLAW_CONFIG_PATH\}?|OPENCLAW_STATE_DIR\}?[/\\](?:(?:openclaw|clawdbot)\.json|[^\n;&|\s''"/]*\.json5))'
+      - '>>?\s*[^\n;&|]*\$\{?(?:OPENCLAW_CONFIG_PATH\}?|OPENCLAW_STATE_DIR\}?[/\\](?:(?:openclaw|clawdbot)\.json|[^\n;&|\s''"/]*\.json5))'
       - '(?<![\w.])(?<![^\w]-)(?<!^-)[a-z]?(?:rm|unlink|mv|cp|install|ln|truncate|tee|chmod|chown|shred|sed\s+-i|perl\s+-[a-z]*i|python[0-9.]*\s+-c|node\s+-e|jq\b[^\n;&|]*>)\b[^\n;&|]*\.(?:openclaw(?:-[\w-]+)?|clawdbot)/?(?=$|[\s''"`;&|)])'
       # OpenClaw 的命令行改插件设置、停用或卸载 h-guard 的插件（config patch 的内容看不到，一律请求确认）
       - '(?<![\w.-])openclaw\b[^\n;&|]*\bconfig\s+(?:set|unset)\b[^\n;&|]*\bplugins\b'
@@ -100,10 +100,10 @@ match:
       - '(?<![\w.-])(?:set-content|sc|add-content|ac|out-file|clear-content|clc|remove-item|rm|ri|del|erase|rd|rmdir|move-item|mi|mv|move|copy-item|cpi|cp|copy|rename-item|rni|ren|new-item|ni|set-item|si|set-itemproperty|sp|tee-object|tee)\b[^\n;&|]*(?:\.config[\\/]opencode(?:[\\/]plugins?)?|\.pi(?:[\\/]agent(?:[\\/]extensions)?)?|\.omp(?:[\\/]agent(?:[\\/]extensions)?)?|\.dsh)[\\/]?(?=$|[\s''"`;&|),])'
       - '(?<![\w.-])(?:set-content|sc|add-content|ac|out-file|clear-content|clc|remove-item|rm|ri|del|erase|rd|rmdir|move-item|mi|mv|move|copy-item|cpi|cp|copy|rename-item|rni|ren|new-item|ni|set-item|si|set-itemproperty|sp|tee-object|tee)\b[^\n;&|]*\$(?:\{env:|env:)(?:xdg_config_home\}?[\\/]opencode(?:[\\/]plugins?)?|(?:pi_coding_agent_dir|dsh_home)\}?(?:[\\/]extensions)?|pi_config_dir\}?(?:[\\/]agent(?:[\\/]extensions)?)?)[\\/]?(?=$|[\s''"`;&|),])'
       # OpenClaw 的 openclaw.json，含 $env:OPENCLAW_CONFIG_PATH、$env:OPENCLAW_STATE_DIR 的写法，与整个 .openclaw 目录；
-      # 改名前的 .clawdbot 与 clawdbot.json 同样
-      - '(?<![\w.-])(?:set-content|sc|add-content|ac|out-file|clear-content|clc|remove-item|rm|ri|del|erase|rd|rmdir|move-item|mi|mv|move|copy-item|cpi|cp|copy|rename-item|rni|ren|new-item|ni|set-item|si|set-itemproperty|sp|tee-object|tee)\b[^\n;&|]*(?:\.(?:openclaw(?:-[^\n;&|\\/]+)?|clawdbot)[\\/](?:openclaw|clawdbot)\.json|\$(?:\{env:|env:)(?:openclaw_config_path\}?|openclaw_state_dir\}?[\\/](?:openclaw|clawdbot)\.json))'
-      - '\[(?:system\.)?io\.file\]::(?:write|append|delete|move|copy|replace|create|open)\w*\s*\([^\n]*(?:\.(?:openclaw(?:-[^\n;&|\\/]+)?|clawdbot)[\\/](?:openclaw|clawdbot)\.json|\$(?:\{env:|env:)(?:openclaw_config_path\}?|openclaw_state_dir\}?[\\/](?:openclaw|clawdbot)\.json))'
-      - '>>?\s*[^\n;&|]*(?:\.(?:openclaw(?:-[^\n;&|\\/]+)?|clawdbot)[\\/](?:openclaw|clawdbot)\.json|\$(?:\{env:|env:)(?:openclaw_config_path\}?|openclaw_state_dir\}?[\\/](?:openclaw|clawdbot)\.json))'
+      # 改名前的 .clawdbot 与 clawdbot.json、同一层的 .json5 片段同样
+      - '(?<![\w.-])(?:set-content|sc|add-content|ac|out-file|clear-content|clc|remove-item|rm|ri|del|erase|rd|rmdir|move-item|mi|mv|move|copy-item|cpi|cp|copy|rename-item|rni|ren|new-item|ni|set-item|si|set-itemproperty|sp|tee-object|tee)\b[^\n;&|]*(?:\.(?:openclaw(?:-[^\n;&|\\/]+)?|clawdbot)[\\/](?:(?:openclaw|clawdbot)\.json|[^\n;&|\s''"\\/]*\.json5)|\$(?:\{env:|env:)(?:openclaw_config_path\}?|openclaw_state_dir\}?[\\/](?:(?:openclaw|clawdbot)\.json|[^\n;&|\s''"\\/]*\.json5)))'
+      - '\[(?:system\.)?io\.file\]::(?:write|append|delete|move|copy|replace|create|open)\w*\s*\([^\n]*(?:\.(?:openclaw(?:-[^\n;&|\\/]+)?|clawdbot)[\\/](?:(?:openclaw|clawdbot)\.json|[^\n;&|\s''"\\/]*\.json5)|\$(?:\{env:|env:)(?:openclaw_config_path\}?|openclaw_state_dir\}?[\\/](?:(?:openclaw|clawdbot)\.json|[^\n;&|\s''"\\/]*\.json5)))'
+      - '>>?\s*[^\n;&|]*(?:\.(?:openclaw(?:-[^\n;&|\\/]+)?|clawdbot)[\\/](?:(?:openclaw|clawdbot)\.json|[^\n;&|\s''"\\/]*\.json5)|\$(?:\{env:|env:)(?:openclaw_config_path\}?|openclaw_state_dir\}?[\\/](?:(?:openclaw|clawdbot)\.json|[^\n;&|\s''"\\/]*\.json5)))'
       - '(?<![\w.-])(?:set-content|sc|add-content|ac|out-file|clear-content|clc|remove-item|rm|ri|del|erase|rd|rmdir|move-item|mi|mv|move|copy-item|cpi|cp|copy|rename-item|rni|ren|new-item|ni|set-item|si|set-itemproperty|sp|tee-object|tee)\b[^\n;&|]*\.(?:openclaw(?:-[\w-]+)?|clawdbot)[\\/]?(?=$|[\s''"`;&|),])'
   file:
     # 文件动作（Write、Edit、NotebookEdit 等）按路径匹配，不调模型。
@@ -159,6 +159,11 @@ match:
       # 解析出的位置（包括改名前的 ~/.clawdbot 与 clawdbot.json），默认位置与 --profile 的配置档，以及整个 ~/.openclaw
       # 与 ~/.clawdbot 目录
       - '{openclaw_config}'
+      # 配置用 $include 引入的文件（逐层解析出的实际位置），与状态目录里同一层的 .json5 片段
+      - '{openclaw_includes}'
+      - '~/.openclaw/*.json5'
+      - '~/.openclaw-*/*.json5'
+      - '~/.clawdbot/*.json5'
       - '~/.openclaw/openclaw.json'
       - '~/.openclaw/clawdbot.json'
       - '~/.openclaw-*/openclaw.json'
@@ -305,6 +310,12 @@ examples:
     - {action: file_write, path: "~/.clawdbot/clawdbot.json"}
     - {action: file_write, path: "~/.openclaw/clawdbot.json"}
     - {action: file_rename, path: "~/.clawdbot"}
+    # $include 引入的片段
+    - {action: file_write, path: "~/.openclaw/plugins.json5"}
+    - {action: file_write, path: "~/.openclaw/conf.d/plugins.json"}
+    - {shell: posix, command: "sed -i 's/true/false/' ~/.openclaw/plugins.json5"}
+    - {shell: posix, command: "echo '{}' > \"$OPENCLAW_STATE_DIR/plugins.json5\""}
+    - {shell: powershell, command: "Set-Content ~\\.openclaw\\plugins.json5 -Value '{}'"}
   miss:
     - {shell: powershell, command: "Get-Content ~\\.claude\\settings.json"}
     - {shell: posix, command: "cat ~/.claude/settings.json"}
@@ -337,6 +348,8 @@ examples:
     - {shell: posix, command: "openclaw plugins disable other-plugin"}
     - {shell: posix, command: "ls ~/.openclaw/workspace"}
     - {shell: posix, command: "cat ~/.clawdbot/clawdbot.json"}
+    - {action: file_write, path: "~/.openclaw/workspace/tsconfig.json5"}
+    - {action: file_write, path: "~/.openclaw/workspace/package.json"}
     - {action: file_write, path: "~/.openclaw/workspace/notes.md"}
     - {shell: posix, command: "openclaw uninstall --service --yes --non-interactive"}
     - {shell: posix, command: "openclaw plugins uninstall other-plugin"}

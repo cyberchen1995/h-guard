@@ -98,11 +98,14 @@ const (
 	// VarOpenClawConfig 是 OpenClaw 实际读的配置文件（install.OpenClawConfig）：$OPENCLAW_CONFIG_PATH，或 $OPENCLAW_STATE_DIR、
 	// $OPENCLAW_HOME 下的默认位置，包括改名前的 ~/.clawdbot 与 clawdbot.json（都没有时是 ~/.openclaw/openclaw.json）。
 	VarOpenClawConfig = "openclaw_config"
+	// VarOpenClawIncludes 是 OpenClaw 的配置用 $include 引入的文件（install.OpenClawIncludes），有多个值（paths.Env.Lists）。
+	VarOpenClawIncludes = "openclaw_includes"
 )
 
 // placeholders 是路径模式可以用的占位符。
 var placeholders = map[string]bool{VarConfig: true, VarCache: true, VarExtraConfig: true, VarClaudeConfig: true, VarCodexHome: true,
-	VarXDGConfig: true, VarPiAgentDir: true, VarDSHHome: true, VarOMPConfig: true, VarOpenClawConfig: true}
+	VarXDGConfig: true, VarPiAgentDir: true, VarDSHHome: true, VarOMPConfig: true, VarOpenClawConfig: true,
+	VarOpenClawIncludes: true}
 
 // ExecMatch 是命令正则，按 shell 分组：any 用于所有 shell。
 type ExecMatch struct {
@@ -150,7 +153,8 @@ type Example struct {
 // {config} 为 /xdg/config/h-guard，{cache} 为 /xdg/cache/h-guard，{extra_config} 为 /etc/guard/extra.yaml，区分大小写。
 var ExampleEnv = paths.Env{
 	Home: "/home/user", Cwd: "/home/user/project", Lexical: true,
-	Vars: map[string]string{VarConfig: "/xdg/config/h-guard", VarCache: "/xdg/cache/h-guard", VarExtraConfig: "/etc/guard/extra.yaml"},
+	Vars:  map[string]string{VarConfig: "/xdg/config/h-guard", VarCache: "/xdg/cache/h-guard", VarExtraConfig: "/etc/guard/extra.yaml"},
+	Lists: map[string][]string{VarOpenClawIncludes: {"/home/user/.openclaw/conf.d/plugins.json"}},
 }
 
 type compiledExec struct {

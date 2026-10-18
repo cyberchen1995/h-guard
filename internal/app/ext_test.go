@@ -311,3 +311,23 @@ func TestNoGrantOnOpencode(t *testing.T) {
 		t.Errorf("reply: %s", out)
 	}
 }
+
+// TestOpenClawIncludeProtected：OpenClaw 的配置用 $include 引入的文件与 openclaw.json 一样受 guard_tampering 保护；
+// 别的文件不受影响。
+func TestOpenClawIncludeProtected(t *testing.T) {
+	e := newEnv(t)
+	dir := filepath.Join(e.home, ".openclaw")
+	os.MkdirAll(filepath.Join(dir, "conf.d"), 0o700)
+	os.WriteFile(filepath.Join(dir, "openclaw.json"), []byte(`{"plugins": {"$include": "./conf.d/plugins.json"}}`), 0o600)
+	os.WriteFile(filepath.Join(dir, "conf.d", "plugins.json"), []byte(`{}`), 0o600)
+	for path, want := range map[string]string{
+		filepath.Join(dir, "conf.d", "plugins.json"): "ask",
+		filepath.Join(dir, "conf.d", "notes.json"):   "pass",
+	} {
+		data := map[string]any{"toolName": "write", "toolCallId": "c", "params": map[string]string{"path": path, "content": "{}"}, "platform": "linux"}
+		out, errs, code := e.run(extReq("openclaw", "before_tool_call", data), "hook", "openclaw", "--event", "before_tool_call")
+		if got := extAction(t, out); code != 0 || got != want {
+			t.Errorf("write %s: %s, want %s (%s %s)", path, got, want, out, errs)
+		}
+	}
+}

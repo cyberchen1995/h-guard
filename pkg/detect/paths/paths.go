@@ -41,11 +41,13 @@ import (
 
 // Env 是解析路径与展开模式所需的环境。
 type Env struct {
-	Home     string            // 用户主目录；为空时不展开 ~，以 ~/ 开头的模式不匹配
-	Cwd      string            // 相对路径的基准；为空时相对路径无法解析
-	Vars     map[string]string // 模式开头 {name} 的值；没有值的模式不匹配
-	FoldCase bool              // 不区分大小写比较
-	Lexical  bool              // 不访问文件系统、不解析符号链接（规则样例用）
+	Home string            // 用户主目录；为空时不展开 ~，以 ~/ 开头的模式不匹配
+	Cwd  string            // 相对路径的基准；为空时相对路径无法解析
+	Vars map[string]string // 模式开头 {name} 的值；没有值的模式不匹配
+	// Lists 是可以有多个值的占位符：模式按每个值各展开一份（Vars 里同名的值不再使用）；没有值时模式不匹配
+	Lists    map[string][]string
+	FoldCase bool // 不区分大小写比较
+	Lexical  bool // 不访问文件系统、不解析符号链接（规则样例用）
 	// RootAliases 是指向根目录的别名前缀（绝对路径，用 / 分隔）；nil 时用 RootAliasesDefault，空切片表示没有
 	RootAliases []string
 	// Opaque 是无法映射到规范位置的前缀（绝对路径，用 / 分隔）；nil 时用 OpaqueDefault，空切片表示没有
@@ -323,15 +325,14 @@ func Compile(patterns []string, env Env) (*Matcher, error) {
 		if err := ValidPattern(p); err != nil {
 			return nil, fmt.Errorf("pattern %q: %w", p, err)
 		}
-		expanded, ok := expandPattern(p, env)
-		if !ok {
-			continue
-		}
-		srcs := []string{translate(expanded)}
-		if !env.Lexical {
-			alt, complete := aliases(expanded, env)
-			srcs = append(srcs, alt...)
-			m.incomplete = m.incomplete || !complete
+		var srcs []string
+		for _, expanded := range expandPattern(p, env) {
+			srcs = append(srcs, translate(expanded))
+			if !env.Lexical {
+				alt, complete := aliases(expanded, env)
+				srcs = append(srcs, alt...)
+				m.incomplete = m.incomplete || !complete
+			}
 		}
 		for _, s := range srcs {
 			// 路径里的目录名可以含换行符，`.` 必须能匹配它（s 标志），否则 `**/`、`/**` 会漏掉这类路径（fail-open）。
@@ -445,22 +446,28 @@ func (m *Matcher) Match(r Resolved) bool {
 	return false
 }
 
-// expandPattern 展开开头的 ~ 或 {name}，结果用 / 分隔。
-func expandPattern(p string, env Env) (string, bool) {
+// expandPattern 展开开头的 ~ 或 {name}（Lists 里的占位符每个值一份），结果用 / 分隔；缺少值时为空。
+func expandPattern(p string, env Env) []string {
 	if name, ok := Placeholder(p); ok {
-		v := env.Vars[name]
-		if v == "" {
-			return "", false
+		vals, list := env.Lists[name]
+		if !list {
+			vals = []string{env.Vars[name]}
 		}
-		return strings.TrimSuffix(slash(filepath.Clean(v), env.Windows), "/") + p[len(name)+2:], true
+		var out []string
+		for _, v := range vals {
+			if v != "" {
+				out = append(out, strings.TrimSuffix(slash(filepath.Clean(v), env.Windows), "/")+p[len(name)+2:])
+			}
+		}
+		return out
 	}
 	if strings.HasPrefix(p, "~/") {
 		if env.Home == "" {
-			return "", false
+			return nil
 		}
-		return strings.TrimSuffix(slash(filepath.Clean(env.Home), env.Windows), "/") + p[1:], true
+		return []string{strings.TrimSuffix(slash(filepath.Clean(env.Home), env.Windows), "/") + p[1:]}
 	}
-	return p, true
+	return []string{p}
 }
 
 // literalPrefix 把模式拆成不含通配符的开头若干段与其余部分（其余部分以 / 开头或为空）。
