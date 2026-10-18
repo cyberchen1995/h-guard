@@ -2,12 +2,20 @@
 
 [简体中文](README.zh-CN.md)
 
+**Harnesses:** Claude Code · Codex · opencode · pi · oh-my-pi · DeepSeek Harness,
+and any other agent harness through the
+[generic JSON contract](docs/guide/protocols.md#generic-harness-contract-v1).<br>
+**Intercepts:** catastrophic commands and fork bombs, recursive deletes,
+destructive git and branch operations, publishing, bypassed checks, encoded
+execution, tampering with the guard and reads of secret files, plus credentials,
+private keys and (opt-in) personal data in prompts and tool output, using local
+rules and a judge model for the cases that depend on what you asked for
+([details](#what-it-checks)).
+
 h-guard is a safety guardrail for agent harnesses. It checks what an agent is
 about to do (shell commands and file operations) and what passes through it
 (your prompts and tool output), and denies, asks for confirmation or warns
-before something destructive runs or a secret leaks. It works with Claude Code,
-Codex, opencode, pi, oh-my-pi and DeepSeek Harness, and with any other agent
-harness through a generic JSON contract.
+before something destructive runs or a secret leaks.
 
 <p align="center"><img src=".github/assets/how-it-works.svg" alt="How h-guard works" width="720"></p>
 
