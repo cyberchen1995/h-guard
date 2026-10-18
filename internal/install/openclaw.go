@@ -103,6 +103,17 @@ func exists(p string) bool {
 	return err == nil
 }
 
+// openclawManaged 返回让 OpenClaw 的配置只读的环境变量（OPENCLAW_NIX_MODE=1：配置由 Nix 管理；
+// OPENCLAW_CONFIG_READONLY=1），没有时为空。与 OpenClaw 的 resolveIsConfigReadOnly 一样只认 1。
+func openclawManaged(t Target) string {
+	for _, k := range []string{"OPENCLAW_NIX_MODE", "OPENCLAW_CONFIG_READONLY"} {
+		if t.Getenv(k) == "1" {
+			return k
+		}
+	}
+	return ""
+}
+
 // OpenClawPluginDir 是写出的插件目录：<config_dir>/extensions/openclaw。
 func OpenClawPluginDir(t Target) string { return filepath.Join(t.ConfigDir, "extensions", "openclaw") }
 
@@ -144,12 +155,25 @@ func isOurOpenClawPlugin(files map[string][]byte) bool {
 //     plugins.entries.h-guard 的其他键（如通知设置 config）与文件的其余内容原样保留。
 //
 // openclaw.json 必须是普通 JSON：OpenClaw 也读 JSON5（注释、尾逗号、不带引号的键）与 $include，h-guard 不改写它们，
-// 遇到时报错并给出要手工加入的内容。移除先去掉这些设置，再删插件目录。只计划，不写入（Apply 执行）。
+// 遇到时报错并给出要手工加入的内容。移除先去掉这些设置，再删插件目录。
+//
+// OpenClaw 的配置只读时（openclawManaged：Nix 或 OPENCLAW_CONFIG_READONLY），配置在别处管理，h-guard 不改 openclaw.json：
+// 安装只写插件目录，要加入的设置由 OpenClawNotes 给出；移除时报错，要先在管理配置的地方去掉这些设置（否则删掉插件
+// 目录后 OpenClaw 加载不到它）。只计划，不写入（Apply 执行）。
 func OpenClaw(t Target, remove bool) ([]Step, error) {
 	if !remove && t.Timeout > openclawMaxTimeout {
 		return nil, fmt.Errorf("OpenClaw waits at most 600 seconds for a hook, and h-guard needs 5 seconds of that as a margin; use --timeout %d or less", openclawMaxTimeout)
 	}
 	dir := OpenClawPluginDir(t)
+	config := OpenClawConfig(t)
+	managed := openclawManaged(t)
+	if managed != "" && remove {
+		if b, err := os.ReadFile(config); err == nil {
+			if st, err := readOpenClawState(b, dir, t.samePath, func(p string) string { return openclawPath(t, p) }); err != nil || st.loaded || st.entry {
+				return nil, fmt.Errorf("%s is 1, so OpenClaw's configuration is read-only and h-guard does not edit %s; remove %s from plugins.load.paths and plugins.entries.%s where the configuration is managed, restart the Gateway, then run this again to delete the plugin", managed, config, dir, openclawID)
+			}
+		}
+	}
 	files, err := openclawFiles(t)
 	if err != nil {
 		return nil, err
@@ -166,7 +190,12 @@ func OpenClaw(t Target, remove bool) ([]Step, error) {
 	if !remove {
 		plugin.Summary = "write h-guard's OpenClaw plugin"
 	}
-	config := OpenClawConfig(t)
+	if managed != "" {
+		if keepDir {
+			return nil, nil
+		}
+		return []Step{plugin}, nil
+	}
 	ms := openclawHookMS(t.Timeout)
 	change := func(old []byte, exists bool) ([]byte, error) {
 		return openclawConfigEdit(old, exists, dir, ms, remove, t.samePath, func(p string) string { return openclawPath(t, p) })
@@ -395,9 +424,17 @@ func readOpenClawState(b []byte, dir string, same func(a, b string) bool, expand
 	}, nil
 }
 
-// OpenClawNotes 返回 install 与 status 共用的提醒：OpenClaw 的版本、停用了全部插件、用 --profile 选择的配置档。
+// OpenClawNotes 返回 install 与 status 共用的提醒：OpenClaw 的版本、配置只读（install 时附上要加入的设置）、停用了全部
+// 插件、用 --profile 选择的配置档。
 func OpenClawNotes(t Target) []string {
 	notes := ExtNotes(t, "openclaw")
+	if k := openclawManaged(t); k != "" {
+		n := fmt.Sprintf("%s is 1, so OpenClaw's configuration is read-only and h-guard does not edit %s", k, OpenClawConfig(t))
+		if t.Timeout > 0 { // install：给出要在管理配置的地方加入的设置
+			n += "; add these settings where it is managed:\n" + strings.TrimSuffix(openclawSnippet(OpenClawPluginDir(t), openclawHookMS(t.Timeout)), "\n")
+		}
+		notes = append(notes, n)
+	}
 	if config := OpenClawConfig(t); openclawLegacy(config) && strings.TrimSpace(t.Getenv("OPENCLAW_CONFIG_PATH")) == "" {
 		notes = append(notes, fmt.Sprintf("OpenClaw uses the configuration from before its rename, %s, so h-guard installs there", config))
 	}
@@ -429,6 +466,9 @@ func inspectOpenClaw(t Target) []string {
 	}
 	lines := []string{extInstalledLine(t, "openclaw", "OpenClaw")}
 	fix := "; run h-guard install openclaw --write"
+	if openclawManaged(t) != "" {
+		fix = "; add it where OpenClaw's configuration is managed"
+	}
 	switch {
 	case !st.loaded:
 		lines = append(lines, fmt.Sprintf("problem: %s does not list %s in plugins.load.paths%s", config, dir, fix))

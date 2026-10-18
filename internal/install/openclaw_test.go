@@ -376,3 +376,59 @@ func TestOpenClawLegacy(t *testing.T) {
 		t.Errorf("config %s, want %s", got, want)
 	}
 }
+
+// TestOpenClawReadOnly：OPENCLAW_NIX_MODE=1 或 OPENCLAW_CONFIG_READONLY=1 时 OpenClaw 的配置在别处管理：install 只写
+// 插件目录、不改 openclaw.json，并给出要加入的设置；配置里还有 h-guard 的设置时 remove 拒绝；status 注明。
+func TestOpenClawReadOnly(t *testing.T) {
+	for _, k := range []string{"OPENCLAW_NIX_MODE", "OPENCLAW_CONFIG_READONLY"} {
+		tg := target(t, "linux")
+		tg.Getenv = env(map[string]string{k: "1"})
+		config := OpenClawConfig(tg)
+		writeFile(t, config, `{"gateway": {"port": 18789}}`)
+		steps := plan(t, tg, "openclaw", false)
+		for _, s := range steps {
+			if s.Path == config {
+				t.Errorf("%s: install edits %s", k, config)
+			}
+		}
+		apply(t, steps)
+		if got := readFile(t, config); got != `{"gateway": {"port": 18789}}` {
+			t.Errorf("%s: openclaw.json changed: %s", k, got)
+		}
+		if _, err := os.Stat(filepath.Join(OpenClawPluginDir(tg), "index.mjs")); err != nil {
+			t.Errorf("%s: the plugin was not written: %v", k, err)
+		}
+		notes := strings.Join(OpenClawNotes(tg), "\n")
+		if !strings.Contains(notes, k+" is 1, so OpenClaw's configuration is read-only") || !strings.Contains(notes, `"allowConversationAccess": true`) {
+			t.Errorf("%s: notes:\n%s", k, notes)
+		}
+		status := Target{Home: tg.Home, ConfigDir: tg.ConfigDir, CacheDir: tg.CacheDir, GOOS: "linux", Getenv: tg.Getenv}
+		lines := strings.Join(Inspect(status, "openclaw"), "\n")
+		if !strings.Contains(lines, "note: "+k+" is 1") || !strings.Contains(lines, "add it where OpenClaw's configuration is managed") || strings.Contains(lines, `"allowConversationAccess"`) {
+			t.Errorf("%s: status:\n%s", k, lines)
+		}
+
+		// 管理配置的地方加入了设置之后，remove 拒绝（删掉插件目录 OpenClaw 就加载不到它）；去掉设置之后只删插件目录
+		dir, _ := json.Marshal(OpenClawPluginDir(tg))
+		managed := `{"plugins": {"load": {"paths": [` + string(dir) + `]}, "entries": {"h-guard": {"enabled": true}}}}`
+		writeFile(t, config, managed)
+		if _, err := OpenClaw(tg, true); err == nil || !strings.Contains(err.Error(), "read-only") {
+			t.Errorf("%s: remove: %v, want a refusal", k, err)
+		}
+		writeFile(t, config, `{}`)
+		apply(t, plan(t, tg, "openclaw", true))
+		if _, err := os.Stat(OpenClawPluginDir(tg)); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("%s: the plugin was not removed: %v", k, err)
+		}
+		if got := readFile(t, config); got != `{}` {
+			t.Errorf("%s: openclaw.json changed on remove: %s", k, got)
+		}
+	}
+	// 与 OpenClaw 一样只认 1
+	tg := target(t, "linux")
+	tg.Getenv = env(map[string]string{"OPENCLAW_NIX_MODE": "true", "OPENCLAW_CONFIG_READONLY": "0"})
+	apply(t, plan(t, tg, "openclaw", false))
+	if !strings.Contains(readFile(t, OpenClawConfig(tg)), `"h-guard"`) {
+		t.Errorf("a value other than 1 made the configuration read-only")
+	}
+}

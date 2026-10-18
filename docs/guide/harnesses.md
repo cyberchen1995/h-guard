@@ -369,7 +369,11 @@ OpenClaw reads `openclaw.json` as JSON5 and can split it with `$include`, but
 it writes plain JSON itself. `install` only edits plain JSON: when the file has
 comments, trailing commas, unquoted keys or `$include`, it changes nothing and
 prints the settings to add yourself. It also refuses while `plugins.deny`
-lists `h-guard`. A named profile (`--profile`, `OPENCLAW_PROFILE`) has its own
+lists `h-guard`. When OpenClaw's configuration is read-only
+(`OPENCLAW_NIX_MODE=1`, where Nix manages it, or `OPENCLAW_CONFIG_READONLY=1`),
+`install` writes only the plugin and prints the settings to add where the
+configuration is managed; `install --remove` refuses while the configuration
+still loads the plugin, and `h-guard status` notes the mode. A named profile (`--profile`, `OPENCLAW_PROFILE`) has its own
 state directory; set `OPENCLAW_STATE_DIR` or `OPENCLAW_CONFIG_PATH` to install
 there.
 
