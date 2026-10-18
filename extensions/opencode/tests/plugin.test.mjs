@@ -54,8 +54,11 @@ test('request: the tool\'s source comes from the MCP servers opencode reports', 
   await before(thrown, 'notes_search', {})
   const errored = await mod.HGuard({ client: { mcp: { status: async () => ({ error: { name: 'x' } }) } }, directory: '/w' })
   await before(errored, 'notes_search', {})
+  const short = await load(file, 'opencode', command, 1000)
+  const stalled = await short.HGuard({ client: { mcp: { status: () => new Promise(() => {}) } }, directory: '/w' })
+  await before(stalled, 'notes_search', {})
   const got = (await recorded(record)).map((r) => r.request.data.source)
-  assert.deepEqual(got, ['mcp', 'opencode', '?', '?', '?'])
+  assert.deepEqual(got, ['mcp', 'opencode', '?', '?', '?', '?'])
 })
 
 test('tool.execute.before: a guard that cannot run blocks the call', async () => {

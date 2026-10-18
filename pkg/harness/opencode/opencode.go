@@ -197,7 +197,8 @@ func (a Adapter) shellOf() guard.Shell {
 
 // builtinNoAction 是 opencode 自带的、不执行命令也不改动用户文件的工具（1.19.3）：查找、网页、待办、提问、技能、
 // 子 agent（子 agent 的工具调用各自经过检查）、退出计划、lsp（实验性）、代码模式的 execute（其中调用的 MCP 工具各自经过
-// 检查）、MCP 资源的列出与读取，以及 opencode 用来回复无效调用的 invalid。它们不论插件查得的来源如何都放行。
+// 检查）、MCP 资源的列出与读取，以及 opencode 用来回复无效调用的 invalid。插件标为 mcp 时不放行：MCP 工具在自带工具之后
+// 注册、同名时覆盖它们，服务 plan 的工具 exit 就叫 plan_exit。
 var builtinNoAction = map[string]bool{
 	"glob": true, "webfetch": true, "websearch": true, "todowrite": true, "question": true, "skill": true, "task": true,
 	"plan_exit": true, "lsp": true, "execute": true, "invalid": true,
@@ -227,7 +228,7 @@ func (a Adapter) actions(tool, source string, in args) ([]guard.Action, error) {
 	case "apply_patch":
 		return applypatch.Actions(in.PatchText)
 	}
-	if builtinNoAction[tool] || source == "opencode" {
+	if builtinNoAction[tool] && source != "mcp" || source == "opencode" {
 		return nil, ErrNoAction
 	}
 	return nil, errUnknownTool

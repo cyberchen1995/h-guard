@@ -112,7 +112,7 @@ func TestNoAction(t *testing.T) {
 		before("notes_search", map[string]string{"query": "x"}), // 自定义工具
 		before("bash", map[string]string{"command": "  "}),
 		beforeFrom("task", "?", map[string]string{"prompt": "x"}),
-		beforeFrom("read_mcp_resource", "mcp", map[string]string{"server": "s", "uri": "x://y"}),
+		beforeFrom("read_mcp_resource", "opencode", map[string]string{"server": "s", "uri": "x://y"}),
 	} {
 		if _, err := a.Parse(in); !errors.Is(err, harness.ErrNoAction) {
 			t.Errorf("%s: %v, want ErrNoAction", in, err)
@@ -133,6 +133,15 @@ func TestUnknownTool(t *testing.T) {
 		if !errors.As(err, &ut) || ut.Event.Tool != "github_create_issue" || ut.Event.Kind != guard.EventAction || ut.Event.SessionID != "ses_1" {
 			t.Errorf("source %q: %v", source, err)
 		}
+	}
+	// MCP 工具的名字与自带工具相同时（服务 plan 的工具 exit）按 MCP 工具处理；来源查不到时自带工具照常放行
+	_, err := a.Parse(beforeFrom("plan_exit", "mcp", map[string]string{}))
+	var ut *harness.UnknownToolError
+	if !errors.As(err, &ut) {
+		t.Errorf("plan_exit from an MCP server: %v", err)
+	}
+	if _, err := a.Parse(beforeFrom("glob", "?", map[string]string{"pattern": "*"})); !errors.Is(err, harness.ErrNoAction) {
+		t.Errorf("glob with an unknown source: %v", err)
 	}
 	ev, err := a.Parse(beforeFrom("bash", "?", map[string]string{"command": "ls"}))
 	if err != nil || len(ev.Actions) != 1 {

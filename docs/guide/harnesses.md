@@ -177,8 +177,10 @@ opencode differences:
   marks a tool whose name starts with a server's name as an MCP tool. MCP tools
   are treated as tools h-guard does not know (see
   [below](#tools-h-guard-does-not-know)): since opencode cannot ask, they are
-  blocked unless listed in `harnesses.opencode.read_only_tools`. If the lookup
-  fails, any tool that is not one of opencode's own is treated the same way.
+  blocked unless listed in `harnesses.opencode.read_only_tools`, even when the
+  name matches one of opencode's own tools (an MCP tool replaces a built-in of
+  the same name). If the lookup fails or takes longer than 5 seconds, any tool
+  that is not one of opencode's own is treated the same way.
   Custom tools and tools added by plugins pass, as before; one whose name
   starts with an MCP server's name counts as an MCP tool.
 - **Not covered.** Commands you type with `!` and terminal sessions do not go
