@@ -215,15 +215,21 @@ func installExt(o Options, t install.Target, harness string, write, remove bool)
 // 最后提示加 --write。写入成功后调用 done。
 func applySteps(o Options, steps []install.Step, write, remove bool, done func() int) int {
 	var changes []install.Step
+	manual := false
 	for _, s := range steps {
 		if s.Changes() {
 			changes = append(changes, s)
 		}
 		if s.Manual != "" {
+			manual = true
 			fmt.Fprintf(o.Stdout, "to do yourself: %s: %s\n%s", s.Summary, s.Path, s.Manual)
 		}
 	}
 	if len(changes) == 0 {
+		if manual {
+			fmt.Fprintln(o.Stdout, "h-guard's own files are in place; nothing else for h-guard to change")
+			return 0
+		}
 		if remove {
 			fmt.Fprintln(o.Stdout, "not installed; nothing to remove")
 		} else {
