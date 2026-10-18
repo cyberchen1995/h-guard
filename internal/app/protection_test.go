@@ -612,7 +612,7 @@ func TestStatusShowsJudgeOnlyCategories(t *testing.T) {
 	if err := (consent.Store{Dir: e.configDir}).Grant(id, []consent.Scope{consent.ScopeAction, consent.ScopeOutbound}, time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	if out, _, _ := e.run(nil, "status"); !strings.Contains(out, "acme-codename warn (judge only, not on Codex or DeepSeek Harness)") {
+	if out, _, _ := e.run(nil, "status"); !strings.Contains(out, "acme-codename warn (judge only, not on Codex or DeepSeek Harness, nor for tool output on Hermes Agent)") {
 		t.Errorf("status:\n%s", out)
 	}
 }

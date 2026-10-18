@@ -122,8 +122,16 @@ func TestInstallHermes(t *testing.T) {
 	if out, _, _ := e.run(nil, "install", "hermes", "--write"); !strings.Contains(out, "already installed") {
 		t.Errorf("reinstall: %s", out)
 	}
-	if out, _, _ := e.run(nil, "status"); !strings.Contains(out, "hermes: installed (Hermes Agent 2026.9.24)\n") || strings.Contains(out, "hermes: problem") {
+	out, _, _ = e.run(nil, "status")
+	if !strings.Contains(out, "hermes: installed (Hermes Agent 2026.9.24)\n") || strings.Contains(out, "hermes: problem") {
 		t.Errorf("status:\n%s", out)
+	}
+	// 保护摘要：扩展协议的 harness 只有「配置已写入」这一层；Hermes 另说明自动批准时的确认与挡不住的提示词
+	for _, want := range []string{"  hermes: config written: yes | hook running: not tracked for hermes | self-test: not available for hermes\n",
+		"  hermes: asks go to Hermes's own approval; every ask in a session that Hermes would approve without asking"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("status lacks %q:\n%s", want, out)
+		}
 	}
 	e.config("version: 1\nnot valid: [\n")
 	if _, errs, code := e.run(nil, "install", "hermes", "--remove", "--write"); code != 0 {
