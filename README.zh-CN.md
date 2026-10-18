@@ -2,7 +2,10 @@
 
 [English](README.md)
 
-h-guard 是 agent harness 的安全护栏。它检查 agent 将要执行的操作（shell 命令与文件操作）和经过它的内容（你的提示词与工具输出），在破坏性操作执行或秘密外泄之前拒绝、请求确认或提示。目前接入 Claude Code、Codex、opencode、pi、oh-my-pi 与 DeepSeek Harness，其他 agent harness 可以通过 generic JSON 契约接入。
+**支持的 harness：** Claude Code · Codex · opencode · pi · oh-my-pi · DeepSeek Harness，其他 agent harness 可以通过 [generic JSON 契约](docs/guide/protocols.md#generic-harness-contract-v1)接入。<br>
+**拦截范围：** 灾难性命令与 fork 炸弹、递归删除、破坏性 git 与分支操作、发布、绕过检查、执行编码内容、篡改护栏与读取秘密文件，以及提示词和工具输出里的凭据、私钥和个人信息（需开启）；由本地规则与判断模型共同把关，取决于你是否要求过的情况交给模型判断（[详见](#检查什么)）。
+
+h-guard 是 agent harness 的安全护栏。它检查 agent 将要执行的操作（shell 命令与文件操作）和经过它的内容（你的提示词与工具输出），在破坏性操作执行或秘密外泄之前拒绝、请求确认或提示。
 
 <p align="center"><img src=".github/assets/how-it-works.zh-CN.svg" alt="h-guard 工作原理" width="720"></p>
 

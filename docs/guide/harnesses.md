@@ -3,6 +3,8 @@
 h-guard connects to Claude Code, Codex, opencode, pi, oh-my-pi and DeepSeek
 Harness with `h-guard install`, and to any other agent harness through the
 [generic contract](protocols.md#generic-harness-contract-v1).
+For what h-guard intercepts, see
+[What it checks](../../README.md#what-it-checks).
 This guide describes how each connection works, what each harness can do with
 h-guard's decisions, and what happens when it cannot.
 
