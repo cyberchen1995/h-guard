@@ -346,7 +346,7 @@ model server); no recorded sessions yet.
    `plugins.entries.h-guard`: `enabled: true`,
    `hooks.allowConversationAccess: true` (OpenClaw only gives prompts to a
    plugin that has it) and `hooks.timeouts` for `before_tool_call`,
-   `before_agent_run` and `after_tool_call` (the timeout plus 5 seconds; the
+   `before_agent_run`, `before_dispatch` and `after_tool_call` (the timeout plus 5 seconds; the
    tool result middleware runs on the `after_tool_call` budget; OpenClaw allows
    at most 600 seconds, so `--timeout` can be at most 595). When
    `plugins.allow` is not empty, `h-guard` is added to it. The rest of the file
@@ -403,6 +403,7 @@ you approve in OpenClaw's own plugin approval instead.
 | `before_tool_call` | checks the actions (`exec` commands; `read`, `grep`, `view_image`; `write`, `edit`; the files in an `apply_patch`; text written to a running `process`); `deny` blocks the call and the model reads h-guard's reason; `ask` becomes a plugin approval |
 | tool result middleware | scans the output before the model sees it; `deny` replaces it with h-guard's reason |
 | `before_agent_run` | scans the prompt of each run; `deny` blocks the run, and the reply is OpenClaw's "Your message could not be sent: …" with h-guard's reason |
+| `before_dispatch` | scans each message a channel delivers before OpenClaw hands it to the agent, as the user's input; `deny` answers with h-guard's reason instead of the agent. This covers messages that arrive while a run is active: in the default `steer` queue mode OpenClaw adds them to that run at its next model call without `before_agent_run`. A message that starts a new run is checked here and again in `before_agent_run` |
 
 OpenClaw differences:
 
@@ -426,7 +427,8 @@ OpenClaw differences:
   triggers) whose message came from an external user counts as yours.
   Scheduled, heartbeat, webhook and memory runs, messages handed over from
   another session (sub-agent results, `sessions_send`) or by the system, and
-  every run in a sub-agent session count as automated.
+  every run in a sub-agent session count as automated. Channel messages
+  checked in `before_dispatch` count as yours.
 - **Shell.** `exec` runs commands with `$SHELL` on macOS and Linux, where
   h-guard checks them as POSIX, in the sandbox as well. On Windows the Gateway
   uses PowerShell and the sandbox a POSIX shell, and which of the two a command

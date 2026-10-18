@@ -87,7 +87,7 @@ func TestOpenClawInstall(t *testing.T) {
 	if entry["enabled"] != true || hooks["allowConversationAccess"] != true {
 		t.Errorf("entry = %v", entry)
 	}
-	for _, h := range []string{"before_tool_call", "before_agent_run", "after_tool_call"} {
+	for _, h := range []string{"before_tool_call", "before_agent_run", "before_dispatch", "after_tool_call"} {
 		if hooks["timeouts"].(map[string]any)[h] != float64(25000) {
 			t.Errorf("timeout for %s: %v", h, hooks["timeouts"])
 		}
@@ -248,7 +248,7 @@ func TestOpenClawManualConfig(t *testing.T) {
 	writeFile(t, config, `{"plugins": {"$include": "./plugins.json5"}}`)
 	frag := filepath.Join(filepath.Dir(config), "plugins.json5")
 	writeFile(t, frag, "{\n  // h-guard\n  load: {paths: ["+string(dir)+"]},\n  entries: {'h-guard': {enabled: true, hooks: {allowConversationAccess: true,\n"+
-		"    timeouts: {before_tool_call: 25000, before_agent_run: 25000, after_tool_call: 25000}}}},\n}\n")
+		"    timeouts: {before_tool_call: 25000, before_agent_run: 25000, before_dispatch: 25000, after_tool_call: 25000}}}},\n}\n")
 	apply(t, plan(t, tg, "openclaw", false))
 	steps := plan(t, tg, "openclaw", false)
 	for _, st := range steps {

@@ -72,7 +72,8 @@ minor releases. Every such change is recorded in this file.
   the effective configuration (JSON5, merged with its `$include` files). Tool
   calls are checked in `before_tool_call` (`ask` becomes a
   plugin approval), tool output in the tool result middleware and prompts in
-  `before_agent_run`. OpenClaw's own tools are classified like pi's, and for
+  `before_agent_run` and, for channel messages (including those steered into
+  a running turn), `before_dispatch`. OpenClaw's own tools are classified like pi's, and for
   `browser`, `message`, `sessions`, `transcripts` and `canvas` by action (only
   observing the browser, reading and sending messages pass). Local files that
   tools send away (message attachments, PDFs, reference media, `MEDIA:` lines)

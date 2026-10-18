@@ -94,6 +94,35 @@ export default {
       return undefined
     }, { runtimes: ['openclaw'] })
 
+    // 渠道消息：OpenClaw 把收到的消息分派给 agent 之前检查。默认的 steer 队列模式下，会话正在运行时收到的消息直接插进
+    // 这次运行（下一次调用模型时），不经过 before_agent_run；before_dispatch 在分派之前，所有渠道消息都经过这里。
+    // deny 时代替 agent 回复 h-guard 的说明，消息不交给 agent。接入层故障放行并记一行日志
+    api.on('before_dispatch', async (event, ctx = {}) => {
+      const parts = []
+      for (const t of [event && event.content, event && event.body]) {
+        if (typeof t === 'string' && t.trim() !== '' && !parts.includes(t)) parts.push(t)
+      }
+      if (parts.length === 0) return undefined
+      try {
+        const reply = await callGuard(api, 'before_dispatch', sessionOf(api, workspaces, ctx), {
+          data: { prompt: parts.join('\n'), sessionKey: ctx.sessionKey || event.sessionKey, channel: ctx.channelId || event.channel },
+        })
+        if (reply.action === 'deny' || reply.action === 'ask') {
+          log(api, messageOf(reply))
+          notify('deny', 'blocked a message', ctx, reply)
+          return { handled: true, text: textOf(reply) }
+        }
+        if (reply.action === 'warn') {
+          log(api, messageOf(reply))
+          notify('warn', 'warns about a message', ctx, reply)
+        }
+        if (reply.action === 'error') log(api, reply.message)
+      } catch (err) {
+        log(api, FAILED)
+      }
+      return undefined
+    })
+
     // 提示词：模型收到这一轮的输入之前检查；deny 时拦下这一轮（OpenClaw 在会话里用说明代替原来的消息）。
     // 接入层故障放行并记一行日志。需要 plugins.entries.h-guard.hooks.allowConversationAccess（install 写入）
     api.on('before_agent_run', async (event, ctx = {}) => {

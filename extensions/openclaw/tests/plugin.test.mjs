@@ -197,6 +197,27 @@ test('before_agent_run: a prompt with a credential is blocked; other prompts pas
   assert.equal(await hooks.before_agent_run({ prompt: '  ', messages: [] }, ctx()), undefined)
 })
 
+test('before_dispatch: a channel message with a credential is answered by h-guard and not dispatched', { skip: !haveGuard }, async () => {
+  const { hooks } = await plugin(guard('openclaw'))
+  const blocked = await hooks.before_dispatch({ content: KEY, body: KEY, channel: 'telegram', sessionKey: 'agent:main:main' }, { channelId: 'telegram', sessionKey: 'agent:main:main' })
+  assert.equal(blocked.handled, true)
+  assert.match(blocked.text, /^h-guard: /)
+  assert.equal(await hooks.before_dispatch({ content: 'fix the test', channel: 'telegram' }, { channelId: 'telegram' }), undefined)
+  assert.equal(await hooks.before_dispatch({ content: ' ' }, {}), undefined)
+})
+
+test('before_dispatch: content and body are both checked; a guard that cannot run lets the message through', async () => {
+  const { command, record } = await fake({ action: 'pass' })
+  const { hooks } = await plugin(command)
+  await hooks.before_dispatch({ content: 'hi', body: '[Telegram] hi\nquoted: x', channel: 'telegram' }, { channelId: 'telegram', sessionKey: 'agent:main:main' })
+  const [r] = await recorded(record)
+  assert.deepEqual(r.argv, ['--event', 'before_dispatch'])
+  assert.deepEqual(r.request.data, { prompt: 'hi\n[Telegram] hi\nquoted: x', sessionKey: 'agent:main:main', channel: 'telegram' })
+  const { hooks: h2, logs } = await plugin(missing)
+  assert.equal(await h2.before_dispatch({ content: KEY }, {}), undefined)
+  assert.match(logs[0], /could not finish its check/)
+})
+
 test('before_agent_run: a guard that cannot run lets the prompt through and logs', async () => {
   const { hooks, logs } = await plugin(missing)
   assert.equal(await hooks.before_agent_run({ prompt: KEY, messages: [] }, ctx({ trigger: 'user' })), undefined)

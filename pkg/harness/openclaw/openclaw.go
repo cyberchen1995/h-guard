@@ -1,5 +1,5 @@
 // Package openclaw 是 OpenClaw 的 adapter。h-guard 以原生插件接入 OpenClaw：插件在 before_tool_call、工具结果
-// middleware 与 before_agent_run 三处按扩展接入协议 v1 把事件交给 h-guard hook openclaw，再把回复翻译成 OpenClaw 的
+// middleware、before_agent_run 与 before_dispatch 四处按扩展接入协议 v1 把事件交给 h-guard hook openclaw，再把回复翻译成 OpenClaw 的
 // 决定（block、requireApproval、替换工具结果、拦下这一轮）。
 //
 // 请求的 data 是事件里能序列化的部分：
@@ -8,7 +8,9 @@
 //     （process.platform），execHost 是 exec 实际运行的位置（见 toolData）；
 //   - tool_result（工具结果 middleware）：{toolName, toolCallId, args, isError, platform}，result 是 {content}；
 //   - before_agent_run：{prompt, trigger, provenance, sessionKey, channel}，trigger 是这一轮的起因（user、cron、
-//     heartbeat 等），provenance 是用户消息的来源（external_user、inter_session、internal_system）。
+//     heartbeat 等），provenance 是用户消息的来源（external_user、inter_session、internal_system）；
+//   - before_dispatch：{prompt, sessionKey, channel}，渠道收到的消息在分派给 agent 之前（包括默认的 steer 队列模式下
+//     插进正在进行的运行、不经过 before_agent_run 的消息），按外部用户的输入检查。
 //
 // 导入本包即注册名为 openclaw 的 adapter。
 package openclaw
@@ -189,10 +191,13 @@ func (Adapter) Parse(raw []byte) (guard.Event, error) {
 			return guard.Event{}, err
 		}
 		ev.Actions = acts
-	case "before_agent_run":
+	case "before_agent_run", "before_dispatch":
 		var d runData
 		if err := json.Unmarshal(req.Data, &d); err != nil {
-			return guard.Event{}, fmt.Errorf("openclaw: before_agent_run data: %w", err)
+			return guard.Event{}, fmt.Errorf("openclaw: %s data: %w", req.Hook, err)
+		}
+		if req.Hook == "before_dispatch" { // 渠道收到的消息：外部用户发来的
+			d.Trigger, d.Provenance = "user", "external_user"
 		}
 		ev.Kind, ev.Text = guard.EventPrompt, d.Prompt
 		if strings.TrimSpace(d.Prompt) != "" {

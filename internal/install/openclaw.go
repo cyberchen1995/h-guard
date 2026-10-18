@@ -19,7 +19,7 @@ import (
 const openclawID = "h-guard"
 
 // openclawHooks 是插件用到、install 为它们写入超时的 hook。工具结果 middleware 的超时取 after_tool_call 的设置。
-var openclawHooks = []string{"before_tool_call", "before_agent_run", "after_tool_call"}
+var openclawHooks = []string{"before_tool_call", "before_agent_run", "before_dispatch", "after_tool_call"}
 
 // OpenClawHome 是 OpenClaw 的主目录：$OPENCLAW_HOME（开头的 ~ 展开到用户主目录），默认用户主目录。与 OpenClaw 一样，
 // 只有空白或是字面的 undefined、null 时当作没有设置。
@@ -306,7 +306,7 @@ func OpenClaw(t Target, remove bool) ([]Step, error) {
 		}
 		steps := []Step{plugin}
 		if eff.Err != nil || !st.complete(ms) {
-			steps = append(steps, Step{Path: config, Summary: manual + ", so h-guard does not edit it; add these settings yourself", Manual: openclawSnippet(dir, ms)})
+			steps = append(steps, Step{Path: config, Summary: manual + "; add these settings yourself", Manual: openclawSnippet(dir, ms)})
 		}
 		return steps, nil
 	}

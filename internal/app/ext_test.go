@@ -59,6 +59,8 @@ func TestExtHarnessHooks(t *testing.T) {
 		{"openclaw", "before_tool_call", map[string]any{"toolName": "read", "toolCallId": "c", "params": map[string]string{"path": "/w/.env"}}, "ask"},
 		{"openclaw", "before_tool_call", map[string]any{"toolName": "sessions_list", "toolCallId": "c", "params": map[string]string{}}, "pass"},
 		{"openclaw", "before_agent_run", map[string]any{"prompt": key, "trigger": "user"}, "deny"},
+		{"openclaw", "before_dispatch", map[string]any{"prompt": key, "channel": "telegram"}, "deny"},
+		{"openclaw", "before_dispatch", map[string]any{"prompt": "fix the test", "channel": "telegram"}, "pass"},
 	} {
 		out, errs, code := e.run(extReq(c.harness, c.hook, c.data), "hook", c.harness, "--event", c.hook)
 		if code != 0 {

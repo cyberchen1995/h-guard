@@ -45,7 +45,7 @@ var eventKinds = map[string]guard.EventKind{
 	"tool.execute.before": guard.EventAction, "tool.execute.after": guard.EventToolOutput, "chat.message": guard.EventPrompt, // opencode
 	"tool_call": guard.EventAction, "tool_result": guard.EventToolOutput, "input": guard.EventPrompt, // pi、omp
 	"tools/pre-execute": guard.EventAction, "tools/post-execute": guard.EventToolOutput, "agent/pre-step": guard.EventPrompt, // dsh
-	"before_tool_call": guard.EventAction, "before_agent_run": guard.EventPrompt, // openclaw（工具结果是 tool_result）
+	"before_tool_call": guard.EventAction, "before_agent_run": guard.EventPrompt, "before_dispatch": guard.EventPrompt, // openclaw（工具结果是 tool_result）
 }
 
 // budgets 由 --timeout 推出两个时间点：内部截止时间（经 context 传给各阶段）为 timeout 减 1 秒；

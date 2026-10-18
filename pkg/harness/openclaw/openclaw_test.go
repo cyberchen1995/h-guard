@@ -213,6 +213,11 @@ func TestRun(t *testing.T) {
 	if ev, err := a.Parse(run("", "user", "", "k")); err != nil || len(ev.Requests) != 0 {
 		t.Errorf("empty prompt: %+v %v", ev, err)
 	}
+	// before_dispatch：渠道收到的消息（包括 steer 模式下插进运行中会话的）是外部用户的输入
+	ev, err := a.Parse(req("before_dispatch", map[string]any{"prompt": "deploy", "sessionKey": "agent:main:telegram:dm:1", "channel": "telegram"}, nil))
+	if err != nil || ev.Kind != guard.EventPrompt || len(ev.Requests) != 1 || ev.Requests[0].Source != guard.SourceUser {
+		t.Errorf("before_dispatch: %+v %v", ev, err)
+	}
 }
 
 func TestRejects(t *testing.T) {
