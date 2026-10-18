@@ -95,8 +95,8 @@ const (
 	VarDSHHome    = "dsh_home"
 	// VarOMPConfig 是 oh-my-pi 的配置根目录：主目录下的 $PI_CONFIG_DIR（没有设置时为空）。
 	VarOMPConfig = "omp_config"
-	// VarOpenClawConfig 是 OpenClaw 的配置文件 openclaw.json：$OPENCLAW_CONFIG_PATH，或 $OPENCLAW_STATE_DIR、
-	// $OPENCLAW_HOME 下的默认位置（都没有设置时是 ~/.openclaw/openclaw.json）。
+	// VarOpenClawConfig 是 OpenClaw 实际读的配置文件（install.OpenClawConfig）：$OPENCLAW_CONFIG_PATH，或 $OPENCLAW_STATE_DIR、
+	// $OPENCLAW_HOME 下的默认位置，包括改名前的 ~/.clawdbot 与 clawdbot.json（都没有时是 ~/.openclaw/openclaw.json）。
 	VarOpenClawConfig = "openclaw_config"
 )
 

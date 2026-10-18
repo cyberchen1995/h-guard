@@ -325,3 +325,54 @@ func TestOpenClawStatus(t *testing.T) {
 		t.Errorf("status:\n%s", lines)
 	}
 }
+
+// TestOpenClawLegacy：升级来的安装没有 ~/.openclaw 时，OpenClaw 用改名前的 ~/.clawdbot，并在状态目录里依次找
+// openclaw.json 与 clawdbot.json；install 写进 OpenClaw 实际读的那个文件，status 注明这一点。
+func TestOpenClawLegacy(t *testing.T) {
+	tg := target(t, "linux")
+	legacy := filepath.Join(tg.Home, ".clawdbot")
+	os.MkdirAll(legacy, 0o700)
+	if got, want := OpenClawStateDir(tg), legacy; got != want {
+		t.Errorf("state dir %s, want %s", got, want)
+	}
+	if got, want := OpenClawConfig(tg), filepath.Join(legacy, "openclaw.json"); got != want {
+		t.Errorf("config %s, want %s", got, want)
+	}
+	writeFile(t, filepath.Join(legacy, "clawdbot.json"), `{"gateway": {"port": 18789}}`)
+	config := OpenClawConfig(tg)
+	if want := filepath.Join(legacy, "clawdbot.json"); config != want {
+		t.Fatalf("config %s, want %s", config, want)
+	}
+	apply(t, plan(t, tg, "openclaw", false))
+	m := readJSON(t, config)
+	if m["gateway"] == nil || m["plugins"].(map[string]any)["entries"].(map[string]any)["h-guard"] == nil {
+		t.Errorf("the legacy configuration was not edited: %v", m)
+	}
+	if lines := strings.Join(Inspect(tg, "openclaw"), "\n"); !strings.Contains(lines, "note: OpenClaw uses the configuration from before its rename, "+config) {
+		t.Errorf("status:\n%s", lines)
+	}
+
+	// ~/.openclaw 存在时它优先，里面的 clawdbot.json 先于 ~/.clawdbot 的文件
+	dir := filepath.Join(tg.Home, ".openclaw")
+	os.MkdirAll(dir, 0o700)
+	if got := OpenClawStateDir(tg); got != dir {
+		t.Errorf("state dir %s, want %s", got, dir)
+	}
+	writeFile(t, filepath.Join(dir, "clawdbot.json"), `{}`)
+	if got, want := OpenClawConfig(tg), filepath.Join(dir, "clawdbot.json"); got != want {
+		t.Errorf("config %s, want %s", got, want)
+	}
+	writeFile(t, filepath.Join(dir, "openclaw.json"), `{}`)
+	if got, want := OpenClawConfig(tg), filepath.Join(dir, "openclaw.json"); got != want {
+		t.Errorf("config %s, want %s", got, want)
+	}
+	// OPENCLAW_STATE_DIR 里没有配置文件时，OpenClaw 接着找默认位置
+	tg.Getenv = env(map[string]string{"OPENCLAW_STATE_DIR": filepath.Join(tg.Home, "state")})
+	if got, want := OpenClawConfig(tg), filepath.Join(dir, "openclaw.json"); got != want {
+		t.Errorf("config with an empty OPENCLAW_STATE_DIR %s, want %s", got, want)
+	}
+	writeFile(t, filepath.Join(tg.Home, "state", "clawdbot.json"), `{}`)
+	if got, want := OpenClawConfig(tg), filepath.Join(tg.Home, "state", "clawdbot.json"); got != want {
+		t.Errorf("config %s, want %s", got, want)
+	}
+}

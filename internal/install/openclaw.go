@@ -49,21 +49,58 @@ func openclawAbs(home, p string) string {
 	return p
 }
 
-// OpenClawStateDir 是 OpenClaw 的状态目录：$OPENCLAW_STATE_DIR，默认 <主目录>/.openclaw。--profile 选择的其他配置档
+// openclawLegacyDir 与 openclawLegacyConfig 是 OpenClaw 改名前（Clawdbot）的状态目录与配置文件名，升级来的安装还在用。
+const (
+	openclawLegacyDir    = ".clawdbot"
+	openclawLegacyConfig = "clawdbot.json"
+)
+
+// OpenClawStateDir 是 OpenClaw 的状态目录：$OPENCLAW_STATE_DIR；没有设置时是 <主目录>/.openclaw，它不存在而改名前的
+// <主目录>/.clawdbot 存在时用后者（与 OpenClaw 2026.10.4 的 resolveStateDir 一样）。--profile 选择的其他配置档
 // （~/.openclaw-<名字>）不在这里，要用 OPENCLAW_STATE_DIR 或 OPENCLAW_CONFIG_PATH 指过去。
 func OpenClawStateDir(t Target) string {
 	if d := strings.TrimSpace(t.Getenv("OPENCLAW_STATE_DIR")); d != "" {
 		return openclawPath(t, d)
 	}
-	return filepath.Join(OpenClawHome(t), ".openclaw")
+	dir := filepath.Join(OpenClawHome(t), ".openclaw")
+	if !exists(dir) {
+		if legacy := filepath.Join(OpenClawHome(t), openclawLegacyDir); exists(legacy) {
+			return legacy
+		}
+	}
+	return dir
 }
 
-// OpenClawConfig 是 OpenClaw 的配置文件：$OPENCLAW_CONFIG_PATH，默认 <状态目录>/openclaw.json。
+// OpenClawConfig 是 OpenClaw 的配置文件，按 OpenClaw 2026.10.4 选择配置的方式（resolveConfigPathCandidate）：
+// $OPENCLAW_CONFIG_PATH；没有设置时依次在 $OPENCLAW_STATE_DIR（设置了时）、<主目录>/.openclaw、<主目录>/.clawdbot 里找
+// openclaw.json 与改名前的 clawdbot.json，取第一个存在的；都不存在时是 <状态目录>/openclaw.json。
 func OpenClawConfig(t Target) string {
 	if p := strings.TrimSpace(t.Getenv("OPENCLAW_CONFIG_PATH")); p != "" {
 		return openclawPath(t, p)
 	}
+	var dirs []string
+	if d := strings.TrimSpace(t.Getenv("OPENCLAW_STATE_DIR")); d != "" {
+		dirs = append(dirs, openclawPath(t, d))
+	}
+	dirs = append(dirs, filepath.Join(OpenClawHome(t), ".openclaw"), filepath.Join(OpenClawHome(t), openclawLegacyDir))
+	for _, d := range dirs {
+		for _, name := range []string{"openclaw.json", openclawLegacyConfig} {
+			if p := filepath.Join(d, name); exists(p) {
+				return p
+			}
+		}
+	}
 	return filepath.Join(OpenClawStateDir(t), "openclaw.json")
+}
+
+// openclawLegacy 报告配置文件是不是改名前的位置（.clawdbot 目录里，或叫 clawdbot.json）。
+func openclawLegacy(config string) bool {
+	return filepath.Base(config) == openclawLegacyConfig || filepath.Base(filepath.Dir(config)) == openclawLegacyDir
+}
+
+func exists(p string) bool {
+	_, err := os.Stat(p)
+	return err == nil
 }
 
 // OpenClawPluginDir 是写出的插件目录：<config_dir>/extensions/openclaw。
@@ -361,6 +398,9 @@ func readOpenClawState(b []byte, dir string, same func(a, b string) bool, expand
 // OpenClawNotes 返回 install 与 status 共用的提醒：OpenClaw 的版本、停用了全部插件、用 --profile 选择的配置档。
 func OpenClawNotes(t Target) []string {
 	notes := ExtNotes(t, "openclaw")
+	if config := OpenClawConfig(t); openclawLegacy(config) && strings.TrimSpace(t.Getenv("OPENCLAW_CONFIG_PATH")) == "" {
+		notes = append(notes, fmt.Sprintf("OpenClaw uses the configuration from before its rename, %s, so h-guard installs there", config))
+	}
 	if b, err := os.ReadFile(OpenClawConfig(t)); err == nil {
 		if st, err := readOpenClawState(b, OpenClawPluginDir(t), t.samePath, func(p string) string { return openclawPath(t, p) }); err == nil && st.disabled {
 			notes = append(notes, fmt.Sprintf("plugins.enabled is false in %s, so OpenClaw loads no plugins, h-guard's included", OpenClawConfig(t)))

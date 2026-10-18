@@ -77,9 +77,10 @@ minor releases. Every such change is recorded in this file.
   (`plugins.entries.h-guard.config.notify` in OpenClaw's configuration) sends
   denials and warnings to chats with `openclaw message send`.
 - The locked `guard_tampering` rule also protects `openclaw.json` (including
-  `OPENCLAW_CONFIG_PATH`, `OPENCLAW_STATE_DIR` and named profiles), the
-  `~/.openclaw` directory, and OpenClaw commands that change plugin settings or
-  disable the plugin, reset or uninstall OpenClaw's configuration and state
+  `OPENCLAW_CONFIG_PATH`, `OPENCLAW_STATE_DIR`, named profiles and the
+  pre-rename `clawdbot.json`), the `~/.openclaw` and `~/.clawdbot`
+  directories, and OpenClaw commands that change plugin settings or disable
+  the plugin, reset or uninstall OpenClaw's configuration and state
   (`openclaw reset`, `openclaw uninstall --state`/`--all`, `--reset` on
   `onboard`, `setup` and `gateway`). Path patterns can use `{openclaw_config}`.
 

@@ -353,10 +353,14 @@ model server); no recorded sessions yet.
    is kept, and so are other keys of the entry, such as the notification
    settings below.
 
-`openclaw.json` is `$OPENCLAW_CONFIG_PATH`, or `openclaw.json` in
-`$OPENCLAW_STATE_DIR` (default `~/.openclaw`; `$OPENCLAW_HOME` replaces `~`;
-as in OpenClaw, a blank `OPENCLAW_HOME` or the literal `undefined` or `null`
-counts as unset).
+`openclaw.json` is the file OpenClaw itself reads: `$OPENCLAW_CONFIG_PATH`,
+else the first that exists of `openclaw.json` and the pre-rename
+`clawdbot.json` in `$OPENCLAW_STATE_DIR` (when set), `~/.openclaw` and the
+pre-rename `~/.clawdbot`, else `openclaw.json` in the state directory
+(`$OPENCLAW_STATE_DIR`, or `~/.openclaw`, or `~/.clawdbot` when only that
+exists). `$OPENCLAW_HOME` replaces `~`; as in OpenClaw, a blank
+`OPENCLAW_HOME` or the literal `undefined` or `null` counts as unset.
+`h-guard status` notes when the pre-rename configuration is in use.
 Restart the Gateway afterwards (`openclaw gateway restart`). Removing deletes
 the load path and the entry (and `h-guard` from `plugins.allow` when other
 plugins remain listed there), then the plugin.
