@@ -658,3 +658,37 @@ func TestStatusListsExtensionHarnesses(t *testing.T) {
 		}
 	}
 }
+
+// TestStatusNotesOneSidedCategories：类别的规则只扫工具输出（或只扫提示词）时，保护摘要注明，不说成两边都受保护。
+func TestStatusNotesOneSidedCategories(t *testing.T) {
+	e := newEnv(t)
+	dir := filepath.Join(e.configDir, "rules")
+	os.MkdirAll(dir, 0o700)
+	os.WriteFile(filepath.Join(dir, "falcon.yaml"), []byte("schema: 1\nid: acme.codename\ncategory: acme-codename\non: [tool_output]\n"+
+		"match: {regex: ['\\bProject Falcon\\b']}\n"), 0o600)
+	e.config("version: 1\noutbound: {tier: 2, categories: {acme-codename: {action: deny}}}\n")
+	out, _, _ := e.run(nil, "status")
+	if !strings.Contains(out, "acme-codename deny (tool output only)") || strings.Contains(out, "credentials deny (") {
+		t.Errorf("status:\n%s", out)
+	}
+}
+
+// TestStatusListsBrokenExtensionHarnesses：DeepSeek Harness 的补丁文件读不了时保护摘要也列出它，并注明有问题。
+func TestStatusListsBrokenExtensionHarnesses(t *testing.T) {
+	e := hostInstallEnv(t)
+	os.MkdirAll(filepath.Join(e.home, ".dsh"), 0o700)
+	os.WriteFile(filepath.Join(e.home, ".dsh", "cordis.patch.yml"), []byte("{not: [yaml\n"), 0o600)
+	if out, _, _ := e.run(nil, "status"); !strings.Contains(out, "  dsh: config written: yes, with problems") {
+		t.Errorf("status:\n%s", out)
+	}
+}
+
+// TestStatusEscapesTheTestedVersion：自测记下的版本来自被测入口，显示前转义控制字符。
+func TestStatusEscapesTheTestedVersion(t *testing.T) {
+	e := hostInstallEnv(t)
+	e.run(nil, "install", "codex", "--write", "--shell", "posix")
+	seen.WriteSelftest(seen.Dir(e.cache), "codex", seen.Selftest{At: time.Now().UTC(), Version: "x\x1b[2Jy", Passed: true})
+	if out, _, _ := e.run(nil, "status"); strings.Contains(out, "\x1b") || !strings.Contains(out, "tested h-guard x") {
+		t.Errorf("status: %q", out)
+	}
+}

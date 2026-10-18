@@ -328,7 +328,8 @@ func runSelftest(args []string, o Options) int {
 		if testedVersion != buildID() {
 			// 验证的不是这个 h-guard：自测不算通过，记下被测的版本，status 据此说明
 			st.Version, st.Passed = testedVersion, false
-			fmt.Fprintf(o.Stdout, "  FAIL the installed entries run h-guard %s, not this h-guard (%s); reinstall with this h-guard\n", testedVersion, buildID())
+			// 版本来自被测入口写的记录：原样比较，显示前转义控制字符
+			fmt.Fprintf(o.Stdout, "  FAIL the installed entries run h-guard %s, not this h-guard (%s); reinstall with this h-guard\n", action.Visible(testedVersion), buildID())
 		}
 		if !st.Passed {
 			failed++

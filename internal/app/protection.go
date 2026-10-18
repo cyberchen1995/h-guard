@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cyberchen1995/h-guard/internal/check/action"
 	"github.com/cyberchen1995/h-guard/internal/install"
 	"github.com/cyberchen1995/h-guard/internal/rules"
 	"github.com/cyberchen1995/h-guard/internal/seen"
@@ -22,7 +23,8 @@ func statusProtection(s setup, o Options) {
 		for _, h := range installable {
 			if h != "claudecode" && h != "codex" {
 				// 扩展协议的 harness 只写配置这一层，装了才列出：运行记录与自测目前只覆盖 Claude Code 与 Codex
-				if lines := install.Inspect(t, h); len(lines) > 0 && strings.HasPrefix(lines[0], "installed") {
+				// 只有「not installed」算没装：配置读不了（problem: 开头）的也要列出来
+				if lines := install.Inspect(t, h); len(lines) > 0 && !strings.HasPrefix(lines[0], "not installed") {
 					fmt.Fprintf(o.Stdout, "  %s: %s | hook running: not tracked for %s | self-test: not available for %s\n", h, configWritten(lines, h), h, h)
 				}
 				continue
@@ -61,7 +63,7 @@ func statusProtection(s setup, o Options) {
 	}
 	if o.Home != "" && guard.Decision(s.cfg.Policy.WhenAskUnsupported) != guard.DecisionPass {
 		t := install.Target{Home: o.Home, ConfigDir: o.ConfigDir, CacheDir: o.CacheDir, GOOS: o.GOOS, Getenv: o.Getenv, Now: o.Now}
-		if lines := install.Inspect(t, "opencode"); len(lines) > 0 && strings.HasPrefix(lines[0], "installed") {
+		if lines := install.Inspect(t, "opencode"); len(lines) > 0 && !strings.HasPrefix(lines[0], "not installed") {
 			fmt.Fprintln(o.Stdout, "  opencode: cannot ask either, so every ask blocks; one-time approvals are only offered on Codex")
 		}
 	}
@@ -111,7 +113,7 @@ func harnessLayers(t install.Target, o Options, h, extra string) []string {
 		case st.At.Before(installed):
 			test += " (before the last install; run h-guard selftest " + h + ")"
 		case st.Version != buildID():
-			test += " (tested h-guard " + st.Version + ", not this one; reinstall with this h-guard, then run h-guard selftest " + h + ")"
+			test += " (tested h-guard " + action.Visible(st.Version) + ", not this one; reinstall with this h-guard, then run h-guard selftest " + h + ")"
 		case st.Config != configFingerprint(o):
 			test += " (the config or rules changed since; run h-guard selftest " + h + ")"
 		case extra != "":
@@ -187,16 +189,30 @@ func fileKindsCovered(r *rules.Rule, tier int) bool {
 // outboundCoverage 是生效的 outbound 类别与动作。
 // judgeUsable 是判断后端真的能用：只靠类别题的类别只有这时才被检查。
 func outboundCoverage(s setup, judgeUsable bool) []string {
-	active := map[string]bool{}
+	// 记下每个类别的规则扫描哪类事件：只扫其中一类的类别要注明，不能说成提示词与工具输出都受保护
+	active := map[string]map[guard.EventKind]bool{}
 	for _, r := range s.rules.Outbound() {
 		if rules.OutboundStateOf(r, s.cfg.Outbound.Tier, s.cfg.Category(r.Category).Enabled).Effective {
-			active[r.Category] = true
+			if active[r.Category] == nil {
+				active[r.Category] = map[guard.EventKind]bool{}
+			}
+			for _, k := range []guard.EventKind{guard.EventPrompt, guard.EventToolOutput} {
+				if r.AppliesTo(k) {
+					active[r.Category][k] = true
+				}
+			}
 		}
 	}
 	var out []string
 	for _, name := range slices.Sorted(maps.Keys(active)) {
 		a := s.cfg.Category(name).Action
 		entry := name + " " + string(a)
+		switch kinds := active[name]; {
+		case kinds[guard.EventPrompt] && !kinds[guard.EventToolOutput]:
+			entry += " (prompts only)"
+		case !kinds[guard.EventPrompt] && kinds[guard.EventToolOutput]:
+			entry += " (tool output only)"
+		}
 		if a == guard.DecisionWarn {
 			entry += " (not shown on Codex or DeepSeek Harness)" // 这两个 harness 显示不了提示
 		}
@@ -205,7 +221,7 @@ func outboundCoverage(s setup, judgeUsable bool) []string {
 	// 只有类别题、没有本地规则的类别由模型检查，命中只提示；Codex 与 DeepSeek Harness 显示不了提示，在那里不检查
 	if judgeUsable && s.cfg.OutboundJudge() {
 		for _, name := range slices.Sorted(maps.Keys(s.cfg.Outbound.Categories)) {
-			if c := s.cfg.Category(name); c.Enabled && c.Question != nil && !active[name] {
+			if c := s.cfg.Category(name); c.Enabled && c.Question != nil && active[name] == nil {
 				out = append(out, name+" warn (judge only, not on Codex or DeepSeek Harness)")
 			}
 		}
