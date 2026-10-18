@@ -269,7 +269,7 @@ The built-in extensions send these hooks:
 | `dsh` | `agent/pre-step` | `{messages: [{source: {kind}, content}], session: {origin, delegationDepth}}` | |
 | `hermes` | `pre_tool_call` | `{tool_name, args, tool_call_id, approval, backend}`; `approval` is how Hermes would handle an approval request (`prompt`, `blocked`, `auto`, or empty when unknown) | |
 | `hermes` | `transform_tool_result`, `transform_terminal_output` | `{tool_name, args, tool_call_id, status}`, or `{command, returncode, env_type}` for background process output | `{content}`: the result string |
-| `hermes` | `post_gateway_admission`, `pre_llm_call` | `{text, platform, is_bot}`, or `{text, platform, parent_session_id}` | |
+| `hermes` | `post_gateway_admission`, `pre_llm_call` | `{text, platform, is_bot}`, or `{text, platform, parent_session_id, is_bot}`; the plugin records `is_bot` on `pre_gateway_dispatch`, which it only observes | |
 
 Only text content blocks are passed on; images are left out.
 

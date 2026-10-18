@@ -380,7 +380,10 @@ Hermes differences:
   requested for tool output; prompt warnings reach the model as context.
 - **Prompt origin.** A sub-agent's task (`delegate_task`), a cron job's prompt,
   a webhook payload and a message from another bot count as automated;
-  everything else counts as yours. Messages that a plugin injects into a
+  everything else counts as yours. Hermes marks bot messages only on the
+  event that `pre_gateway_dispatch` sees, so the plugin also registers that
+  hook, only to record them; a person's message with the same text on the
+  same platform then counts as automated too. Messages that a plugin injects into a
   session cannot be told apart and count as yours.
 - **Shell and paths.** `terminal` runs a bash-compatible shell everywhere (Git
   Bash on Windows), so commands are checked as POSIX. The working directory is

@@ -3,6 +3,7 @@
 #
 # 本目录由 h-guard install hermes 写到 $HERMES_HOME/plugins/h-guard/，并加进 config.yaml 的 plugins.enabled；
 # CONFIG 一行由 install 填写。只用标准库。h-guard 直接以子进程启动，不经 Hermes 的终端后端。
+import collections
 import hashlib
 import json
 import logging
@@ -30,11 +31,15 @@ PROMPT_NOTICE = 'Do not repeat, store or act on the sensitive content of the use
 LOCAL_SURFACES = ('', 'cli', 'tui', 'desktop', 'acp', 'local', 'api_server', 'webhook', 'msgraph_webhook', 'cron', 'subagent')
 NOTIFY_TIMEOUT_S = 30
 NOTIFY_MAX_CHARS = 1500
+# 记下的机器人消息（见 pre_gateway_dispatch）的上限，超过时丢掉最早的
+BOT_MESSAGES_MAX = 1000
 # 测试替换它（hermes send 的命令前缀）；None 时用 PATH 上的 hermes，找不到时用当前的 Python 运行 hermes_cli.main
 SEND_COMMAND = None
 
 log = logging.getLogger(__name__)
 _ctx = None
+_bot_messages = collections.OrderedDict()
+_bot_lock = threading.Lock()
 
 
 def register(ctx):
@@ -43,6 +48,7 @@ def register(ctx):
     ctx.register_hook('pre_tool_call', pre_tool_call)
     ctx.register_hook('transform_tool_result', transform_tool_result)
     ctx.register_hook('transform_terminal_output', transform_terminal_output)
+    ctx.register_hook('pre_gateway_dispatch', pre_gateway_dispatch)
     ctx.register_hook('post_gateway_admission', post_gateway_admission)
     ctx.register_hook('pre_llm_call', pre_llm_call)
 
@@ -126,6 +132,57 @@ def _output_reply(reply, tool, wrap):
     return None
 
 
+def pre_gateway_dispatch(**kw):
+    """只观察，不改变流程：记下消息平台上机器人或 webhook 发的消息（event.source.is_bot）。post_gateway_admission 拿到的
+    source 快照与 pre_llm_call 的参数里都没有这一项；不记下的话，机器人的「push main」会被当作用户本人的指令。"""
+    try:
+        event = kw.get('event')
+        src = getattr(event, 'source', None)
+        if src is None or not getattr(src, 'is_bot', False):
+            return None
+        platform = _platform_name(getattr(src, 'platform', ''))
+        keys = [_bot_key(platform, 'text', getattr(event, 'text', '') or '')]
+        mid = getattr(event, 'message_id', None) or getattr(src, 'message_id', None)
+        if mid:
+            keys.append(_bot_key(platform, 'message', str(getattr(src, 'chat_id', '') or '') + '\n' + str(mid)))
+        with _bot_lock:
+            for k in keys:
+                _bot_messages.pop(k, None)
+                _bot_messages[k] = True
+            while len(_bot_messages) > BOT_MESSAGES_MAX:
+                _bot_messages.popitem(last=False)
+    except Exception:
+        log.debug('h-guard: could not read the message source')
+    return None
+
+
+def _platform_name(p):
+    return str(getattr(p, 'value', p) or '').lower()
+
+
+def _bot_key(platform, kind, value):
+    return hashlib.sha256((platform + '\n' + kind + '\n' + value).encode('utf-8')).hexdigest()
+
+
+def _from_bot(platform, text, chat_id, message_id):
+    """这条消息是不是 pre_gateway_dispatch 记下的机器人消息：按平台与文本，或平台、对话与消息 id。同样文本的用户消息
+    也会按自动消息处理，属于安全方向。"""
+    platform = _platform_name(platform)
+    keys = [_bot_key(platform, 'text', text)]
+    if message_id:
+        keys.append(_bot_key(platform, 'message', str(chat_id or '') + '\n' + str(message_id)))
+    with _bot_lock:
+        return any(k in _bot_messages for k in keys)
+
+
+def _session_env(name):
+    try:
+        from gateway.session_context import get_session_env
+        return get_session_env(name, '') or ''
+    except Exception:
+        return ''
+
+
 def post_gateway_admission(**kw):
     """消息平台上的提示词：通过授权之后、交给 agent 之前检查；deny 时消费这条消息，把原因作为回复发回这个对话。
     warn 由这一轮的 pre_llm_call 交给模型。接入层故障放行并记一行日志（Hermes 对这个 hook 本来就是 fail-open）。"""
@@ -135,7 +192,8 @@ def post_gateway_admission(**kw):
     source = kw.get('source') if isinstance(kw.get('source'), dict) else {}
     try:
         reply = _call('post_gateway_admission', kw.get('session_key') or HARNESS + '-' + str(os.getpid()), {
-            'data': {'text': text, 'platform': kw.get('platform') or '', 'is_bot': bool(source.get('is_bot'))},
+            'data': {'text': text, 'platform': kw.get('platform') or '',
+                     'is_bot': bool(source.get('is_bot')) or _from_bot(kw.get('platform') or '', text, source.get('chat_id'), kw.get('message_id'))},
         }, '')
         if reply['action'] in ('deny', 'ask'):
             log.warning('h-guard: %s', _message_of(reply))
@@ -154,8 +212,10 @@ def pre_llm_call(**kw):
     if text.strip() == '':
         return None
     try:
+        platform = kw.get('platform') or ''
+        is_bot = _from_bot(platform, text, _session_env('HERMES_SESSION_CHAT_ID'), _session_env('HERMES_SESSION_MESSAGE_ID'))
         reply = _call('pre_llm_call', _session(kw), {
-            'data': {'text': text, 'platform': kw.get('platform') or '', 'parent_session_id': kw.get('parent_session_id') or ''},
+            'data': {'text': text, 'platform': platform, 'parent_session_id': kw.get('parent_session_id') or '', 'is_bot': is_bot},
         }, _cwd(kw))
         if reply['action'] in ('deny', 'ask', 'warn'):
             log.warning('h-guard: %s', _message_of(reply))

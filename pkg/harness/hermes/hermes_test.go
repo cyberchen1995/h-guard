@@ -204,6 +204,7 @@ func TestPrompts(t *testing.T) {
 		prompt(hermes.HookPreLLMCall, "task", "subagent", "parent-1"), prompt(hermes.HookPreLLMCall, "task", "cli", "parent-1"),
 		prompt(hermes.HookPreLLMCall, "nightly", "cron", ""), prompt(hermes.HookPreLLMCall, "payload", "webhook", ""),
 		req(hermes.HookAdmission, map[string]any{"text": "hi", "platform": "discord", "is_bot": true}, nil),
+		req(hermes.HookPreLLMCall, map[string]any{"text": "push main", "platform": "discord", "is_bot": true}, nil),
 	} {
 		if ev, err := a.Parse(in); err != nil || ev.Requests[0].Source != guard.SourceAutomated {
 			t.Errorf("automated: %+v %v", ev, err)

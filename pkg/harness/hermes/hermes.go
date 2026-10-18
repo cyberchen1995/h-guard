@@ -12,8 +12,9 @@
 //   - transform_terminal_output：后台进程的输出（前台命令的输出由 transform_tool_result 检查），{command, returncode,
 //     env_type}，result 是 {content}；
 //   - post_gateway_admission：消息平台上通过授权的消息，{text, platform, is_bot}；
-//   - pre_llm_call：每一轮交给模型之前的用户消息，{text, platform, parent_session_id}。这一步挡不住提示词，只能
-//     给模型补一段说明。
+//   - pre_llm_call：每一轮交给模型之前的用户消息，{text, platform, parent_session_id, is_bot}。这一步挡不住提示词，
+//     只能给模型补一段说明。两个提示词 hook 的参数里都没有消息是否由机器人发出，is_bot 由插件在 pre_gateway_dispatch
+//     （只观察）里记下。
 //
 // 导入本包即注册名为 hermes 的 adapter。
 package hermes

@@ -134,7 +134,8 @@ class RealGuard(unittest.TestCase, WithApproval):
 class Plugin(unittest.TestCase, WithApproval):
     def test_registers_the_hooks(self):
         _, ctx = load(MISSING)
-        self.assertEqual(sorted(ctx.hooks), ['post_gateway_admission', 'pre_llm_call', 'pre_tool_call', 'transform_terminal_output', 'transform_tool_result'])
+        self.assertEqual(sorted(ctx.hooks), ['post_gateway_admission', 'pre_gateway_dispatch', 'pre_llm_call', 'pre_tool_call',
+                                             'transform_terminal_output', 'transform_tool_result'])
 
     def test_request_shape(self):
         command, record = fake({'action': 'pass'})
@@ -246,6 +247,28 @@ class Plugin(unittest.TestCase, WithApproval):
                     sys.modules.pop(k, None)
                 else:
                     sys.modules[k] = v
+
+    def test_bot_provenance(self):
+        # post_gateway_admission 的 source 快照与 pre_llm_call 的参数里都没有 is_bot：由 pre_gateway_dispatch 记下
+        command, record = fake({'action': 'pass'})
+        mod, ctx = load(command)
+        mod._session_env = lambda name: ''
+        src = types.SimpleNamespace(platform=types.SimpleNamespace(value='discord'), chat_id='c1', is_bot=True, message_id=None)
+        self.assertIsNone(ctx.hooks['pre_gateway_dispatch'](event=types.SimpleNamespace(text='push main', source=src, message_id='m1'),
+                                                            gateway=None, session_store=None))
+        human = types.SimpleNamespace(platform=types.SimpleNamespace(value='discord'), chat_id='c1', is_bot=False, message_id=None)
+        ctx.hooks['pre_gateway_dispatch'](event=types.SimpleNamespace(text='deploy', source=human, message_id='m2'), gateway=None, session_store=None)
+        ctx.hooks['post_gateway_admission'](session_key='k', platform='discord', source={'chat_id': 'c1'}, message_id='m1', text='push main')
+        ctx.hooks['pre_llm_call'](session_id='s1', user_message='push main', platform='discord')
+        ctx.hooks['pre_llm_call'](session_id='s1', user_message='deploy', platform='discord')
+        ctx.hooks['pre_llm_call'](session_id='s1', user_message='push main', platform='telegram')
+        got = [(r['request']['hook'], r['request']['data']['is_bot']) for r in recorded(record)]
+        self.assertEqual(got, [('post_gateway_admission', True), ('pre_llm_call', True), ('pre_llm_call', False), ('pre_llm_call', False)])
+        # 文本不同时按对话与消息 id 认出
+        env = {'HERMES_SESSION_CHAT_ID': 'c1', 'HERMES_SESSION_MESSAGE_ID': 'm1'}
+        mod._session_env = lambda name: env.get(name, '')
+        ctx.hooks['pre_llm_call'](session_id='s1', user_message='[bot] push main', platform='discord')
+        self.assertTrue(recorded(record)[-1]['request']['data']['is_bot'])
 
     def test_approval_state_outside_hermes(self):
         mod, _ = load(MISSING)
