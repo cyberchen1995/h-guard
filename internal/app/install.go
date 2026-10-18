@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/cyberchen1995/h-guard/internal/install"
+	"github.com/cyberchen1995/h-guard/internal/seen"
 	"github.com/cyberchen1995/h-guard/pkg/detect/secrets"
 	"github.com/cyberchen1995/h-guard/pkg/guard"
 )
@@ -103,6 +104,7 @@ func runInstall(args []string, o Options) int {
 		}
 	}
 	return applySteps(o, steps, *write, *remove, func() int {
+		forgetRuns(o, harness)
 		if *remove {
 			fmt.Fprintln(o.Stdout, "restart Claude Code for the change to take effect")
 			return 0
@@ -157,11 +159,20 @@ func installWithShell(o Options, t install.Target, harness, product string, step
 		}
 	}
 	return applySteps(o, steps, write, remove, func() int {
+		forgetRuns(o, harness)
 		if harness == "opencode" {
 			fmt.Fprintln(o.Stdout, "restart opencode for the change to take effect")
 		}
 		return 0
 	})
+}
+
+// forgetRuns 在写入入口之后删除 harness 的运行记录：之前一分钟内的记录会让新入口的第一次运行被节流掉、
+// 又因为早于安装而不算数，status 就一直以为新入口没运行过。
+func forgetRuns(o Options, harness string) {
+	if o.CacheDir != "" {
+		_ = seen.Clear(seen.Dir(o.CacheDir), harness)
+	}
 }
 
 // installExt 写出或删掉 pi、omp 的扩展，DeepSeek Harness 与 OpenClaw 的插件。

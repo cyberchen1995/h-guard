@@ -7,6 +7,12 @@ requires_judge: true
 reason:
   en: 'Publishes to or changes state on a remote (push, PR/MR, release, registry, mutating API call)'
   zh-CN: '向远端发布或修改远端状态（push、PR/MR、release、registry、写 API）'
+impact:
+  en: 'Others can see the result (a pushed branch, a pull request, a release or a package), and it is hard to take back.'
+  zh-CN: '结果会被别人看到（推送的分支、PR、release 或发布的包），而且很难撤回。'
+advice:
+  en: 'Check the target and the content first (git log @{u}.., the package version), and publish only when you mean to.'
+  zh-CN: '先核对目标与内容（git log @{u}..、包的版本号），确定要发布时再发布。'
 match:
   exec:
     # any 组沿用 Python 版正则，两种 shell 都适用（不拆分，只收紧）；PowerShell 专有的写法在 powershell 组

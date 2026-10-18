@@ -7,6 +7,12 @@ locked: true
 reason:
   en: 'Catastrophic operation: deleting the root or home directory, overwriting a block device, or formatting a file system'
   zh-CN: '灾难性操作：删除根目录或家目录、覆写块设备、格式化文件系统'
+impact:
+  en: 'It would destroy data that cannot be recovered: a whole file system, the home directory or a device.'
+  zh-CN: '会销毁无法恢复的数据：整个文件系统、家目录或一个设备。'
+advice:
+  en: 'If this is really intended, the user should run it themselves after checking the target.'
+  zh-CN: '确实需要时，由用户核对目标后自己运行。'
 match:
   exec:
     # any 组沿用 Python 版正则，两种 shell 都适用（不拆分，只收紧）；PowerShell 专有的写法在 powershell 组

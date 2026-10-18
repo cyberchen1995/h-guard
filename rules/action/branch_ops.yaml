@@ -7,6 +7,12 @@ requires_judge: true
 reason:
   en: 'Rewrites history, force-deletes a branch, changes an upstream, or creates a tracking branch'
   zh-CN: '改写历史、强制删分支、改 upstream 或创建跟踪分支'
+impact:
+  en: 'Commits on the rewritten or deleted branch can disappear from the branch (and from the remote after a push).'
+  zh-CN: '被改写或删除的分支上的提交可能从分支上消失（推送后远端也一样）。'
+advice:
+  en: 'Note the current commit first (git rev-parse HEAD) or create a backup branch (git branch backup-<name>).'
+  zh-CN: '先记下当前提交（git rev-parse HEAD）或建一个备份分支（git branch backup-<name>）。'
 match:
   exec:
     # any 组沿用 Python 版正则，两种 shell 都适用（不拆分，只收紧）；PowerShell 专有的写法在 powershell 组
