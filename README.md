@@ -90,7 +90,32 @@ h-guard install codex --write         # Codex: registers hooks in ~/.codex/hooks
 For Codex, open Codex and run `/hooks` to review and trust the h-guard hooks.
 Codex does not run new or changed hooks until you trust them.
 
-Turn on the model and check the setup:
+Check that it protects you. `selftest` runs the entries the harness will run,
+with a simulated `rm -rf /` (never executed) and a prompt with a made-up API
+key, and checks that both are blocked:
+
+```sh
+h-guard selftest  # end-to-end check of the installed entries; nothing is executed or sent
+h-guard status    # starts with a protection summary
+```
+
+`status` starts with what you are actually protected by. For each harness it
+shows three separate layers: the configuration is written, the harness has
+really run the hook (Codex shows "unverified" until it runs one, since h-guard
+cannot read Codex's trust state), and the last self-test passed. Then it lists
+which rules interrupt, which only log, which are off, and what is not covered:
+
+```console
+protection:
+  claudecode: config written: yes | hook running: yes, last 2 min ago (PreToolUse, prompt.submit, tool.result) | self-test: passed 3 min ago
+  codex: config written: yes | hook running: unverified (Codex has not run the hooks since they were installed; trust them with /hooks in Codex) | self-test: passed 3 min ago
+  interrupts: catastrophic (deny), fork_bomb (deny), guard_tampering (ask), obfuscated_exec (ask), sensitive_read (ask, file tools only)
+  matched but not interrupting, and not recorded (log.decisions is off) (judge off; h-guard init turns it on): branch_ops, destructive_git, publish, recursive_delete, verify_bypass
+  prompts and tool output: credentials deny, private_key deny (scans prompts)
+  not covered: shell commands that read secret files (cat ~/.ssh/id_rsa): ...
+```
+
+Turn on the model:
 
 ```sh
 h-guard init      # pick a backend, see what it receives, consent, turn the judge on
@@ -103,7 +128,7 @@ Try a command without a harness. `check` runs the same checks as the hook;
 ```console
 $ h-guard check 'rm -rf /' --no-judge
 decision: deny
-reason: Blocked: Catastrophic operation: deleting the root or home directory, overwriting a block device, or formatting a file system [rule].
+reason: Blocked: Catastrophic operation: deleting the root or home directory, overwriting a block device, or formatting a file system [rule]. Operation: `rm -rf /`. Impact: It would destroy data that cannot be recovered: a whole file system, the home directory or a device. Safer way: If this is really intended, the user should run it themselves after checking the target.
 hint: Ask the user to run it themselves.
 finding: catastrophic (local)
 finding: recursive_delete (local)
@@ -118,6 +143,41 @@ The second command matches `publish`, but with the model off that rule does not
 interrupt. With the model on, the same command asks for confirmation unless one
 of your recent prompts asked for the push (`--request 'push this to origin'`
 simulates that).
+
+## When it interrupts
+
+Every interruption says four things: what the agent was about to do and where
+(the command and its working directory, or the file), why h-guard stopped it
+(the rule, and with the model on whether you asked for it and the blast
+radius), what it would cause, and how to continue. For example, with the model
+on:
+
+```text
+h-guard: The agent chose a dangerous operation on its own and needs your confirmation:
+Git operation that discards uncommitted changes or untracked files [rule+judge 0.97].
+Blast radius 2.0/3. The user's recent instructions do not explicitly ask for it (0.03).
+Operation: `git reset --hard HEAD~1` in /home/me/proj. Impact: Uncommitted changes or
+untracked files in this working tree would be lost; git cannot bring them back.
+Safer way: Save them first: git stash push --include-untracked, or commit them, then retry.
+```
+
+In Claude Code this is the text of the permission prompt: approve it if you
+meant it. Codex cannot ask, so h-guard blocks instead, and for anything except
+guard self-protection the reason ends with a one-time approval:
+
+```text
+To run exactly this once, ask the user to run `h-guard allow 3f9a2c1d0e` in their own
+terminal (the approval is valid for 10 minutes and covers only this command in this
+directory), then retry it unchanged; or ask the user to run it themselves.
+```
+
+`h-guard allow` lists what was stopped in the last hour; `h-guard allow <id>`
+shows the operation and asks you to confirm in your terminal. The approval is
+bound to the harness, the working directory and the exact tool input, covers
+shell commands only (not file reads or edits), is used up by the first retry and expires after 10 minutes (`--ttl`, at most
+1h). There is no "allow everything from now on": you do not have to turn the
+guard off to keep working. The agent cannot approve for itself: `allow` needs
+an interactive terminal, and running it through a harness asks.
 
 ## What it checks
 
@@ -259,8 +319,29 @@ on Windows.
 - **Codex cannot ask.** Codex does not support asking for confirmation from a
   hook, so every `ask` becomes `deny` there (`policy.when_ask_unsupported`).
 - **Codex hooks must be trusted.** After `install codex --write` you have to
-  trust the hooks with `/hooks` in Codex; until then they do not run, and
-  `h-guard status` cannot tell.
+  trust the hooks with `/hooks` in Codex; until then they do not run. h-guard
+  cannot read Codex's trust state: `h-guard status` shows the hooks as
+  unverified until Codex runs one.
+- **One-time approvals are as strong as the agent's file access.** An approval
+  is a record in h-guard's cache, signed with a key in its configuration
+  directory (`grant.key`, created the first time an operation is stopped with
+  an approval offer); so is the stopped operation that `h-guard allow` shows
+  you. The agent runs
+  as your user: one that reads the key and writes a signed record with a tool
+  `guard_tampering` does not recognize could approve its own operation. The
+  key keeps a write to the cache alone from being enough; it is not a boundary
+  against an agent that sets out to defeat h-guard. The same goes for the
+  terminal check in `h-guard allow`: an agent can run a copy of the binary
+  under another name inside a pseudo-terminal (`script -c …`) and answer the
+  prompt itself. The instruction cache that
+  the judge reads as your recent prompts has the same exposure. An approval
+  binds the session, the exact tool input and the real working directory (path and file identity), not what the
+  paths named in the command point to when it runs, nor the files and settings
+  it reads (a `git push origin` goes wherever `.git/config` says `origin` is
+  at that moment). It also binds only the working directory Codex reports to
+  the hook: if Codex runs a command in a directory it leaves out of the hook
+  input, or the directory is created only after the hook ran, the approval
+  cannot tell. Check the paths and targets before you approve.
 - **Who wrote a prompt is inferred.** Claude Code labels automated messages
   (scheduled tasks, sub-agent reports); Codex does not, so h-guard recognizes
   its automated messages by their known formats. An automated message it does

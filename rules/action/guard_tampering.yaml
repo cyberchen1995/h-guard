@@ -7,6 +7,12 @@ locked: true
 reason:
   en: 'Changes the guard''s own configuration or the harness''s hook settings'
   zh-CN: '改动安全护栏自身的配置或 harness 的 hook 设置'
+impact:
+  en: 'Later commands could run without h-guard''s checks.'
+  zh-CN: '之后的命令可能不再经过 h-guard 检查。'
+advice:
+  en: 'Change h-guard''s setup yourself in a terminal (h-guard install, h-guard config) rather than through the agent.'
+  zh-CN: '请在自己的终端里修改 h-guard 的设置（h-guard install、h-guard config），不要经由 agent。'
 match:
   exec:
     # any 组沿用 Python 版正则，两种 shell 都适用（不拆分，只收紧）；PowerShell 专有的写法在 powershell 组。
@@ -35,11 +41,12 @@ match:
       # agent 运行 backend enable 会替用户记下同意（用 script 等伪终端可以绕过终端检查），在 hook 下一律请求确认；
       # 用户在自己的终端里运行不经过 hook
       - '(?<![\w.-])h-guard\b[^\n;&|]*\bbackend\s+enable\b'
+      # allow 批准单次授权（只能由用户在自己的终端里运行）。
       # install、init、config init、migrate 改 harness 的 hook 配置、h-guard 的配置与同意记录（维护者决定）：
       # 子命令是 h-guard 之后的第一个词才算（允许 $(which h-guard)、go run …/h-guard@v、带引号的子命令与它之前的
       # --config 选项），参数里的 install、init（h-guard check 'npm install'）不算；子命令看不到时（经 xargs 传入、
       # Start-Process 的参数列表）同样请求确认。只打印不写入的用法也会请求确认（与 backend enable 相同的已知误报）
-      - '(?<![\w.-])h-guard(?:@\S*)?(?:\.exe)?[''")]*(?:\s+--?(?:config(?:=|\s+)\S+|[\w-]+=\S+))*\s+[''"]?(?:install|init|migrate|config[''"]?(?:\s+--?(?:config(?:=|\s+)\S+|[\w-]+=\S+))*\s+[''"]?init)\b'
+      - '(?<![\w.-])h-guard(?:@\S*)?(?:\.exe)?[''")]*(?:\s+--?(?:config(?:=|\s+)\S+|[\w-]+=\S+))*\s+[''"]?(?:install|init|migrate|allow|config[''"]?(?:\s+--?(?:config(?:=|\s+)\S+|[\w-]+=\S+))*\s+[''"]?init)\b'
       - '\bxargs\b[^\n;&|]*(?<![\w.-])h-guard\b'
       - '(?i)\b(?:start-process|saps)\s[^\n;&|]*(?<![\w.-])h-guard\b[^\n;&|]*\b(?:install|init|migrate)\b'
       # CLAUDE_CONFIG_DIR、CODEX_HOME 指定的 harness 配置目录（审查 I5）
@@ -127,6 +134,8 @@ examples:
     - {shell: posix, command: "printf 'y\\n' | script -q /dev/null h-guard backend enable local"}
     - {shell: posix, command: "h-guard install codex --write"}
     - {shell: posix, command: "h-guard init"}
+    - {shell: posix, command: "h-guard allow 0123456789"}
+    - {shell: posix, command: "printf 'y\\n' | script -q /dev/null h-guard allow 0123456789"}
     - {shell: posix, command: "\"$(which h-guard)\" install codex --write"}
     - {shell: posix, command: "rm \"$CODEX_HOME/hooks.json\""}
     - {shell: powershell, command: "& 'h-guard.exe' install claudecode --write"}
@@ -148,6 +157,7 @@ examples:
     - {shell: posix, command: "h-guard backend disable local"}
     - {shell: posix, command: "h-guard config validate"}
     - {shell: posix, command: "h-guard check 'npm install'"}
+    - {shell: posix, command: "h-guard check 'allow 1'"}
     - {shell: posix, command: "grep -n hooks ~/.claude/settings.json"}
     - {shell: posix, command: "grep confirm ~/.claude/settings.json"}
     - {shell: posix, command: "stat --format=%a ~/.codex/hooks.json"}

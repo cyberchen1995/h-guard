@@ -1,11 +1,15 @@
 package app
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
+	"path/filepath"
 	"runtime"
 	"slices"
 	"strings"
@@ -20,6 +24,7 @@ import (
 	"github.com/cyberchen1995/h-guard/internal/i18n"
 	hglog "github.com/cyberchen1995/h-guard/internal/log"
 	"github.com/cyberchen1995/h-guard/internal/rules"
+	"github.com/cyberchen1995/h-guard/internal/seen"
 	"github.com/cyberchen1995/h-guard/pkg/detect/secrets"
 	"github.com/cyberchen1995/h-guard/pkg/guard"
 	"github.com/cyberchen1995/h-guard/pkg/harness"
@@ -121,6 +126,44 @@ type hookRun struct {
 	exit      int  // 退出码：Render 给出的（generic 契约读不懂输入时为非零），看门狗接手后不再改变
 	// scan 是 outbound 检查这一次扫出的用户正则区间（决策日志遮蔽摘录用）；outbound 没有运行时为 nil
 	scan *outbound.Scan
+	// toolInput 是 hook 输入里 tool_input 的规范写法（单次授权绑定它，h-guard allow 显示它）；没有这个字段时为空
+	toolInput string
+	// realCwd 是工作目录解析符号链接之后的真实路径，dirID 是它的文件身份（单次授权绑定两者）；解析不了时 realCwd 为空，
+	// 目录还不存在时 dirID 为空
+	realCwd, dirID string
+}
+
+// toolInputText 返回 hook 输入里 tool_input 的规范写法（解码后重新编码：键排序、空白统一）；没有时为空。
+// tool_use_id 等每次调用都不同的字段不在 tool_input 里，重试同一操作得到同样的写法。
+func toolInputText(raw []byte) string {
+	var in struct {
+		ToolInput json.RawMessage `json:"tool_input"`
+	}
+	if json.Unmarshal(raw, &in) != nil || len(in.ToolInput) == 0 || string(in.ToolInput) == "null" {
+		return ""
+	}
+	// 数字原样保留：解码成 float64 会把超出精度的整数舍入成相邻的值
+	d := json.NewDecoder(bytes.NewReader(in.ToolInput))
+	d.UseNumber()
+	var v any
+	if d.Decode(&v) != nil {
+		return ""
+	}
+	b, err := json.Marshal(v)
+	if err != nil {
+		return ""
+	}
+	return string(b)
+}
+
+// writesToProcess 报告规范写法的工具输入是不是写进交互式进程的内容：带 chars 字段（write_stdin 的写法）。
+func writesToProcess(toolInput string) bool {
+	var in map[string]json.RawMessage
+	if json.Unmarshal([]byte(toolInput), &in) != nil {
+		return false
+	}
+	_, ok := in["chars"]
+	return ok
 }
 
 // commit 同步记录 Check 的一次提交，按 guard.Run 的规则累计。由 Engine.OnCommit
@@ -140,7 +183,20 @@ func (h *hookRun) newEngine(s setup) (*engine.Engine, judgeState) {
 	}
 	eng := s.newEngine(h.o, j, oj)
 	eng.OnCommit = h.commit
+	// 单次授权只在 harness 不能请求确认、ask 会变成 deny 时提供：能确认时用户直接在确认框里决定。
+	// 授权绑定原始工具输入（事件只保留判断要用的部分，执行参数如超时、工作目录覆盖不在其中，h-guard allow
+	// 把它原样显示出来）与工作目录的真实路径（工作目录是符号链接时，批准之后改指向别处就对不上）；
+	// 以及目录的文件身份（批准之后把目录挪走、在原路径放上另一个目录也对不上）；
+	// 任何一项取不到时不提供：没有工作目录的事件按 hook 进程所在的目录执行，绑不住。
+	// 写进交互式进程的输入（Codex 的 write_stdin，可能规范成 Bash 报上来，按 chars 字段认）也不提供：进程的工作目录与状态在批准之后还能被改掉
+	// （先送一条无害的 cd 再重试），授权绑不住它在哪里、对什么执行
+	grants := h.ev != nil && h.ev.Kind == guard.EventAction && !h.adapter.CapsFor(*h.ev).Ask &&
+		guard.Decision(s.cfg.Policy.WhenAskUnsupported) != guard.DecisionPass && h.o.CacheDir != "" &&
+		h.toolInput != "" && h.realCwd != "" && h.ev.Tool != "write_stdin" && !writesToProcess(h.toolInput)
 	for _, c := range eng.Checks {
+		if ac, ok := c.(*action.Check); ok && grants {
+			ac.Grants, ac.GrantInput, ac.GrantCwd, ac.GrantDir = grantStore(h.o), h.toolInput, h.realCwd, h.dirID
+		}
 		if oc, ok := c.(*outbound.Check); ok {
 			oc.Scanned = func(sc outbound.Scan) {
 				h.mu.Lock()
@@ -200,10 +256,30 @@ func (h *hookRun) run(ctx context.Context, extra string) {
 	if !h.setEvent(ev, h.adapter) {
 		return
 	}
+	h.toolInput = toolInputText(raw)
+	if ev.Cwd != "" {
+		switch real, err := filepath.EvalSymlinks(ev.Cwd); {
+		case err == nil:
+			// 读不到文件身份时不绑定（不提供授权）
+			if id, ok := dirIdentity(real); ok {
+				h.realCwd, h.dirID = real, id
+			}
+		case errors.Is(err, fs.ErrNotExist):
+			// 还不存在的目录照样绑定：之后建出来（或建成符号链接）再重试，解析结果不同，对不上授权
+			h.realCwd = "(missing) " + ev.Cwd
+		}
+	}
+	// 读懂了输入就说明 harness 运行了入口：在可能失败的配置读取与检查之前记下（失败的检查同样证明 hook 在运行）
+	h.markSeen(ev)
 	s, err := load(h.o, extra)
 	if err != nil {
 		h.configInvalid(s, err)
 		return
+	}
+	if ev.SessionID == seen.SelftestSession {
+		// 自测只验证入口与本地规则：不调用判断后端（不发请求、不产生费用），即使本地规则被停用、事件会走到模型
+		off := false
+		s.cfg.Judge.Enabled, s.cfg.Outbound.Judge = false, &off
 	}
 	if sd, ok := h.adapter.(harness.ShellDefaulter); ok {
 		ad := sd.WithShell(s.cfg.ShellFor(h.adapter.Name()))
@@ -225,6 +301,12 @@ func (h *hookRun) run(ctx context.Context, extra string) {
 	eng, st := h.newEngine(s)
 	if unparsed {
 		eng.Checks = append(eng.Checks, unparsedCheck{tool: ev.Tool})
+		// 目标读不全的操作不提供单次授权：授权只放行 action 检查，unparsedCheck 仍会拦下，用掉的授权白费
+		for _, c := range eng.Checks {
+			if ac, ok := c.(*action.Check); ok {
+				ac.Grants = nil
+			}
+		}
 	}
 	res := eng.Evaluate(ctx, ev, h.adapter.CapsFor(ev))
 	if !h.write(ev, res.Outcome) {
@@ -235,6 +317,23 @@ func (h *hookRun) run(ctx context.Context, extra string) {
 	}
 	h.health(healthOf(ev, res))
 	h.decision(s, st, ev, res.Outcome)
+}
+
+// markSeen 记下 harness 确实运行了这个入口（status 的「hook 真正运行」）；自测发来的调用不算。
+func (h *hookRun) markSeen(ev guard.Event) {
+	if !h.live() {
+		return
+	}
+	name := h.event
+	if name == "" {
+		name = string(ev.Kind)
+	}
+	harness := h.adapter.Name()
+	if ev.SessionID == seen.SelftestSession {
+		// 自测的调用不算 harness 运行了 hook：另记一份，自测据此知道被测的入口是哪个版本
+		harness = seen.SelftestRuns(harness)
+	}
+	_ = seen.Record(seen.Dir(h.o.CacheDir), harness, name, buildID(), h.o.Now())
 }
 
 // remember 在提示词的结论输出之后写指令缓存：被拦下的提示词（deny）不写入，只记指纹，transcript

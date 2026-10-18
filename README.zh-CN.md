@@ -63,7 +63,26 @@ h-guard install codex --write         # Codex：在 ~/.codex/hooks.json 中注�
 
 Codex 用户需要打开 Codex，运行 `/hooks` 检查并信任 h-guard 的 hook。新增或改动过的 hook 在信任之前不会运行。
 
-开启模型并检查安装情况：
+确认它真的在保护你。`selftest` 按 harness 会运行的入口运行 h-guard，送入一条模拟的 `rm -rf /`（从不执行）和一条带编造 API key 的提示词，核对两者都被拦下：
+
+```sh
+h-guard selftest  # 端到端检查已安装的入口；不执行任何命令，也不向外发送
+h-guard status    # 开头是保护摘要
+```
+
+`status` 开头写明你实际受到的保护。每个 harness 分开显示三层：配置已写入、harness 真正运行过 hook（h-guard 读不到 Codex 的信任状态，Codex 在真正运行 hook 之前显示「unverified」）、最近一次自测通过。随后列出哪些规则会打断、哪些只记录、哪些停用，以及哪些情况不在保护范围内。
+
+```console
+protection:
+  claudecode: config written: yes | hook running: yes, last 2 min ago (PreToolUse, prompt.submit, tool.result) | self-test: passed 3 min ago
+  codex: config written: yes | hook running: unverified (Codex has not run the hooks since they were installed; trust them with /hooks in Codex) | self-test: passed 3 min ago
+  interrupts: catastrophic (deny), fork_bomb (deny), guard_tampering (ask), obfuscated_exec (ask), sensitive_read (ask, file tools only)
+  matched but not interrupting, and not recorded (log.decisions is off) (judge off; h-guard init turns it on): branch_ops, destructive_git, publish, recursive_delete, verify_bypass
+  prompts and tool output: credentials deny, private_key deny (scans prompts)
+  not covered: shell commands that read secret files (cat ~/.ssh/id_rsa): ...
+```
+
+开启模型：
 
 ```sh
 h-guard init      # 选择后端，查看它会收到什么，同意后开启判断
@@ -75,7 +94,7 @@ h-guard status    # 入口、判断、同意、不生效的规则、近期的降
 ```console
 $ h-guard check 'rm -rf /' --no-judge
 decision: deny
-reason: Blocked: Catastrophic operation: deleting the root or home directory, overwriting a block device, or formatting a file system [rule].
+reason: Blocked: Catastrophic operation: deleting the root or home directory, overwriting a block device, or formatting a file system [rule]. Operation: `rm -rf /`. Impact: It would destroy data that cannot be recovered: a whole file system, the home directory or a device. Safer way: If this is really intended, the user should run it themselves after checking the target.
 hint: Ask the user to run it themselves.
 finding: catastrophic (local)
 finding: recursive_delete (local)
@@ -87,6 +106,26 @@ signals: {"action":{"judge":"off","judge_disabled_hits":["publish"]}}
 ```
 
 第二条命令命中了 `publish`，但模型关闭时这条规则不打断。模型开启后，同一条命令会请求确认，除非你最近的提示词里要求过推送（用 `--request 'push this to origin'` 模拟）。原因与提示的语言依次取自配置的 `locale`、环境变量 `LC_ALL` 与 `LANG`，上面是英文环境下的输出；中文环境下 `reason` 与 `hint` 显示为中文。
+
+## 拦下之后
+
+每次打断都讲清四件事：agent 准备做什么、作用在哪里（命令与工作目录，或文件），为什么拦（命中的规则；模型开启时还有你是否要求过、影响范围），会造成什么后果，以及怎样继续。例如模型开启时：
+
+```text
+h-guard: agent 自行决定的危险操作需要确认：丢弃未提交改动或未跟踪文件的 git 操作 [正则+模型 0.97]。
+影响范围 2.0/3。用户最近的指令未明确要求此操作（0.03）。操作：在 /home/me/proj 中运行 `git reset --hard HEAD~1`。
+后果：这个工作区里未提交的改动或未跟踪的文件会丢失，git 无法找回。
+更稳妥的做法：先保存：git stash push --include-untracked，或先提交，再重试。
+```
+
+在 Claude Code 里这就是权限确认框的说明：确实要做就批准。Codex 不能请求确认，h-guard 改为阻止；除护栏自我保护外，原因末尾会给出单次授权：
+
+```text
+如需只运行这一次，请用户在自己的终端里运行 `h-guard allow 3f9a2c1d0e`（批准后 10 分钟内有效，
+只适用于这个目录中的这条命令），然后原样重试；或请用户自己手动执行。
+```
+
+`h-guard allow` 列出最近一小时被拦下的操作；`h-guard allow <id>` 显示这次操作并在终端里请你确认。授权绑定 harness、工作目录与完整的工具输入，只适用于 shell 命令（不包括读写文件），第一次重试就用掉，10 分钟后失效（`--ttl`，最长 1 小时）。没有「接下来都允许」：不必为了继续工作关掉整个护栏。agent 不能替你批准：`allow` 只能在交互终端里确认，经由 harness 运行它会请求确认。
 
 ## 检查什么
 
@@ -186,7 +225,8 @@ harness 版本未经验证时，`install` 与 `status` 会说明，但不拒绝�
 ## 已知限制
 
 - **Codex 不支持请求确认。** Codex 的 hook 无法请求用户确认，所以那里的 `ask` 一律变成 `deny`（`policy.when_ask_unsupported`）。
-- **Codex 的 hook 需要信任。** `install codex --write` 之后要在 Codex 里用 `/hooks` 信任这些 hook，否则它们不运行，`h-guard status` 也看不出来。
+- **Codex 的 hook 需要信任。** `install codex --write` 之后要在 Codex 里用 `/hooks` 信任这些 hook，否则它们不运行。h-guard 读不到 Codex 的信任状态：在 Codex 真正运行某个 hook 之前，`h-guard status` 显示为 unverified。
+- **单次授权的强度取决于 agent 能碰到哪些文件。** 授权是 h-guard 缓存目录里的一条记录，用配置目录里的密钥（`grant.key`，第一次拦下可以授权的操作时生成）签名，`h-guard allow` 显示给你的被拦操作同样签了名。agent 以你的用户身份运行：读到这个密钥、再用 `guard_tampering` 认不出的写法写入一条签了名的记录，就能自己批准自己的操作。密钥让「只写缓存」不再足够，但挡不住存心绕过 h-guard 的 agent。`h-guard allow` 的终端检查也一样：agent 可以把程序复制成别的名字、在伪终端（`script -c …`）里运行它，自己回答确认。模型读取的指令缓存（作为你最近的提示词）有同样的问题。授权绑定的是被拦下的会话、完整的工具输入、工作目录的真实路径与它的文件身份，不包括命令里提到的路径在执行时指向哪里，也不包括命令读取的文件与设置（`git push origin` 推到执行那一刻 `.git/config` 里 `origin` 指向的地方）。授权也只绑定 Codex 报给 hook 的工作目录：Codex 在 hook 输入里没有写出的目录里执行命令，或目录在 hook 运行之后才建出来，授权都分辨不出。批准前请核对这些路径与目标。
 - **提示词的来源靠推断。** Claude Code 会标出自动消息（定时任务、子 agent 回报）；Codex 不标，h-guard 按已知格式识别它的自动消息。识别不出的自动消息算作你本人的话，模型开启时可能被当作你对某个操作的要求。
 - **Windows 没有经过实机验证。** Windows 上的路径处理、PowerShell 的 hook 外包脚本与 Codex 的命令形式只在 CI 与交叉编译中测试过。
 - **路径规则只看文件工具。** `sensitive_read` 等文件规则检查的是 harness 的文件工具（Claude Code 的 Read、Codex 的补丁、generic 的文件动作）。在 shell 里读同一个文件的命令（如 `cat ~/.ssh/id_rsa`）不会被它们拦下。`outbound.tier: 2`（默认是 1）时，被识别为读文件的 shell 命令的输出会在读取之后扫描其中的凭据与私钥。

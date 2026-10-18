@@ -204,9 +204,11 @@ func codexEdit(t Target, want map[string]string, old []byte, exists, remove bool
 			var rest []json.RawMessage
 			for _, h := range handlers {
 				var x struct {
-					Command string `json:"command"`
+					Command        string `json:"command"`
+					CommandWindows string `json:"commandWindows"`
 				}
-				if json.Unmarshal(h, &x) == nil && isOurCodexHook(x.Command) {
+				// 与 Inspect 一样看 Codex 在这个系统上实际运行的命令
+				if json.Unmarshal(h, &x) == nil && isOurCodexHook(effectiveCommand(t, x.Command, x.CommandWindows)) {
 					ours++
 					var m map[string]any
 					_ = json.Unmarshal(h, &m)

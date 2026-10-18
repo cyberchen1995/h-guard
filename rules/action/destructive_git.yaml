@@ -7,6 +7,12 @@ requires_judge: true
 reason:
   en: 'Git operation that discards uncommitted changes or untracked files'
   zh-CN: '丢弃未提交改动或未跟踪文件的 git 操作'
+impact:
+  en: 'Uncommitted changes or untracked files in this working tree would be lost; git cannot bring them back.'
+  zh-CN: '这个工作区里未提交的改动或未跟踪的文件会丢失，git 无法找回。'
+advice:
+  en: 'Save them first: git stash push --include-untracked, or commit them, then retry.'
+  zh-CN: '先保存：git stash push --include-untracked，或先提交，再重试。'
 match:
   exec:
     # any 组沿用 Python 版正则，两种 shell 都适用（不拆分，只收紧）；PowerShell 专有的写法在 powershell 组

@@ -39,6 +39,7 @@ type env struct {
 	tty                    bool // backend enable 是否像在终端里运行
 	bin, goos              string
 	harnessRun             func(name string, args ...string) ([]byte, error)
+	runEntry               func(argv, env []string, stdin []byte) ([]byte, error) // selftest 运行入口；nil 时用默认
 }
 
 func newEnv(t *testing.T) *env {
@@ -65,6 +66,7 @@ func (e *env) run(stdin []byte, args ...string) (stdout, stderr string, code int
 			}
 			return e.harnessRun(name, args...)
 		},
+		RunEntry: e.runEntry,
 	})
 	return out.String(), errb.String(), code
 }
