@@ -63,7 +63,7 @@ h-guard install codex --write         # Codex：在 ~/.codex/hooks.json 中注�
 
 Codex 用户需要打开 Codex，运行 `/hooks` 检查并信任 h-guard 的 hook。新增或改动过的 hook 在信任之前不会运行。
 
-确认它真的在保护你。`selftest` 按 harness 会运行的入口运行 h-guard，送入一条模拟的 `rm -rf /`（从不执行）和一条带编造 API key 的提示词，核对两者都被拦下：
+确认它真的在保护你。`selftest` 按 harness 会运行的入口运行 h-guard，送入一条模拟的 `false && rm -rf /`（从不执行）和一条带编造 API key 的提示词，核对两者都被拦下：
 
 ```sh
 h-guard selftest  # 端到端检查已安装的入口；不执行任何命令，也不向外发送

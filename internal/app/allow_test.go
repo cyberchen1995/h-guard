@@ -307,3 +307,14 @@ func TestGrantBindsTheSession(t *testing.T) {
 		t.Errorf("approved retry: %s", out)
 	}
 }
+
+// TestInterruptionClipsHugeWorkdirs：打断说明里的工作目录有长度上限。
+func TestInterruptionClipsHugeWorkdirs(t *testing.T) {
+	e := newEnv(t)
+	cwd := "/" + strings.Repeat("d", 100000)
+	out, _, _ := e.run(codexHook("PreToolUse", map[string]any{"tool_name": "Bash", "tool_use_id": "e1", "cwd": cwd,
+		"tool_input": map[string]any{"command": "rm -rf /"}}), "hook", "codex", "--event", "PreToolUse")
+	if d, reason := codexDecision(t, out); d != "deny" || len(reason) > 5000 {
+		t.Errorf("decision %s, reason length %d", d, len(reason))
+	}
+}

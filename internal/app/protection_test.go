@@ -570,3 +570,12 @@ func TestSelftestRunsCommandWindowsOnWindows(t *testing.T) {
 		t.Errorf("other systems run command: %v", err)
 	}
 }
+
+// TestStatusShowsJudgeOnlyCategories：只有类别题、没有本地规则的类别由模型检查，摘要照样列出。
+func TestStatusShowsJudgeOnlyCategories(t *testing.T) {
+	e := newEnv(t)
+	e.config("version: 1\njudge: {enabled: true, backend: claude-haiku}\noutbound: {categories: {acme-codename: {action: warn, question: {question: 'Does the text name Project Falcon?'}}}}\n")
+	if out, _, _ := e.run(nil, "status"); !strings.Contains(out, "acme-codename warn (judge only)") {
+		t.Errorf("status:\n%s", out)
+	}
+}

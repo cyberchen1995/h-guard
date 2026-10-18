@@ -206,7 +206,7 @@ func (c *Check) explain(v *guard.Verdict, hits []Hit, cmd, cwd string) {
 		// 控制字符转义：harness 显示原因时，命令里的终端控制序列或双向文本控制符会改写用户看到的内容
 		shown := Visible(clip(secrets.Redact(strings.ReplaceAll(strings.TrimSpace(cmd), "\n", " ↵ ")), maxShownCommand))
 		if cwd != "" {
-			v.Reasons = append(v.Reasons, guard.Reason{Code: i18n.KeyActionOperation, Params: map[string]string{"command": shown, "cwd": Visible(secrets.Redact(cwd))}})
+			v.Reasons = append(v.Reasons, guard.Reason{Code: i18n.KeyActionOperation, Params: map[string]string{"command": shown, "cwd": Visible(clip(secrets.Redact(cwd), maxShownCommand))}})
 		} else {
 			v.Reasons = append(v.Reasons, guard.Reason{Code: i18n.KeyActionOperationHere, Params: map[string]string{"command": shown}})
 		}

@@ -80,8 +80,9 @@ func (c *cappedBuffer) Write(p []byte) (int, error) {
 	return c.Buffer.Write(p)
 }
 
-// selftestCommand 是自测的动作：模拟 agent 要运行的灾难性命令。它只作为 JSON 交给 hook，从不执行。
-const selftestCommand = "rm -rf /"
+// selftestCommand 是自测的动作：模拟 agent 要运行的灾难性命令。它只作为 JSON 交给 hook，从不执行；
+// 万一坏掉的入口真把它交给了 shell，开头的 false && 也让删除不会运行（灾难性规则照样拦下它）。
+const selftestCommand = "false && rm -rf /"
 
 // selftestPrompt 是自测的提示词：带一个编造的 API key（凭据检测认得出的形状）。
 var selftestPrompt = "selftest: export OPENAI_API_KEY=sk-" + "hguardSelftestMadeUp0000"

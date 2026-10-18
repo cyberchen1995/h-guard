@@ -91,7 +91,7 @@ For Codex, open Codex and run `/hooks` to review and trust the h-guard hooks.
 Codex does not run new or changed hooks until you trust them.
 
 Check that it protects you. `selftest` runs the entries the harness will run,
-with a simulated `rm -rf /` (never executed) and a prompt with a made-up API
+with a simulated `false && rm -rf /` (never executed) and a prompt with a made-up API
 key, and checks that both are blocked:
 
 ```sh

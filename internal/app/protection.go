@@ -172,6 +172,14 @@ func outboundCoverage(s setup) []string {
 	for _, name := range slices.Sorted(maps.Keys(active)) {
 		out = append(out, name+" "+string(s.cfg.Category(name).Action))
 	}
+	// 只有类别题、没有本地规则的类别由模型检查，命中只提示
+	if s.cfg.Judge.Enabled && s.cfg.OutboundJudge() {
+		for _, name := range slices.Sorted(maps.Keys(s.cfg.Outbound.Categories)) {
+			if c := s.cfg.Category(name); c.Enabled && c.Question != nil && !active[name] {
+				out = append(out, name+" warn (judge only)")
+			}
+		}
+	}
 	return out
 }
 
