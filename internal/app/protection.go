@@ -172,7 +172,12 @@ func outboundCoverage(s setup, judgeUsable bool) []string {
 	}
 	var out []string
 	for _, name := range slices.Sorted(maps.Keys(active)) {
-		out = append(out, name+" "+string(s.cfg.Category(name).Action))
+		a := s.cfg.Category(name).Action
+		entry := name + " " + string(a)
+		if a == guard.DecisionWarn {
+			entry += " (not shown on Codex)" // Codex 显示不了提示
+		}
+		out = append(out, entry)
 	}
 	// 只有类别题、没有本地规则的类别由模型检查，命中只提示；Codex 显示不了提示，在 Codex 上不检查
 	if judgeUsable && s.cfg.OutboundJudge() {

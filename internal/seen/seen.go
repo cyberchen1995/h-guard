@@ -94,6 +94,9 @@ func SelftestRuns(harness string) string { return "selftest-" + harness }
 
 // Clear 删除 harness 的运行记录。
 func Clear(dir, harness string) error {
+	if dir == "" || harness == "" {
+		return nil // 没有记录目录：不能拿相对路径去删
+	}
 	return os.RemoveAll(runsDir(dir, harness))
 }
 

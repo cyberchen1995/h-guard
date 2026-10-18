@@ -287,7 +287,7 @@ func runSelftest(args []string, o Options) int {
 				}
 				// 被测的 h-guard 记下自己的版本（自测记录，不算 harness 运行）：入口指向的可能不是当前这个 h-guard
 				_ = seen.Clear(seen.Dir(o.CacheDir), seen.SelftestRuns(h))
-				out, err := o.RunEntry(e.Argv, e.Env, c.input(cwd))
+				out, err := o.RunEntry(e.Argv, append(slices.Clone(e.Env), selftestEnv+"=1"), c.input(cwd))
 				if v := seen.ReadRuns(seen.Dir(o.CacheDir), seen.SelftestRuns(h))[c.event].Version; v != buildID() {
 					if v == "" {
 						v = "unknown"

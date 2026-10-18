@@ -276,7 +276,7 @@ func (h *hookRun) run(ctx context.Context, extra string) {
 		h.configInvalid(s, err)
 		return
 	}
-	if ev.SessionID == seen.SelftestSession {
+	if h.selftest(ev) {
 		// 自测只验证入口与本地规则：不调用判断后端（不发请求、不产生费用），即使本地规则被停用、事件会走到模型
 		off := false
 		s.cfg.Judge.Enabled, s.cfg.Outbound.Judge = false, &off
@@ -329,11 +329,19 @@ func (h *hookRun) markSeen(ev guard.Event) {
 		name = string(ev.Kind)
 	}
 	harness := h.adapter.Name()
-	if ev.SessionID == seen.SelftestSession {
+	if h.selftest(ev) {
 		// 自测的调用不算 harness 运行了 hook：另记一份，自测据此知道被测的入口是哪个版本
 		harness = seen.SelftestRuns(harness)
 	}
 	_ = seen.Record(seen.Dir(h.o.CacheDir), harness, name, buildID(), h.o.Now())
+}
+
+// selftestEnv 是自测运行入口时设置的环境变量。会话编号由 hook 输入给出，单凭它不能改变检查方式：
+// 两者都对上才是自测的调用（关闭判断后端、另记运行记录）。
+const selftestEnv = "HGUARD_SELFTEST"
+
+func (h *hookRun) selftest(ev guard.Event) bool {
+	return ev.SessionID == seen.SelftestSession && h.o.Getenv(selftestEnv) == "1"
 }
 
 // remember 在提示词的结论输出之后写指令缓存：被拦下的提示词（deny）不写入，只记指纹，transcript

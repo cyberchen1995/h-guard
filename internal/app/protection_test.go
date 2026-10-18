@@ -18,8 +18,18 @@ import (
 // inProcessEntries 让 selftest 在进程内运行入口：插件的外包脚本按它会执行的 h-guard hook 处理，其余入口去掉程序名后
 // 交给 Main，与 harness 运行它们时一样读 stdin、写 stdout。
 func inProcessEntries(e *env, calls *[]string) func(argv, env []string, stdin []byte) ([]byte, error) {
-	return func(argv, _ []string, stdin []byte) ([]byte, error) {
+	return func(argv, env []string, stdin []byte) ([]byte, error) {
 		*calls = append(*calls, strings.Join(argv, " "))
+		// 入口继承自测设置的环境变量
+		for _, kv := range env {
+			if k, v, ok := strings.Cut(kv, "="); ok {
+				if e.vars == nil {
+					e.vars = map[string]string{}
+				}
+				e.vars[k] = v
+				defer delete(e.vars, k)
+			}
+		}
 		args := argv[1:]
 		if argv[0] == "sh" || argv[0] == "powershell" {
 			args = []string{"hook", "claudecode", "--event", "PreToolUse", "--timeout", "20"}
@@ -277,6 +287,13 @@ func TestSelftestNeverCallsTheJudge(t *testing.T) {
 	e.run(codexPre("Bash", map[string]any{"command": "rm -rf /"}), "hook", "codex", "--event", "PreToolUse")
 	if srv.calls == 0 {
 		t.Error("control: a real session did not call the judge, so the test proves nothing")
+	}
+	// 只把会话编号写成自测的编号不能关掉判断后端：还要有自测设置的环境变量
+	before := srv.calls
+	e.run(codexHook("PreToolUse", map[string]any{"session_id": seen.SelftestSession, "tool_name": "Bash", "tool_use_id": "e9",
+		"tool_input": map[string]any{"command": "rm -rf /"}}), "hook", "codex", "--event", "PreToolUse")
+	if srv.calls == before {
+		t.Error("a hook input with the self-test session id turned the judge off")
 	}
 }
 

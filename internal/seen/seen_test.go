@@ -1,6 +1,8 @@
 package seen
 
 import (
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -66,5 +68,20 @@ func TestConcurrentEventsKeepTheirRecords(t *testing.T) {
 	wg.Wait()
 	if runs := ReadRuns(dir, "codex"); len(runs) != len(events) {
 		t.Errorf("runs = %v", runs)
+	}
+}
+
+// TestClearNeedsADirectory：没有记录目录时什么都不删（不能拿相对路径去删当前目录里的同名目录）。
+func TestClearNeedsADirectory(t *testing.T) {
+	wd, _ := os.Getwd()
+	dir := t.TempDir()
+	os.Chdir(dir)
+	defer os.Chdir(wd)
+	os.Mkdir("codex.runs", 0o700)
+	if err := Clear("", "codex"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "codex.runs")); err != nil {
+		t.Errorf("relative directory removed: %v", err)
 	}
 }
