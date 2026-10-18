@@ -69,9 +69,9 @@ match:
       - '(?<![\w.-])openclaw\b[^\n;&|]*\bplugins\s+(?:disable|uninstall)\b[^\n;&|]*\bh-guard\b'
       # 重置或卸载 OpenClaw 的配置与状态（openclaw reset、openclaw uninstall --state/--all、onboard、setup 与
       # gateway --dev 的 --reset）同样去掉 h-guard 的插件设置；--dry-run 的用法也请求确认
-      - '(?<![\w.-])openclaw\b(?:\s+--?[\w-]+(?:=\S+|\s+[^\s;&|-]\S*)?)*\s+reset\b'
-      - '(?<![\w.-])openclaw\b(?:\s+--?[\w-]+(?:=\S+|\s+[^\s;&|-]\S*)?)*\s+uninstall\b[^\n;&|]*\s--(?:state|all)\b'
-      - '(?<![\w.-])openclaw\b(?:\s+--?[\w-]+(?:=\S+|\s+[^\s;&|-]\S*)?)*\s+(?:onboard|setup|gateway)\b[^\n;&|]*\s--reset\b'
+      - '(?<![\w.-])openclaw\b(?:\s+-{1,2}\w[\w-]*(?:=\S+|\s+[^\s;&|-]\S*)?)*\s+reset\b'
+      - '(?<![\w.-])openclaw\b(?:\s+-{1,2}\w[\w-]*(?:=\S+|\s+[^\s;&|-]\S*)?)*\s+uninstall\b[^\n;&|]*\s--(?:state|all)\b'
+      - '(?<![\w.-])openclaw\b(?:\s+-{1,2}\w[\w-]*(?:=\S+|\s+[^\s;&|-]\S*)?)*\s+(?:onboard|setup|gateway)\b[^\n;&|]*\s--reset\b'
     # PowerShell：写入、删除、移动、复制到受保护路径的 cmdlet 及其别名，.NET 的文件写入，重定向；
     # 路径可用 \ 或 /，也可拆在 Join-Path 的几个参数里；另覆盖 Windows 的配置与缓存目录（$env:APPDATA、${env:APPDATA}、
     # %LOCALAPPDATA% 下的 h-guard）与 macOS 上 PowerShell 用的 ~/Library 目录。
@@ -311,3 +311,5 @@ examples:
     - {shell: posix, command: "openclaw plugins uninstall other-plugin"}
     - {shell: posix, command: "openclaw onboard --non-interactive"}
     - {shell: posix, command: "openclaw sessions list --json"}
+    # 很长的选项列表不会让 openclaw 命令的模式回溯到超时（超时按命中处理）
+    - {shell: posix, command: "openclaw --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d status"}
