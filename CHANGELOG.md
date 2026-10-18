@@ -30,6 +30,13 @@ minor releases. Every such change is recorded in this file.
   `PI_CODING_AGENT_DIR`, `PI_CONFIG_DIR` and `DSH_HOME` and in PowerShell's
   `$env:` form. Path patterns can use `{xdg_config}`, `{pi_agent_dir}`,
   `{omp_config}` and `{dsh_home}`.
+- `guard_tampering` also asks before anything writes oh-my-pi's LSP
+  configuration (`lsp.json`, `.lsp.json`, `lsp.yaml`, `.lsp.yaml`, `lsp.yml`,
+  `.lsp.yml`). The `lsp` tool starts the language servers named there, so a
+  changed file could make oh-my-pi run any command. The rule matches these
+  names in any directory, because oh-my-pi reads them from the working
+  directory, the project's and the user's config directories, and the home
+  directory.
 
 ### Public packages
 

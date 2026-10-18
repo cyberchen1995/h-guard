@@ -233,7 +233,17 @@ Differences:
   cannot be read asks. `lsp` renames, applied code actions and raw requests
   change files h-guard cannot list, so they ask; so do `lsp` reloads and
   workspace diagnostics (`file: "*"`), which start language servers or run
-  `cargo check`, `npx tsc`, `go build` and `pyright`. `read` paths lose their line
+  `cargo check`, `npx tsc`, `go build` and `pyright`. Other `lsp` calls do not
+  ask on their own, although they can start the language servers named in
+  oh-my-pi's LSP configuration. Instead the locked `guard_tampering` rule asks
+  before anything writes that configuration: `lsp.json`, `.lsp.json`,
+  `lsp.yaml`, `.lsp.yaml`, `lsp.yml` and `.lsp.yml`, which oh-my-pi reads from
+  the working directory, from `.omp`, `.claude`, `.codex` and `.gemini` in the
+  project, from `~/<$PI_CONFIG_DIR or .omp>/agent` (and its profiles), from
+  `~/.claude` and the like, and from your home directory. Shell commands,
+  PowerShell and file tools are all covered. The rule matches these file names
+  in any directory, so a file with the same name in another project asks
+  too. `read` paths lose their line
   selectors (`a.go:10-20`). Paths are normalized as oh-my-pi does: `file://`
   URLs become the file, and a stray leading `:` or `@` is dropped. oh-my-pi's `write` is checked against the file it
   really changes: an archive entry (`a.zip:inner`) or SQLite row

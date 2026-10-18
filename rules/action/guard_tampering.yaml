@@ -32,6 +32,13 @@ match:
       - '(?<![\w.])(?<![^\w]-)(?<!^-)[a-z]?(?:rm|unlink|mv|cp|install|ln|truncate|tee|chmod|chown|shred|sed\s+-i|perl\s+-[a-z]*i|python[0-9.]*\s+-c|node\s+-e|jq\b[^\n;&|]*>)\b[^\n;&|]*Library/(?:Application(?:\\ | )Support|Caches)/h-guard'
       - '>>?\s*[^\n;&|]*Library/(?:Application(?:\\ | )Support|Caches)/h-guard'
       - 'Library/(?:Application(?:\\ | )Support|Caches)/h-guard[^\n;&|]*\|\s*(?:tee|sponge)\b'
+      # omp 的 lsp 工具启动 LSP 配置里写的 language server 命令：改写配置等于让 omp 执行任意命令。omp 读当前目录、
+      # 项目级 .omp、.claude、.codex、.gemini、用户级 ~/<$PI_CONFIG_DIR 或 .omp>/agent（含 profiles）、~/.claude 等与主目录下的
+      # lsp.json、.lsp.json、lsp.yaml、.lsp.yaml、lsp.yml、.lsp.yml，所以按文件名匹配（变量写法与 PowerShell 的路径同样覆盖）；
+      # 代价是别的目录里同名的文件也会请求确认
+      - '(?<![\w.])(?<![^\w]-)(?<!^-)[a-z]?(?:rm|unlink|mv|cp|install|ln|truncate|tee|chmod|chown|shred|sed\s+-i|perl\s+-[a-z]*i|python[0-9.]*\s+-c|node\s+-e|jq\b[^\n;&|]*>)\b[^\n;&|]*lsp\.(?:json|ya?ml)(?![\w.-])(?<=(?:^|[/\\\s''"=`(])\.?lsp\.(?:json|ya?ml))'
+      - '>>?\s*[^\n;&|]*lsp\.(?:json|ya?ml)(?![\w.-])(?<=(?:^|[/\\\s''"=`(])\.?lsp\.(?:json|ya?ml))'
+      - 'lsp\.(?:json|ya?ml)(?![\w.-])(?<=(?:^|[/\\\s''"=`(])\.?lsp\.(?:json|ya?ml))[^\n;&|]*\|\s*(?:tee|sponge)\b'
       # agent 运行 backend enable 会替用户记下同意（用 script 等伪终端可以绕过终端检查），在 hook 下一律请求确认；
       # 用户在自己的终端里运行不经过 hook
       - '(?<![\w.-])h-guard\b[^\n;&|]*\bbackend\s+enable\b'
@@ -67,6 +74,9 @@ match:
       - '(?<![\w.-])(?:set-content|sc|add-content|ac|out-file|clear-content|clc|remove-item|rm|ri|del|erase|rd|rmdir|move-item|mi|mv|move|copy-item|cpi|cp|copy|rename-item|rni|ren|new-item|ni|set-item|si|set-itemproperty|sp|tee-object|tee)\b[^\n;&|]*(?:\.config[\\/]opencode[\\/]plugins?[\\/]h-guard\.js|\.pi[\\/](?:agent[\\/])?(?:extensions[\\/]h-guard\.js|settings\.json)|\.omp[\\/](?:(?:profiles[\\/][^\n;&|\\/]+[\\/])?agent[\\/])?(?:extensions[\\/]h-guard-omp\.js|config\.ya?ml|settings\.json)|\.dsh[\\/](?:profiles[\\/][^\n;&|\\/]+[\\/])?cordis\.patch\.yml)'
       - '\[(?:system\.)?io\.file\]::(?:write|append|delete|move|copy|replace|create|open)\w*\s*\([^\n]*(?:\.config[\\/]opencode[\\/]plugins?[\\/]h-guard\.js|\.pi[\\/](?:agent[\\/])?(?:extensions[\\/]h-guard\.js|settings\.json)|\.omp[\\/](?:(?:profiles[\\/][^\n;&|\\/]+[\\/])?agent[\\/])?(?:extensions[\\/]h-guard-omp\.js|config\.ya?ml|settings\.json)|\.dsh[\\/](?:profiles[\\/][^\n;&|\\/]+[\\/])?cordis\.patch\.yml)'
       - '>>?\s*[^\n;&|]*(?:\.config[\\/]opencode[\\/]plugins?[\\/]h-guard\.js|\.pi[\\/](?:agent[\\/])?(?:extensions[\\/]h-guard\.js|settings\.json)|\.omp[\\/](?:(?:profiles[\\/][^\n;&|\\/]+[\\/])?agent[\\/])?(?:extensions[\\/]h-guard-omp\.js|config\.ya?ml|settings\.json)|\.dsh[\\/](?:profiles[\\/][^\n;&|\\/]+[\\/])?cordis\.patch\.yml)'
+      # omp 的 LSP 配置（见 any 组；重定向由 any 组覆盖）
+      - '(?<![\w.-])(?:set-content|sc|add-content|ac|out-file|clear-content|clc|remove-item|rm|ri|del|erase|rd|rmdir|move-item|mi|mv|move|copy-item|cpi|cp|copy|rename-item|rni|ren|new-item|ni|set-item|si|set-itemproperty|sp|tee-object|tee)\b[^\n;&|]*lsp\.(?:json|ya?ml)(?![\w.-])(?<=(?:^|[/\\\s''"=`(])\.?lsp\.(?:json|ya?ml))'
+      - '\[(?:system\.)?io\.file\]::(?:write|append|delete|move|copy|replace|create|open)\w*\s*\([^\n]*lsp\.(?:json|ya?ml)(?![\w.-])(?<=(?:^|[/\\\s''"=`(])\.?lsp\.(?:json|ya?ml))'
       # $env:XDG_CONFIG_HOME、$env:PI_CODING_AGENT_DIR、$env:PI_CONFIG_DIR、$env:DSH_HOME 指定的目录
       - '(?<![\w.-])(?:set-content|sc|add-content|ac|out-file|clear-content|clc|remove-item|rm|ri|del|erase|rd|rmdir|move-item|mi|mv|move|copy-item|cpi|cp|copy|rename-item|rni|ren|new-item|ni|set-item|si|set-itemproperty|sp|tee-object|tee)\b[^\n;&|]*\$(?:\{env:|env:)(?:xdg_config_home\}?[\\/]opencode[\\/]plugins?[\\/]h-guard\.js|pi_coding_agent_dir\}?[\\/](?:extensions[\\/]h-guard(?:-omp)?\.js|settings\.json|config\.ya?ml)|dsh_home\}?[\\/](?:profiles[\\/][^\n;&|\\/]+[\\/])?cordis\.patch\.yml|pi_config_dir\}?[\\/](?:profiles[\\/][^\n;&|\\/]+[\\/])?agent[\\/](?:extensions[\\/]h-guard-omp\.js|config\.ya?ml|settings\.json))'
       - '\[(?:system\.)?io\.file\]::(?:write|append|delete|move|copy|replace|create|open)\w*\s*\([^\n]*\$(?:\{env:|env:)(?:xdg_config_home\}?[\\/]opencode[\\/]plugins?[\\/]h-guard\.js|pi_coding_agent_dir\}?[\\/](?:extensions[\\/]h-guard(?:-omp)?\.js|settings\.json|config\.ya?ml)|dsh_home\}?[\\/](?:profiles[\\/][^\n;&|\\/]+[\\/])?cordis\.patch\.yml|pi_config_dir\}?[\\/](?:profiles[\\/][^\n;&|\\/]+[\\/])?agent[\\/](?:extensions[\\/]h-guard-omp\.js|config\.ya?ml|settings\.json))'
@@ -107,6 +117,26 @@ match:
       - '**/.claude/settings.local.json'
       - '**/.codex/hooks.json'
       - '**/.codex/config.toml'
+      # omp 的 LSP 配置（lsp 工具启动其中的命令）：**/ 覆盖当前目录、项目级与用户级配置目录、主目录下的各个位置；
+      # 正在使用的用户级文件另写出固定路径（它们是符号链接时链接目标同样受保护）
+      - '**/lsp.json'
+      - '**/.lsp.json'
+      - '**/lsp.yaml'
+      - '**/.lsp.yaml'
+      - '**/lsp.yml'
+      - '**/.lsp.yml'
+      - '~/.omp/agent/lsp.json'
+      - '~/.omp/agent/.lsp.json'
+      - '~/.omp/agent/lsp.yaml'
+      - '~/.omp/agent/.lsp.yaml'
+      - '~/.omp/agent/lsp.yml'
+      - '~/.omp/agent/.lsp.yml'
+      - '{omp_config}/agent/lsp.json'
+      - '{omp_config}/agent/.lsp.json'
+      - '{omp_config}/agent/lsp.yaml'
+      - '{omp_config}/agent/.lsp.yaml'
+      - '{omp_config}/agent/lsp.yml'
+      - '{omp_config}/agent/.lsp.yml'
       # opencode、pi、omp 的 h-guard 扩展与能停用扩展的设置文件，DeepSeek Harness 挂载插件的补丁；
       # XDG_CONFIG_HOME、PI_CODING_AGENT_DIR、PI_CONFIG_DIR、DSH_HOME 指定的目录同样覆盖（没有设置时这些模式不匹配）
       - '{xdg_config}/opencode/plugins/h-guard.js'
@@ -198,6 +228,25 @@ examples:
     - {action: file_delete, path: "~/.codex/hooks.json"}
     - {action: file_rename, path: "~/Library/Application Support/h-guard/config.yaml"}
     - {action: file_write, path: "/etc/guard/extra.yaml"}
+    - {shell: posix, command: "echo '{\"servers\":{\"x\":{\"command\":\"sh\"}}}' > .omp/lsp.json"}
+    - {shell: posix, command: "printf 'servers: {}' >> ~/.omp/agent/lsp.yml"}
+    - {shell: posix, command: "cp /tmp/evil.json \"$HOME/$PI_CONFIG_DIR/agent/lsp.json\""}
+    - {shell: posix, command: "mv /tmp/x.yaml ~/.omp/profiles/work/agent/.lsp.yaml"}
+    - {shell: posix, command: "sed -i 's/x/y/' lsp.yaml"}
+    - {shell: posix, command: "jq . /tmp/x.json | tee .claude/lsp.json"}
+    - {shell: posix, command: "jq '.servers' lsp.json | sponge lsp.json"}
+    - {shell: powershell, command: "Set-Content .omp\\lsp.json -Value '{}'"}
+    - {shell: powershell, command: "Copy-Item C:\\x.json $env:USERPROFILE\\.omp\\agent\\lsp.json"}
+    - {shell: powershell, command: "Set-Content (Join-Path $HOME '.omp' 'agent' 'lsp.yml') -Value 'servers: {}'"}
+    - {shell: powershell, command: "[IO.File]::WriteAllText(\"$HOME\\.omp\\agent\\.lsp.json\", \"{}\")"}
+    - {shell: powershell, command: "'{}' > .omp\\lsp.json"}
+    - {action: file_write, path: ".omp/lsp.json"}
+    - {action: file_write, path: "lsp.yaml"}
+    - {action: file_write, path: "~/.omp/agent/lsp.json"}
+    - {action: file_write, path: "~/.omp/profiles/work/agent/lsp.yml"}
+    - {action: file_write, path: "~/.lsp.json"}
+    - {action: file_write, path: ".claude/.lsp.yaml"}
+    - {action: file_rename, path: "~/.omp/agent/.lsp.yml"}
     - {shell: posix, command: "rm ~/.config/opencode/plugins/h-guard.js"}
     - {shell: posix, command: "mv ~/.pi/agent/extensions/h-guard.js /tmp/"}
     - {shell: posix, command: "echo 'disabledExtensions: [h-guard-omp]' >> ~/.omp/agent/config.yml"}
@@ -243,6 +292,13 @@ examples:
     - {action: file_write, path: "~/.claude/CLAUDE.md"}
     - {action: file_write, path: "/home/user/project/x.claude/settings.json"}
     - {action: file_write, path: "/etc/guard/other.yaml"}
+    - {shell: posix, command: "cat .omp/lsp.json"}
+    - {shell: posix, command: "jq . ~/.omp/agent/lsp.yml"}
+    - {shell: posix, command: "cp lsp.json.example /tmp/"}
+    - {shell: posix, command: "echo x > src/mylsp.json"}
+    - {shell: powershell, command: "Get-Content .omp\\lsp.json"}
+    - {action: file_write, path: "src/mylsp.json"}
+    - {action: file_write, path: "docs/lsp.json.md"}
     - {shell: posix, command: "cat ~/.config/opencode/plugins/h-guard.js"}
     - {shell: posix, command: "ls ~/.pi/agent/extensions"}
     - {action: file_write, path: "~/.config/opencode/plugins/other.js"}

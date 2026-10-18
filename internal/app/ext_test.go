@@ -51,6 +51,12 @@ func TestExtHarnessHooks(t *testing.T) {
 		{"pi", "tool_call", map[string]any{"toolCallId": "c", "toolName": "ls", "input": map[string]string{}}, "pass"},
 		{"pi", "input", map[string]any{"text": key, "source": "interactive"}, "deny"},
 		{"omp", "tool_call", map[string]any{"toolCallId": "c", "toolName": "eval", "input": map[string]string{"language": "py", "code": "1"}}, "ask"},
+		// omp 的 lsp 工具启动 LSP 配置里的命令：文件工具改写项目级与用户级的 LSP 配置请求确认（guard_tampering）
+		{"omp", "tool_call", map[string]any{"toolCallId": "c", "toolName": "write", "input": map[string]string{"path": "/w/.omp/lsp.json", "content": "{}"}}, "ask"},
+		{"omp", "tool_call", map[string]any{"toolCallId": "c", "toolName": "write", "input": map[string]string{"path": "@~/.omp/agent/lsp.yml", "content": "servers: {}"}}, "ask"},
+		{"omp", "tool_call", map[string]any{"toolCallId": "c", "toolName": "edit", "input": map[string]string{"path": "/w/.lsp.yaml"}}, "ask"},
+		{"omp", "tool_call", map[string]any{"toolCallId": "c", "toolName": "apply_patch", "input": map[string]string{"input": "*** Begin Patch\n*** Add File: lsp.json\n+{}\n*** End Patch"}}, "ask"},
+		{"omp", "tool_call", map[string]any{"toolCallId": "c", "toolName": "write", "input": map[string]string{"path": "/w/src/main.go", "content": "package main"}}, "pass"},
 		{"dsh", "tools/pre-execute", map[string]any{"name": "pwsh", "callId": "c", "arguments": map[string]string{"command": "Remove-Item -Recurse -Force C:\\"}}, "deny"},
 		{"dsh", "tools/pre-execute", map[string]any{"name": "read", "callId": "c", "arguments": map[string]string{"file_path": "/w/.env"}}, "ask"},
 		{"dsh", "agent/pre-step", map[string]any{"messages": []map[string]any{{"source": map[string]string{"kind": "user"}, "content": []map[string]string{{"type": "text", "text": key}}}}}, "deny"},
