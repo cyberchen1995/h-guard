@@ -161,6 +161,24 @@ test("request: execHost follows the call, the session's /exec setting and the co
   assert.equal('execHost' in all[all.length - 1].request.data, false)
 })
 
+test('request: toolSource is mcp only for tools of a server in mcp.servers', async () => {
+  const { command, record } = await fake({ action: 'pass' })
+  const source = async (name, config) => {
+    const { hooks } = await plugin(command, { config })
+    await hooks.before_tool_call(call(name, {}), ctx())
+    const all = await recorded(record)
+    return all[all.length - 1].request.data.toolSource
+  }
+  const servers = { mcp: { servers: { github: {}, 'my docs': {}, '1st': {}, off: { enabled: false } } } }
+  assert.equal(await source('github__create_issue', servers), 'mcp')
+  assert.equal(await source('my-docs__search', servers), 'mcp')
+  assert.equal(await source('mcp-1st__x', servers), 'mcp')
+  assert.equal(await source('off__x', servers), undefined)
+  assert.equal(await source('calendar__delete', servers), undefined)
+  assert.equal(await source('github__create_issue', { agents: {} }), undefined)
+  assert.equal(await source('read', servers), undefined)
+})
+
 test('request: cwd follows the workspace before_agent_run reported for the session', async () => {
   const { command, record } = await fake({ action: 'pass' })
   const { hooks } = await plugin(command)

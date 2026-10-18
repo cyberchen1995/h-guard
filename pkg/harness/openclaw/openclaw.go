@@ -84,6 +84,9 @@ type toolData struct {
 	// ExecHost 是插件解析出的 exec 实际运行的位置：调用自己的 host（或 node），没有时依次取会话的 /exec 设置、agent 与
 	// tools.exec 的配置（auto、gateway、sandbox、node）；读不到这些设置时为 unknown。没有这个字段时用参数里的 host。
 	ExecHost string `json:"execHost"`
+	// ToolSource 是插件给出的工具来源：mcp 表示工具名的 <服务>__ 前缀是配置里的 MCP 服务器（见 MCP 工具的说明）；
+	// 没有时按 OpenClaw 自带或插件提供的工具处理。
+	ToolSource string `json:"toolSource"`
 }
 
 // params 是工具参数里 h-guard 用到的字段。path、file_path、filePath 是 OpenClaw 文件工具接受的路径写法（依次取第一个）。
@@ -104,34 +107,6 @@ type params struct {
 	Data     string   `json:"data"` // process write
 	Text     string   `json:"text"` // process paste
 	EOF      bool     `json:"eof"`  // process write：写完后关闭 stdin
-	// message 的附件：本地路径或 URL（OpenClaw 也接受 snake_case 的写法）
-	Media       string       `json:"media"`
-	MediaURL    string       `json:"mediaUrl"`
-	MediaURLS   string       `json:"media_url"`
-	FileURL     string       `json:"fileUrl"`
-	FileURLS    string       `json:"file_url"`
-	Image       string       `json:"image"`
-	MediaURLs   []string     `json:"mediaUrls"`
-	Attachments []attachment `json:"attachments"`
-}
-
-type attachment struct {
-	Media    string `json:"media"`
-	MediaURL string `json:"mediaUrl"`
-	Path     string `json:"path"`
-	FilePath string `json:"filePath"`
-	FileURL  string `json:"fileUrl"`
-	URL      string `json:"url"`
-}
-
-// media 返回 message 调用里引用的全部附件。
-func (p params) media() []string {
-	refs := []string{p.Media, p.MediaURL, p.MediaURLS, p.Path, p.FilePath, p.FileCase, p.FileURL, p.FileURLS, p.Image}
-	refs = append(refs, p.MediaURLs...)
-	for _, a := range p.Attachments {
-		refs = append(refs, a.Media, a.MediaURL, a.Path, a.FilePath, a.FileURL, a.URL)
-	}
-	return refs
 }
 
 func (p params) path() string {
@@ -205,7 +180,7 @@ func (Adapter) Parse(raw []byte) (guard.Event, error) {
 		if d.ToolName == "exec" {
 			ev.Cwd = extadapter.Workdir(ev.Cwd, in.Workdir)
 		}
-		acts, err := actions(d.ToolName, in, d.Platform)
+		acts, err := actions(d.ToolName, in, rawParams, d.Platform, d.ToolSource == "mcp" && strings.Contains(d.ToolName, "__"))
 		if errors.Is(err, errUnparsed) {
 			ev.Actions = acts
 			return guard.Event{}, &harness.TargetUnparsedError{Event: ev}
@@ -259,9 +234,13 @@ func SourceOf(trigger, provenance, sessionKey string) guard.Source {
 // canvas 只有部分子命令在内（见 openclawActions）。
 // 其余 OpenClaw 自带的工具（向终端或运行中的进程输入、控制桌面与手机、节点、Gateway 更新与配置、插件管理、定时任务、
 // 技能与个人指令的改写、凭据、发布 GitHub PR、暴露本地服务、远端代码执行等）与插件提供的工具 h-guard 不认识，请求确认；
-// 用户可以在 harnesses.openclaw.read_only_tools 里补充只读的工具。MCP 工具（<服务>__<工具>）与其他 harness 一样不检查。
+// 用户可以在 harnesses.openclaw.read_only_tools 里补充只读的工具。MCP 工具与其他 harness 一样不检查，但要插件确认
+// 来源（toolSource=mcp：工具名的 <服务>__ 前缀是 mcp.servers 里的服务器）；只看名字里的 __ 不算，插件的工具也可以
+// 这样命名。Tool Search 的调用工具（tool_call，较新版本叫 dispatch_action）不产生动作：OpenClaw 调用目标工具时
+// 再经过一次 before_tool_call。工具参数里引用的本地文件（附件、参考图、PDF 等，见 fileRefs）按读文件检查。
 var openclawReadOnly = map[string]bool{
 	"ls": true, "find": true, "glob": true, "search": true, "tool_search": true, "tool_describe": true, "wait": true,
+	"tool_call": true, "dispatch_action": true,
 	"structured_output": true, "decision_evaluate": true,
 	"web_search": true, "web_fetch": true, "x_search": true, "memory_search": true, "memory_get": true,
 	"presence": true, "sessions_list": true, "sessions_history": true, "sessions_search": true,
@@ -338,7 +317,7 @@ func execActions(cmd string, sh []guard.Shell) []guard.Action {
 // 与文件 h-guard 看不到，按 POSIX 检查并请求确认；插件读不到运行位置（unknown）时另外请求确认）；read、grep、view_image 读文件；write、edit 写文件；apply_patch 按补丁里的文件；process 向
 // 运行中的进程写入的内容按命令检查并请求确认，提交输入（submit）、关闭 stdin、发送按键、结束进程请求确认，查看进程的
 // 子命令（list、poll、log）与 clear 不产生动作。其余工具不产生动作，或是不认识的工具。
-func actions(tool string, in params, platform string) ([]guard.Action, error) {
+func actions(tool string, in params, raw json.RawMessage, platform string, mcp bool) ([]guard.Action, error) {
 	one := func(act guard.Action, ok bool) ([]guard.Action, error) {
 		if !ok {
 			return nil, ErrNoAction
@@ -364,16 +343,10 @@ func actions(tool string, in params, platform string) ([]guard.Action, error) {
 	case "read", "grep":
 		return one(extadapter.File(guard.ActionFileRead, in.path()))
 	case "view_image":
-		var acts []guard.Action
-		for _, p := range append([]string{in.path()}, in.Paths...) {
-			if act, ok := extadapter.File(guard.ActionFileRead, p); ok && !isURL(p) {
-				acts = append(acts, act)
-			}
+		if acts := refReads(tool, raw, platform); len(acts) > 0 {
+			return acts, nil
 		}
-		if len(acts) == 0 {
-			return nil, ErrNoAction
-		}
-		return acts, nil
+		return nil, ErrNoAction
 	case "write", "edit":
 		if act, ok := extadapter.File(guard.ActionFileWrite, in.path()); ok {
 			return []guard.Action{act}, nil
@@ -410,9 +383,18 @@ func actions(tool string, in params, platform string) ([]guard.Action, error) {
 		if !allowed[in.Action] {
 			return nil, errUnknownTool
 		}
-		return partlyReadOnly(tool, in)
+		return partlyReadOnly(tool, in, raw, platform)
 	}
-	if openclawReadOnly[tool] || strings.Contains(tool, "__") {
+	if tool == "show_widget" && widgetCapabilities(raw) {
+		return nil, errUnknownTool
+	}
+	if openclawReadOnly[tool] {
+		if acts := refReads(tool, raw, platform); len(acts) > 0 {
+			return acts, nil
+		}
+		return nil, ErrNoAction
+	}
+	if mcp {
 		return nil, ErrNoAction
 	}
 	return nil, errUnknownTool
@@ -420,7 +402,7 @@ func actions(tool string, in params, platform string) ([]guard.Action, error) {
 
 // partlyReadOnly 返回 openclawActions 放行的子命令的动作：browser 的 screenshot、pdf 写到 path 的文件，message 附件里
 // 的本地文件。没有时不产生动作。
-func partlyReadOnly(tool string, in params) ([]guard.Action, error) {
+func partlyReadOnly(tool string, in params, raw json.RawMessage, platform string) ([]guard.Action, error) {
 	var acts []guard.Action
 	switch {
 	case tool == "browser" && (in.Action == "screenshot" || in.Action == "pdf"):
@@ -428,15 +410,7 @@ func partlyReadOnly(tool string, in params) ([]guard.Action, error) {
 			acts = append(acts, act)
 		}
 	case tool == "message":
-		seen := map[string]bool{}
-		for _, ref := range in.media() {
-			if p, ok := localMedia(ref); ok && !seen[p] {
-				seen[p] = true
-				if act, ok := extadapter.File(guard.ActionFileRead, p); ok {
-					acts = append(acts, act)
-				}
-			}
-		}
+		acts = refReads(tool, raw, platform)
 	}
 	if len(acts) == 0 {
 		return nil, ErrNoAction
@@ -444,47 +418,22 @@ func partlyReadOnly(tool string, in params) ([]guard.Action, error) {
 	return acts, nil
 }
 
-// localMedia 按 OpenClaw 的规则（src/media/media-reference.ts）判断附件是不是本地文件，是时返回路径：file: URL、
-// Windows 盘符路径与不带 scheme 的路径是本地文件，http(s)、data:、media://（OpenClaw 的媒体库）等不是。
-func localMedia(ref string) (string, bool) {
-	ref = strings.TrimSpace(ref)
-	if ref == "" {
-		return "", false
+// widgetCapabilities 报告 show_widget 是否给组件要了能力：capabilities.tools（让组件发提示词、触发定时任务）或
+// capabilities.netOrigins（让组件访问外部来源）。
+func widgetCapabilities(raw json.RawMessage) bool {
+	var p struct {
+		Capabilities struct {
+			Tools      []json.RawMessage `json:"tools"`
+			NetOrigins []json.RawMessage `json:"netOrigins"`
+		} `json:"capabilities"`
 	}
-	if len(ref) >= 5 && strings.EqualFold(ref[:5], "file:") {
-		p := ref[5:]
-		if strings.HasPrefix(p, "//") {
-			p = p[2:]
-			if strings.HasPrefix(strings.ToLower(p), "localhost/") {
-				p = p[len("localhost"):]
-			}
-		}
-		if len(p) >= 3 && p[0] == '/' && p[2] == ':' { // file:///C:/x
-			p = p[1:]
-		}
-		return p, p != ""
+	if extadapter.IsNull(raw) {
+		return false
 	}
-	if len(ref) >= 3 && ref[1] == ':' && (ref[2] == '/' || ref[2] == '\\') {
-		return ref, true
+	if json.Unmarshal(raw, &p) != nil {
+		return true
 	}
-	if i := strings.IndexByte(ref, ':'); i > 0 && isScheme(ref[:i]) {
-		return "", false
-	}
-	return ref, true
-}
-
-func isScheme(s string) bool {
-	for i, c := range s {
-		alpha := c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z'
-		if !alpha && (i == 0 || !(c >= '0' && c <= '9' || c == '+' || c == '.' || c == '-')) {
-			return false
-		}
-	}
-	return true
-}
-
-func isURL(p string) bool {
-	return strings.HasPrefix(p, "http://") || strings.HasPrefix(p, "https://") || strings.HasPrefix(p, "data:")
+	return len(p.Capabilities.Tools) > 0 || len(p.Capabilities.NetOrigins) > 0
 }
 
 // fileContent 报告工具结果是不是文件内容：读文件的工具，或读文件的命令。
@@ -494,6 +443,8 @@ func fileContent(tool string, in params, sh []guard.Shell, codeMode bool) bool {
 	}
 	switch tool {
 	case "read", "grep", "pdf", "memory_get", "skills_read":
+		return true
+	case "tool_call", "dispatch_action": // Tool Search 调用目标工具，结果里是目标工具（可能是 read）的结果
 		return true
 	case "exec":
 		for _, s := range sh {

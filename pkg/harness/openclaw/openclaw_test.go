@@ -108,7 +108,11 @@ func TestNoAction(t *testing.T) {
 		call("web_fetch", map[string]any{"url": "https://example.com"}),
 		call("sessions_spawn", map[string]any{"task": "x"}),
 		call("message", map[string]any{"action": "send", "message": "done"}),
-		call("github__create_issue", map[string]any{"title": "x"}),
+		req("before_tool_call", map[string]any{"toolName": "github__create_issue", "toolCallId": "c1", "params": map[string]any{"title": "x"}, "platform": "linux", "toolSource": "mcp"}, nil),
+		// Tool Search 的调用工具：OpenClaw 调用目标工具时再经过 before_tool_call
+		call("tool_call", map[string]any{"id": "openclaw:core:exec", "args": map[string]any{"command": "rm -rf ~"}}),
+		call("dispatch_action", map[string]any{"id": "openclaw:core:exec", "args": map[string]any{"command": "rm -rf ~"}}),
+		call("show_widget", map[string]any{"title": "x", "kind": "html"}),
 		call("process", map[string]any{"action": "poll", "sessionId": "p1"}),
 		call("process", map[string]any{"action": "clear", "sessionId": "p1"}),
 		call("exec", map[string]any{"command": ""}),
@@ -141,7 +145,8 @@ func TestAsks(t *testing.T) {
 		t.Errorf("process write: the command is checked as well")
 	}
 	var ut *harness.UnknownToolError
-	for _, tool := range []string{"nodes", "gateway", "plugins", "automations", "computer", "terminal", "secrets", "github_publish", "my_plugin_tool"} {
+	// calendar__delete：名字像 MCP 工具，但插件没有确认来源（插件的工具也可以这样命名）
+	for _, tool := range []string{"nodes", "gateway", "plugins", "automations", "computer", "terminal", "secrets", "github_publish", "my_plugin_tool", "calendar__delete"} {
 		if _, err := a.Parse(call(tool, map[string]any{})); !errors.As(err, &ut) || ut.Event.Tool != tool {
 			t.Errorf("%s: %v, want UnknownToolError", tool, err)
 		}
@@ -151,6 +156,9 @@ func TestAsks(t *testing.T) {
 		if _, err := a.Parse(call("process", map[string]any{"action": action, "sessionId": "p1"})); !errors.As(err, &ut) {
 			t.Errorf("process %s: %v, want UnknownToolError", action, err)
 		}
+	}
+	if _, err := a.Parse(call("show_widget", map[string]any{"title": "x", "capabilities": map[string]any{"tools": []string{"prompt"}}})); !errors.As(err, &ut) {
+		t.Errorf("show_widget with capabilities: %v, want UnknownToolError", err)
 	}
 	if _, err := a.Parse(call("process", map[string]any{"action": "write", "sessionId": "p1", "data": "", "eof": true})); !errors.As(err, &ut) {
 		t.Errorf("process write eof: %v, want UnknownToolError", err)
@@ -169,6 +177,7 @@ func TestResult(t *testing.T) {
 		{"read", map[string]string{"path": "a"}, true},
 		{"exec", map[string]string{"command": "cat .env"}, true},
 		{"exec", map[string]string{"command": "go test ./..."}, false},
+		{"tool_call", map[string]any{"id": "openclaw:core:read", "args": map[string]string{"path": ".env"}}, true},
 		{"exec", map[string]string{"code": "return (await tools.read({path: 'a'})).content"}, true},
 		{"process", map[string]string{"action": "log"}, true},
 		{"web_fetch", map[string]string{"url": "https://example.com"}, false},
@@ -313,7 +322,7 @@ func TestPartlyReadOnly(t *testing.T) {
 		{"message", map[string]any{"action": "send", "media": "media://inbound/a.png", "buffer": "data:text/plain;base64,eA=="}, nil},
 		{"message", map[string]any{"action": "send", "media": "~/.ssh/id_rsa"}, []guard.Action{file(guard.ActionFileRead, "~/.ssh/id_rsa")}},
 		{"message", map[string]any{"action": "sendAttachment", "filePath": "file:///etc/shadow", "path": "/etc/shadow"}, []guard.Action{file(guard.ActionFileRead, "/etc/shadow")}},
-		{"message", map[string]any{"action": "upload-file", "file_url": "file:///C:/Users/me/.aws/credentials"}, []guard.Action{file(guard.ActionFileRead, "C:/Users/me/.aws/credentials")}},
+		{"message", map[string]any{"action": "upload-file", "file_url": "file:///home/me/.aws/credentials"}, []guard.Action{file(guard.ActionFileRead, "/home/me/.aws/credentials")}},
 		{"message", map[string]any{"action": "reply", "mediaUrls": []string{"a.png", "https://x/b.png"}, "attachments": []map[string]string{{"url": "C:\\x\\c.txt"}}}, []guard.Action{file(guard.ActionFileRead, "a.png"), file(guard.ActionFileRead, "C:\\x\\c.txt")}},
 		{"sessions", map[string]any{"action": "patch", "label": "x"}, nil},
 		{"transcripts", map[string]any{"action": "list"}, nil},

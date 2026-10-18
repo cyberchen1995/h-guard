@@ -455,7 +455,23 @@ OpenClaw differences:
   `transcripts` asks to start recording a meeting. `canvas` passes hiding the
   panel on a paired Mac (and `snapshot` on newer versions); `present` and
   `navigate`, which load a document or URL into the panel's WebView, and
-  `eval` on newer versions ask. An action h-guard does not know asks.
+  `eval` on newer versions ask. `show_widget` asks when it requests
+  capabilities for the widget (`capabilities.tools` or `netOrigins`). An action
+  h-guard does not know asks.
+- **Local files in tool parameters.** Files a tool sends off the machine or
+  into another session are checked as file reads: `message` attachments
+  (`media`, `mediaUrl`, `path`, `filePath`, `fileUrl`, `image`, `mediaUrls`,
+  `attachments[]`), `pdf` (`pdf`, `pdfs`), reference media of
+  `image_generate`, `music_generate` and `video_generate` (`image`, `images`,
+  `video`, `videos`, `audioRef`, `audioRefs`), `view_image` (`path`, `paths`)
+  and `MEDIA:` lines in a `sessions_send` message. snake_case keys and
+  `MEDIA:` prefixes count, and `file:` URLs are decoded as OpenClaw does
+  (percent-encoding, `localhost`, Windows drive letters; a URL OpenClaw
+  rejects, such as one with a remote host, reads nothing). Remote URLs and
+  OpenClaw's own `media://` store are not checked.
+- **Tool Search.** The dispatcher (`tool_call`; `dispatch_action` in newer
+  versions) passes: OpenClaw runs the target tool through `before_tool_call`
+  again, where it is checked. Its output is scanned as file content.
 - **Processes.** Text written or pasted into a running process (`process`
   with `write` or `paste`) is checked as a POSIX command and always asks;
   submitting pending input (`submit`), closing a process's input (`write`
@@ -539,8 +555,11 @@ from a chat, OpenClaw can forward plugin approvals to fixed targets
   plugin sees the original parameters, so h-guard checks the call as the model
   made it.
 - Tools of other plugins and of channels ask (`tool_unknown`, see
-  [Tools h-guard does not know](#tools-h-guard-does-not-know)); MCP tools
-  (`<server>__<tool>`) pass.
+  [Tools h-guard does not know](#tools-h-guard-does-not-know)). MCP tools pass
+  only when the plugin can tell they come from a server under `mcp.servers` in
+  OpenClaw's configuration (OpenClaw names them `<server>__<tool>`); a name
+  with `__` alone is not enough, and tools of MCP servers that plugins bundle
+  ask like other plugin tools.
 - Gateway's `/tools/invoke` HTTP endpoint goes through `before_tool_call` but
   not through the tool result middleware.
 
@@ -554,7 +573,8 @@ For pi, oh-my-pi, DeepSeek Harness and OpenClaw, h-guard knows every tool the ha
 
 - tools that run commands or change files are checked as actions;
 - tools that only read, search, plan or coordinate pass;
-- MCP tools (`mcp__…`, on OpenClaw `<server>__<tool>`) pass, as on the other harnesses;
+- MCP tools (`mcp__…`; on OpenClaw `<server>__<tool>` from a server under
+  `mcp.servers`) pass, as on the other harnesses;
 - anything else asks, with the reason `tool_unknown`. That covers the
   harness's remaining tools, which can run code, install plugins, schedule
   runs or change remote repositories, and tools added by extensions or

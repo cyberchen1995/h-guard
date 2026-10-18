@@ -43,6 +43,7 @@ export default {
           derivedPaths: event.derivedPaths,
           platform: process.platform,
           execHost: event.toolName === 'exec' && event.toolKind !== 'code_mode_exec' ? await execHost(api, event, ctx) : undefined,
+          toolSource: mcpTool(api, event.toolName) ? 'mcp' : undefined,
         },
       }, ctx.abortSignal)
       if (reply.action === 'deny') {
@@ -163,6 +164,31 @@ function describe(event, reply) {
 
 // execHost 返回 exec 实际运行的位置：调用自己给了 node 或 host（auto 以外）时就是它；否则依次是会话的 /exec 设置、
 // agent 的 tools.exec.host、全局的 tools.exec.host，都没有时是 auto。读这些设置出错时是 unknown，h-guard 请求确认
+// mcpTool 报告工具是不是配置里的 MCP 服务器提供的：OpenClaw 把 MCP 工具命名为 <服务器的安全名>__<工具>
+// （src/agents/agent-bundle-mcp-names.ts：非 [A-Za-z0-9_-] 的字符换成 -，不以字母开头时加 mcp- 前缀，截到 30 个字符，
+// 按声明顺序给重名的加 -2、-3）。只认 mcp.servers 里的服务器；插件随包带的 MCP 服务器与读不到配置时都不算，按不认识
+// 的工具处理（请求确认）。
+function mcpTool(api, name) {
+  if (typeof name !== 'string' || !name.includes('__')) return false
+  try {
+    const servers = (api.runtime.config.current() || {}).mcp?.servers
+    if (!servers || typeof servers !== 'object') return false
+    const used = new Set()
+    for (const server of Object.keys(servers)) {
+      let base = server.trim().replace(/[^A-Za-z0-9_-]/g, '-') || 'mcp'
+      if (!/^[A-Za-z]/.test(base)) base = 'mcp-' + base
+      base = base.slice(0, 30)
+      let safe = base
+      for (let n = 2; used.has(safe.toLowerCase()); n++) safe = base.slice(0, Math.max(1, 30 - String(n).length - 1)) + '-' + n
+      used.add(safe.toLowerCase())
+      if (servers[server] && servers[server].enabled !== false && name.startsWith(safe + '__')) return true
+    }
+  } catch (err) {
+    return false
+  }
+  return false
+}
+
 async function execHost(api, event, ctx) {
   const p = event && event.params && typeof event.params === 'object' ? event.params : {}
   if (typeof p.node === 'string' && p.node.trim() !== '') return 'node'
