@@ -197,12 +197,18 @@ func TestHermesStale(t *testing.T) {
 // TestHermesVersion：hermes --version 打印 Hermes Agent v<版本>[+<提交>] (<日期>)。
 func TestHermesVersion(t *testing.T) {
 	tg := target(t, "linux")
-	out := "Hermes Agent v2026.9.1+12.gabc1234 (2026.9.1)\n"
+	out := "Hermes Agent v2026.9.1+12.gabc1234\n"
 	tg.Run = func(name string, args ...string) ([]byte, error) { return []byte(out), nil }
 	if n := ExtNotes(tg, "hermes"); len(n) != 1 || !strings.Contains(n[0], "Hermes Agent 2026.9.1 is older") {
 		t.Errorf("notes: %v", n)
 	}
-	for _, out = range []string{"Hermes Agent v2026.9.24 (2026.9.24) · main\n", "Hermes Agent vunknown (2026.9.24)\nInstall directory: /x\n"} {
+	// 正常的安装：版本号是语义化版本，比较的是括号里的发布日期
+	out = "Hermes Agent v0.21.6 (2026.9.1)\n"
+	if n := ExtNotes(tg, "hermes"); len(n) != 1 || !strings.Contains(n[0], "Hermes Agent 2026.9.1 is older") {
+		t.Errorf("semver with an older date: %v", n)
+	}
+	for _, out = range []string{"Hermes Agent v2026.9.24 (2026.9.24) · main\n", "Hermes Agent vunknown (2026.9.24)\nInstall directory: /x\n",
+		"Hermes Agent v0.21.6 (2026.9.24)\n", "Hermes Agent v0.21.6+3.gabc1234 (2026.10.2) · main\n", "Hermes Agent v0.19.0 · stable\n"} {
 		if n := ExtNotes(tg, "hermes"); len(n) != 0 {
 			t.Errorf("%q: notes %v", out, n)
 		}
