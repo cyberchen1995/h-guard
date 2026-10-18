@@ -48,7 +48,7 @@ func statusProtection(s setup, o Options) {
 	_, jst := s.actionJudge(o)
 	judgeUsable := jst.backend != nil && jst.consent == consentGranted
 	// 类别题要另外同意 outbound 范围：只同意了 action 范围时模型不检查提示词与工具输出
-	fmt.Fprintf(o.Stdout, "  prompts and tool output: %s (scans %s)\n", listOrNone(outboundCoverage(s, judgeUsable && jst.outbound)), outboundScope[s.cfg.Outbound.Tier])
+	fmt.Fprintf(o.Stdout, "  prompts and tool output: %s (scans %s)\n", listOrNone(outboundCoverage(s, judgeUsable && jst.outbound, jst.pii)), outboundScope[s.cfg.Outbound.Tier])
 	for _, gap := range coverageGaps(s, judgeUsable) {
 		fmt.Fprintln(o.Stdout, "  not covered:", gap)
 	}
@@ -117,7 +117,7 @@ func harnessLayers(t install.Target, o Options, h, extra string) []string {
 		case st.Config != configFingerprint(o):
 			test += " (the config or rules changed since; run h-guard selftest " + h + ")"
 		case extra != "":
-			test += " (without --config " + extra + ", which this status includes)"
+			test += " (without --config " + action.Visible(extra) + ", which this status includes)"
 		}
 	}
 	return []string{written, running, test}
@@ -188,7 +188,8 @@ func fileKindsCovered(r *rules.Rule, tier int) bool {
 
 // outboundCoverage 是生效的 outbound 类别与动作。
 // judgeUsable 是判断后端真的能用：只靠类别题的类别只有这时才被检查。
-func outboundCoverage(s setup, judgeUsable bool) []string {
+// piiConsent 是同意也含 pii 范围：没有时模型不问 PII 题。
+func outboundCoverage(s setup, judgeUsable, piiConsent bool) []string {
 	// 记下每个类别的规则扫描哪类事件：只扫其中一类的类别要注明，不能说成提示词与工具输出都受保护
 	active := map[string]map[guard.EventKind]bool{}
 	for _, r := range s.rules.Outbound() {
@@ -221,7 +222,7 @@ func outboundCoverage(s setup, judgeUsable bool) []string {
 	// 只有类别题、没有本地规则的类别由模型检查，命中只提示；Codex 与 DeepSeek Harness 显示不了提示，在那里不检查
 	if judgeUsable && s.cfg.OutboundJudge() {
 		for _, name := range slices.Sorted(maps.Keys(s.cfg.Outbound.Categories)) {
-			if c := s.cfg.Category(name); c.Enabled && c.Question != nil && active[name] == nil {
+			if c := s.cfg.Category(name); c.Enabled && c.Question != nil && active[name] == nil && (name != "pii" || piiConsent) {
 				out = append(out, name+" warn (judge only, not on Codex or DeepSeek Harness)")
 			}
 		}

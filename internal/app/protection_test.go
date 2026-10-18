@@ -710,3 +710,31 @@ func TestSelftestRunsOnlyThisHGuard(t *testing.T) {
 		t.Errorf("exit %d, entries run %v\n%s", code, calls, out)
 	}
 }
+
+// TestStatusNeedsPIIConsentForPII：同意不含 pii 范围时模型不问 PII 题，摘要不把 pii 列为模型检查的类别。
+func TestStatusNeedsPIIConsentForPII(t *testing.T) {
+	e := newEnv(t)
+	srv := newJevServer(t, 0.9)
+	e.judgeConfig(srv, "")
+	b, _ := os.ReadFile(filepath.Join(e.configDir, "config.yaml"))
+	// PII 的本地规则全部停用：这个类别只靠模型
+	off := "rules: {"
+	for _, r := range []string{"cn_id", "email", "ip", "phone_cn", "phone_intl", "us_ssn"} {
+		off += "pii." + r + ": {enabled: false}, "
+	}
+	e.config(string(b) + off + "}\noutbound: {categories: {pii: {enabled: true, action: warn, question: {question: 'Does the text name a person?'}}}}\n")
+	id := consent.Identity{Backend: "jev", Type: "typesafe", Target: srv.URL}
+	store := consent.Store{Dir: e.configDir}
+	if err := store.Grant(id, []consent.Scope{consent.ScopeAction, consent.ScopeOutbound}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if out, _, _ := e.run(nil, "status"); strings.Contains(out, "pii warn (judge only") {
+		t.Errorf("listed without PII consent:\n%s", out)
+	}
+	if err := store.Grant(id, []consent.Scope{consent.ScopeAction, consent.ScopeOutbound, consent.ScopePII}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if out, _, _ := e.run(nil, "status"); !strings.Contains(out, "pii warn (judge only") {
+		t.Errorf("not listed with PII consent:\n%s", out)
+	}
+}
