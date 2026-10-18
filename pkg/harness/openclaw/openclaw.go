@@ -84,9 +84,6 @@ type toolData struct {
 	// ExecHost 是插件解析出的 exec 实际运行的位置：调用自己的 host（或 node），没有时依次取会话的 /exec 设置、agent 与
 	// tools.exec 的配置（auto、gateway、sandbox、node）；读不到这些设置时为 unknown。没有这个字段时用参数里的 host。
 	ExecHost string `json:"execHost"`
-	// ToolSource 是插件给出的工具来源：mcp 表示工具名的 <服务>__ 前缀是配置里的 MCP 服务器（见 MCP 工具的说明）；
-	// 没有时按 OpenClaw 自带或插件提供的工具处理。
-	ToolSource string `json:"toolSource"`
 }
 
 // params 是工具参数里 h-guard 用到的字段。path、file_path、filePath 是 OpenClaw 文件工具接受的路径写法（依次取第一个）。
@@ -180,7 +177,7 @@ func (Adapter) Parse(raw []byte) (guard.Event, error) {
 		if d.ToolName == "exec" {
 			ev.Cwd = extadapter.Workdir(ev.Cwd, in.Workdir)
 		}
-		acts, err := actions(d.ToolName, in, rawParams, d.Platform, d.ToolSource == "mcp" && strings.Contains(d.ToolName, "__"))
+		acts, err := actions(d.ToolName, in, rawParams, d.Platform)
 		if errors.Is(err, errUnparsed) {
 			ev.Actions = acts
 			return guard.Event{}, &harness.TargetUnparsedError{Event: ev}
@@ -234,9 +231,9 @@ func SourceOf(trigger, provenance, sessionKey string) guard.Source {
 // canvas 只有部分子命令在内（见 openclawActions）。
 // 其余 OpenClaw 自带的工具（向终端或运行中的进程输入、控制桌面与手机、节点、Gateway 更新与配置、插件管理、定时任务、
 // 技能与个人指令的改写、凭据、发布 GitHub PR、暴露本地服务、远端代码执行等）与插件提供的工具 h-guard 不认识，请求确认；
-// 用户可以在 harnesses.openclaw.read_only_tools 里补充只读的工具。MCP 工具与其他 harness 一样不检查，但要插件确认
-// 来源（toolSource=mcp：工具名的 <服务>__ 前缀是 mcp.servers 里的服务器）；只看名字里的 __ 不算，插件的工具也可以
-// 这样命名。Tool Search 的调用工具（tool_call，较新版本叫 dispatch_action）不产生动作：OpenClaw 调用目标工具时
+// 用户可以在 harnesses.openclaw.read_only_tools 里补充只读的工具。MCP 工具（<服务>__<工具>）同样请求确认：插件
+// 读不到 OpenClaw 实际的工具目录，分不出它们与同样这样命名的插件工具（mcp.servers 里有 github 时，插件的
+// github__delete 名字上也像 MCP 工具），只按名字放行不可靠；只读的 MCP 工具可以写进 read_only_tools（如 github__get_*）。Tool Search 的调用工具（tool_call，较新版本叫 dispatch_action）不产生动作：OpenClaw 调用目标工具时
 // 再经过一次 before_tool_call。工具参数里引用的本地文件（附件、参考图、PDF 等，见 fileRefs）按读文件检查。
 var openclawReadOnly = map[string]bool{
 	"ls": true, "find": true, "glob": true, "search": true, "tool_search": true, "tool_describe": true, "wait": true,
@@ -317,7 +314,7 @@ func execActions(cmd string, sh []guard.Shell) []guard.Action {
 // 与文件 h-guard 看不到，按 POSIX 检查并请求确认；插件读不到运行位置（unknown）时另外请求确认）；read、grep、view_image 读文件；write、edit 写文件；apply_patch 按补丁里的文件；process 向
 // 运行中的进程写入的内容按命令检查并请求确认，提交输入（submit）、关闭 stdin、发送按键、结束进程请求确认，查看进程的
 // 子命令（list、poll、log）与 clear 不产生动作。其余工具不产生动作，或是不认识的工具。
-func actions(tool string, in params, raw json.RawMessage, platform string, mcp bool) ([]guard.Action, error) {
+func actions(tool string, in params, raw json.RawMessage, platform string) ([]guard.Action, error) {
 	one := func(act guard.Action, ok bool) ([]guard.Action, error) {
 		if !ok {
 			return nil, ErrNoAction
@@ -392,9 +389,6 @@ func actions(tool string, in params, raw json.RawMessage, platform string, mcp b
 		if acts := refReads(tool, raw, platform); len(acts) > 0 {
 			return acts, nil
 		}
-		return nil, ErrNoAction
-	}
-	if mcp {
 		return nil, ErrNoAction
 	}
 	return nil, errUnknownTool

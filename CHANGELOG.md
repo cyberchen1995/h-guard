@@ -76,9 +76,9 @@ minor releases. Every such change is recorded in this file.
   `browser`, `message`, `sessions`, `transcripts` and `canvas` by action (only
   observing the browser, reading and sending messages pass). Local files that
   tools send away (message attachments, PDFs, reference media, `MEDIA:` lines)
-  are checked as file reads, with `file:` URLs decoded as OpenClaw does. MCP
-  tools pass only when they come from a server in `mcp.servers`; other tools
-  and actions ask (`tool_unknown`). An opt-in channel notifier
+  are checked as file reads, with `file:` URLs decoded as OpenClaw does. Other
+  tools and actions ask (`tool_unknown`), MCP tools included: the plugin cannot
+  tell them from plugin tools with the same kind of name. An opt-in channel notifier
   (`plugins.entries.h-guard.config.notify` in OpenClaw's configuration) sends
   denials and warnings to chats with `openclaw message send`.
 - The locked `guard_tampering` rule also protects `openclaw.json` (including

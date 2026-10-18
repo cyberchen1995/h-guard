@@ -108,7 +108,6 @@ func TestNoAction(t *testing.T) {
 		call("web_fetch", map[string]any{"url": "https://example.com"}),
 		call("sessions_spawn", map[string]any{"task": "x"}),
 		call("message", map[string]any{"action": "send", "message": "done"}),
-		req("before_tool_call", map[string]any{"toolName": "github__create_issue", "toolCallId": "c1", "params": map[string]any{"title": "x"}, "platform": "linux", "toolSource": "mcp"}, nil),
 		// Tool Search 的调用工具：OpenClaw 调用目标工具时再经过 before_tool_call
 		call("tool_call", map[string]any{"id": "openclaw:core:exec", "args": map[string]any{"command": "rm -rf ~"}}),
 		call("dispatch_action", map[string]any{"id": "openclaw:core:exec", "args": map[string]any{"command": "rm -rf ~"}}),
@@ -145,8 +144,8 @@ func TestAsks(t *testing.T) {
 		t.Errorf("process write: the command is checked as well")
 	}
 	var ut *harness.UnknownToolError
-	// calendar__delete：名字像 MCP 工具，但插件没有确认来源（插件的工具也可以这样命名）
-	for _, tool := range []string{"nodes", "gateway", "plugins", "automations", "computer", "terminal", "secrets", "github_publish", "my_plugin_tool", "calendar__delete"} {
+	// <服务>__<工具>：插件分不出 MCP 工具与同样这样命名的插件工具
+	for _, tool := range []string{"nodes", "gateway", "plugins", "automations", "computer", "terminal", "secrets", "github_publish", "my_plugin_tool", "calendar__delete", "github__create_issue"} {
 		if _, err := a.Parse(call(tool, map[string]any{})); !errors.As(err, &ut) || ut.Event.Tool != tool {
 			t.Errorf("%s: %v, want UnknownToolError", tool, err)
 		}

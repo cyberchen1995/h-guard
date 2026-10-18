@@ -564,11 +564,13 @@ from a chat, OpenClaw can forward plugin approvals to fixed targets
   plugin sees the original parameters, so h-guard checks the call as the model
   made it.
 - Tools of other plugins and of channels ask (`tool_unknown`, see
-  [Tools h-guard does not know](#tools-h-guard-does-not-know)). MCP tools pass
-  only when the plugin can tell they come from a server under `mcp.servers` in
-  OpenClaw's configuration (OpenClaw names them `<server>__<tool>`); a name
-  with `__` alone is not enough, and tools of MCP servers that plugins bundle
-  ask like other plugin tools.
+  [Tools h-guard does not know](#tools-h-guard-does-not-know)). On OpenClaw,
+  MCP tools (`<server>__<tool>`) ask as well, unlike on the other harnesses:
+  the plugin cannot read OpenClaw's tool catalog, so it cannot tell an MCP
+  tool from a plugin tool with the same kind of name (with a `github` server
+  configured, a plugin's `github__delete` looks just like an MCP tool). List
+  the read-only ones in `harnesses.openclaw.read_only_tools`, for example
+  `github__get_*`.
 - Gateway's `/tools/invoke` HTTP endpoint goes through `before_tool_call` but
   not through the tool result middleware.
 
@@ -582,8 +584,8 @@ For pi, oh-my-pi, DeepSeek Harness and OpenClaw, h-guard knows every tool the ha
 
 - tools that run commands or change files are checked as actions;
 - tools that only read, search, plan or coordinate pass;
-- MCP tools (`mcp__…`; on OpenClaw `<server>__<tool>` from a server under
-  `mcp.servers`) pass, as on the other harnesses;
+- MCP tools (`mcp__…`) pass, as on the other harnesses; on OpenClaw they ask
+  (see the OpenClaw section);
 - anything else asks, with the reason `tool_unknown`. That covers the
   harness's remaining tools, which can run code, install plugins, schedule
   runs or change remote repositories, and tools added by extensions or
@@ -597,7 +599,7 @@ harnesses:
   pi: {read_only_tools: [web_*]}
   omp: {read_only_tools: [my_search, docs_*]}
   dsh: {read_only_tools: [plugin_market]}
-  openclaw: {read_only_tools: [my_lookup, docs_*]}
+  openclaw: {read_only_tools: [my_lookup, docs_*, github__get_*]}
 ```
 
 The list only applies to tools h-guard does not know: a shell or file tool
