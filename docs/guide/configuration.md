@@ -103,7 +103,8 @@ log:      {decisions: false, retention_days: 14}
 | `policy.request_window` | `3` | Number of your most recent prompts sent to the judge to decide whether you asked for an operation (`>= 1`). |
 | `policy.max_command_chars` | `8000` | Longer commands are shortened in the middle before sending (`>= 1`). A shortened command cannot be released by a request or withdrawn by the judge. |
 | `policy.max_request_chars` | `2000` | Longer prompts are shortened in the middle before sending (`>= 1`), with the same effect. |
-| `harnesses.<name>.shell` | `posix` | Shell assumed when the harness does not say which shell runs a command (Codex): `posix` or `powershell`. `install codex` asks for it on Windows. |
+| `harnesses.<name>.shell` | `posix` | Shell assumed when the harness does not say which shell runs a command (Codex, opencode): `posix` or `powershell`. `install codex` and `install opencode` ask for it on Windows. |
+| `harnesses.<name>.read_only_tools` | `[]` | pi, oh-my-pi (`omp`) and DeepSeek Harness (`dsh`): tools h-guard does not know that only read, so they need no confirmation. Names may use `*` and `?`. h-guard keeps its own list of each harness's read-only tools and asks for any other tool it does not know; tools it knows (shells, file tools, patches) are always checked, whatever this list says. See the [harness guide](harnesses.md#tools-h-guard-does-not-know). |
 | `log.decisions` | `false` | Write a decision log with the full commands (credentials h-guard recognizes are masked). The health log of degradations is always written. |
 | `log.retention_days` | `14` | Days to keep log files (`>= 1`). |
 

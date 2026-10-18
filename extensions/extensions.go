@@ -7,3 +7,18 @@ import "embed"
 //
 //go:embed claudecode/.claude-plugin claudecode/hooks
 var ClaudeCode embed.FS
+
+// OpenCode 是 opencode 1.x 的插件（单个文件）。
+//
+//go:embed opencode/h-guard.js
+var OpenCode []byte
+
+// Pi 是 pi 与 oh-my-pi（omp）共用的扩展（单个文件）。
+//
+//go:embed pi/h-guard.js
+var Pi []byte
+
+// DSH 是 DeepSeek Harness 的 Cordis 插件（单个文件）。
+//
+//go:embed dsh/h-guard.mjs
+var DSH []byte

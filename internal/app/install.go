@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -25,20 +26,20 @@ func runInstall(args []string, o Options) int {
 	write := fs.Bool("write", false, "write the changes (default: only print them)")
 	remove := fs.Bool("remove", false, "remove h-guard's entries instead of installing them")
 	timeout := fs.Int("timeout", 20, "hook timeout in seconds, also passed to h-guard")
-	shell := fs.String("shell", "", "codex: the shell Codex runs commands with (posix or powershell)")
+	shell := fs.String("shell", "", "codex, opencode: the shell the harness runs commands with (posix or powershell)")
 	pos, err := parseInterleaved(fs, args)
 	if err != nil || len(pos) != 1 || *timeout < 2 || *timeout > 600 {
 		fmt.Fprint(o.Stderr, usage)
 		return 2
 	}
 	harness := pos[0]
-	if harness != "claudecode" && harness != "codex" {
-		fmt.Fprintf(o.Stderr, "h-guard: cannot install into %q (known: claudecode, codex)\n", harness)
+	if !slices.Contains(installable, harness) {
+		fmt.Fprintf(o.Stderr, "h-guard: cannot install into %q (known: %s)\n", harness, strings.Join(installable, ", "))
 		fmt.Fprint(o.Stderr, usage)
 		return 2
 	}
-	if *shell != "" && (harness != "codex" || !guard.Shell(*shell).Valid()) {
-		fmt.Fprintln(o.Stderr, "h-guard: --shell is posix or powershell, and only for codex")
+	if *shell != "" && (!shellHarnesses[harness] || !guard.Shell(*shell).Valid()) {
+		fmt.Fprintln(o.Stderr, "h-guard: --shell is posix or powershell, and only for codex and opencode")
 		return 2
 	}
 	if o.ConfigDir == "" || o.CacheDir == "" || o.Home == "" {
@@ -72,8 +73,24 @@ func runInstall(args []string, o Options) int {
 	}
 	t := install.Target{Home: o.Home, ConfigDir: o.ConfigDir, CacheDir: o.CacheDir, Bin: bin, Timeout: *timeout,
 		GOOS: o.GOOS, Getenv: o.Getenv, Run: o.RunHarness, Now: o.Now}
-	if harness == "codex" {
-		return installCodex(o, t, *shell, *write, *remove)
+	switch harness {
+	case "codex":
+		steps, err := install.Codex(t, *remove)
+		if err != nil {
+			fmt.Fprintln(o.Stderr, "h-guard:", err)
+			return 1
+		}
+		return installWithShell(o, t, harness, "Codex", steps, install.CodexNotes, *shell, *write, *remove)
+	case "opencode":
+		steps, err := install.OpenCode(t, *remove)
+		if err != nil {
+			fmt.Fprintln(o.Stderr, "h-guard:", err)
+			return 1
+		}
+		notes := func(t install.Target) []string { return install.ExtNotes(t, harness) }
+		return installWithShell(o, t, harness, "opencode", steps, notes, *shell, *write, *remove)
+	case "pi", "omp", "dsh":
+		return installExt(o, t, harness, *write, *remove)
 	}
 	steps, err := install.ClaudeCode(t, *remove)
 	if err != nil {
@@ -101,20 +118,21 @@ func runInstall(args []string, o Options) int {
 	})
 }
 
-// installCodex 注册 Codex 的原生 hook（~/.codex/hooks.json）。Codex 标不出 shell：给了 --shell 时写进
-// harnesses.codex.shell；Windows 上没有给时在终端里询问（默认 powershell），非交互时要求 --shell。
-func installCodex(o Options, t install.Target, shell string, write, remove bool) int {
-	steps, err := install.Codex(t, remove)
-	if err != nil {
-		fmt.Fprintln(o.Stderr, "h-guard:", err)
-		return 1
-	}
+// installable 是 install 能接入的 harness；shellHarnesses 是标不出 shell、要由 harnesses.<name>.shell 给出的 harness。
+var (
+	installable    = []string{"claudecode", "codex", "opencode", "pi", "omp", "dsh"}
+	shellHarnesses = map[string]bool{"codex": true, "opencode": true}
+)
+
+// installWithShell 执行标不出 shell 的 harness（Codex、opencode）的步骤：给了 --shell 时写进
+// harnesses.<harness>.shell；Windows 上没有给时在终端里询问（默认 powershell），非交互时要求 --shell。
+func installWithShell(o Options, t install.Target, harness, product string, steps []install.Step, notes func(install.Target) []string, shell string, write, remove bool) int {
 	if !remove && shell == "" && o.GOOS == "windows" {
 		if !o.IsTerminal() {
-			fmt.Fprintln(o.Stderr, "h-guard: on Windows, say which shell Codex runs commands with: --shell powershell or --shell posix")
+			fmt.Fprintf(o.Stderr, "h-guard: on Windows, say which shell %s runs commands with: --shell powershell or --shell posix\n", product)
 			return 2
 		}
-		fmt.Fprint(o.Stdout, "Which shell does Codex run commands with on this machine, powershell or posix (WSL, Git Bash)? [powershell] ")
+		fmt.Fprintf(o.Stdout, "Which shell does %s run commands with on this machine, powershell or posix (WSL, Git Bash)? [powershell] ", product)
 		answer, _ := bufio.NewReader(o.Stdin).ReadString('\n')
 		shell = strings.ToLower(strings.TrimSpace(answer))
 		if shell == "" {
@@ -126,7 +144,7 @@ func installCodex(o Options, t install.Target, shell string, write, remove bool)
 		}
 	}
 	if shell != "" && !remove {
-		step, err := install.HarnessShell(t, "codex", shell)
+		step, err := install.HarnessShell(t, harness, shell)
 		if err != nil {
 			fmt.Fprintln(o.Stderr, "h-guard:", err)
 			return 1
@@ -134,11 +152,45 @@ func installCodex(o Options, t install.Target, shell string, write, remove bool)
 		steps = append(steps, step)
 	}
 	if !remove {
-		for _, n := range install.CodexNotes(t) {
+		for _, n := range notes(t) {
 			fmt.Fprintln(o.Stdout, "note:", n)
 		}
 	}
-	return applySteps(o, steps, write, remove, func() int { return 0 })
+	return applySteps(o, steps, write, remove, func() int {
+		if harness == "opencode" {
+			fmt.Fprintln(o.Stdout, "restart opencode for the change to take effect")
+		}
+		return 0
+	})
+}
+
+// installExt 写出或删掉 pi、omp 的扩展与 DeepSeek Harness 的插件。
+func installExt(o Options, t install.Target, harness string, write, remove bool) int {
+	var steps []install.Step
+	var err error
+	if harness == "dsh" {
+		steps, err = install.DSH(t, remove)
+	} else {
+		steps, err = install.Pi(t, harness, remove)
+	}
+	if err != nil {
+		fmt.Fprintln(o.Stderr, "h-guard:", err)
+		return 1
+	}
+	if !remove {
+		for _, n := range install.ExtNotes(t, harness) {
+			fmt.Fprintln(o.Stdout, "note:", n)
+		}
+	}
+	return applySteps(o, steps, write, remove, func() int {
+		switch harness {
+		case "dsh":
+			fmt.Fprintln(o.Stdout, "restart DeepSeek Harness for the change to take effect; the plugin is mounted for every profile")
+		default:
+			fmt.Fprintf(o.Stdout, "restart %s (or run /reload) for the change to take effect\n", harness)
+		}
+		return 0
+	})
 }
 
 // applySteps 打印或执行 install 的步骤。没有改动时说明已是目标状态；只打印时列出将改动的路径与新内容，

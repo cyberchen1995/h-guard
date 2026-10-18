@@ -5,8 +5,9 @@
 h-guard is a safety guardrail for agent harnesses. It checks what an agent is
 about to do (shell commands and file operations) and what passes through it
 (your prompts and tool output), and denies, asks for confirmation or warns
-before something destructive runs or a secret leaks. It works with Claude Code
-and Codex, and with any other agent harness through a generic JSON contract.
+before something destructive runs or a secret leaks. It works with Claude Code,
+Codex, opencode, pi, oh-my-pi and DeepSeek Harness, and with any other agent
+harness through a generic JSON contract.
 
 <p align="center"><img src=".github/assets/how-it-works.svg" alt="How h-guard works" width="720"></p>
 
@@ -85,6 +86,10 @@ writes.
 h-guard install claudecode            # preview
 h-guard install claudecode --write    # Claude Code: installs the h-guard plugin
 h-guard install codex --write         # Codex: registers hooks in ~/.codex/hooks.json
+h-guard install opencode --write      # opencode 1.x: writes a plugin to ~/.config/opencode/plugins
+h-guard install pi --write            # pi: writes an extension to ~/.pi/agent/extensions
+h-guard install omp --write           # oh-my-pi: writes an extension to ~/.omp/agent/extensions
+h-guard install dsh --write           # DeepSeek Harness: mounts a plugin in ~/.dsh/cordis.patch.yml
 ```
 
 For Codex, open Codex and run `/hooks` to review and trust the h-guard hooks.
@@ -243,6 +248,16 @@ the [rule pack guide](docs/guide/rules.md) for writing rules.
 |---|---|---|
 | Claude Code | 2.1.290 or later (needs mods for tool output and prompts) | 2.1.296 |
 | Codex | the version verified, or later | 0.162.1 |
+| opencode | 1.x (opencode 2.x has a different plugin API and is not supported) | 1.19.3 (smoke test) |
+| pi | the version tested, or later | 1.3.0 (smoke test) |
+| oh-my-pi | the version tested, or later | 18.11.3 (smoke test) |
+| DeepSeek Harness | the version tested, or later | 0.2.1-rc.2 (smoke test) |
+
+The opencode, pi, oh-my-pi and DeepSeek Harness extensions were written against
+each harness's source code, are tested in CI against simulated harness APIs,
+and were smoke-tested in the real harnesses with a simulated model server
+(blocking, asking, replacing tool output, blocking prompts). There are no
+recorded sessions of them yet.
 
 `install` and `status` say when a harness version has not been verified; they
 do not refuse it. Other agent harnesses can call h-guard through the
@@ -258,6 +273,17 @@ on Windows.
 
 - **Codex cannot ask.** Codex does not support asking for confirmation from a
   hook, so every `ask` becomes `deny` there (`policy.when_ask_unsupported`).
+- **opencode cannot ask either.** opencode's plugin API has no way to ask the
+  user, so every `ask` becomes `deny` there as well; warnings are shown as TUI
+  toasts and are not visible in `opencode run`.
+- **DeepSeek Harness cannot show warnings.** Warnings go to its log only, and a
+  blocked prompt is dropped without a message in the conversation.
+- **oh-my-pi's `eval` tool asks.** h-guard cannot read Python or JavaScript
+  code, so every `eval` call needs your confirmation.
+- **Unknown tools ask on pi, oh-my-pi and DeepSeek Harness.** Tools that are not on
+  h-guard's list of the harness's own tools (for example ones added by an
+  extension) need your confirmation until you list them in
+  `harnesses.<name>.read_only_tools`.
 - **Codex hooks must be trusted.** After `install codex --write` you have to
   trust the hooks with `/hooks` in Codex; until then they do not run, and
   `h-guard status` cannot tell.
@@ -293,6 +319,7 @@ on Windows.
 ```sh
 h-guard install claudecode --remove --write
 h-guard install codex --remove --write
+h-guard install opencode --remove --write   # likewise pi, omp, dsh
 ```
 
 `--remove` deletes only h-guard's own entries and keeps everything else in the
@@ -306,8 +333,8 @@ delete the file) and, if you like, h-guard's configuration directory.
 - [Rule packs](docs/guide/rules.md): writing action and outbound rules.
 - [Protocols](docs/guide/protocols.md): the judge exec protocol, the generic
   harness contract and the extension protocol.
-- [Harnesses](docs/guide/harnesses.md): how Claude Code and Codex are
-  connected, and what each can do.
+- [Harnesses](docs/guide/harnesses.md): how each harness is connected, and
+  what each can do.
 - [Changelog](CHANGELOG.md), [security policy](SECURITY.md),
   [contributing](CONTRIBUTING.md).
 

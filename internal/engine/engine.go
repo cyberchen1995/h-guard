@@ -27,6 +27,7 @@ const (
 	FallbackInputTooLarge     = "input_too_large"
 	FallbackConfigInvalid     = "config_invalid"
 	FallbackTargetUnparsed    = "target_unparsed" // 文件工具的目标无法解析
+	FallbackToolUnknown       = "tool_unknown"    // adapter 不认识的工具，也不在 read_only_tools 里
 )
 
 // Engine 运行 Check 并产生 Outcome。字段在构造后只读。

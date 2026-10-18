@@ -9,6 +9,38 @@ minor releases. Every such change is recorded in this file.
 
 ## [Unreleased]
 
+### Harnesses
+
+- `h-guard install opencode|pi|omp|dsh` connects opencode 1.x, pi, oh-my-pi
+  and DeepSeek Harness. Each gets a thin extension that hands tool calls, tool
+  output and prompts to h-guard through the extension protocol v1: a plugin in
+  opencode's plugin directory, an extension in pi's or oh-my-pi's extensions
+  directory, and a Cordis plugin mounted in `$DSH_HOME/cordis.patch.yml`.
+  `status` reports them. The extensions were written against each harness's
+  source and have not yet been verified with recorded sessions.
+- pi, oh-my-pi and DeepSeek Harness: h-guard keeps a list of each harness's
+  read-only tools and asks for any other tool it does not know (`tool_unknown`).
+  `harnesses.<name>.read_only_tools` adds your own read-only tools; it cannot
+  loosen the checks on tools h-guard knows.
+- opencode cannot ask, so `ask` becomes `deny` there; `install opencode` takes
+  `--shell` and writes `harnesses.opencode.shell`, as for Codex.
+- The locked `guard_tampering` rule also protects the new extensions and the
+  settings that can turn them off (oh-my-pi's `config.yml`, pi's and oh-my-pi's
+  `settings.json`, DeepSeek Harness's patches), also under `XDG_CONFIG_HOME`,
+  `PI_CODING_AGENT_DIR`, `PI_CONFIG_DIR` and `DSH_HOME` and in PowerShell's
+  `$env:` form. Path patterns can use `{xdg_config}`, `{pi_agent_dir}`,
+  `{omp_config}` and `{dsh_home}`.
+
+### Public packages
+
+- New adapters `pkg/harness/opencode`, `pkg/harness/pi` (registers `pi` and
+  `omp`) and `pkg/harness/dsh`.
+- `pkg/harness` adds `UnknownToolError` for tools an adapter does not know.
+- `pkg/harness` adds `ErrNoAction` and the optional `NoActionRenderer`: an
+  adapter that answers every request (extension protocol) replies `pass` to a
+  tool call with nothing to check, so an empty reply always means h-guard could
+  not run.
+
 ## [0.1.0] - unreleased
 
 First public release.
