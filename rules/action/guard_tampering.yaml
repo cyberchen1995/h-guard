@@ -62,8 +62,9 @@ match:
       - '(?:\.hermes/(?:profiles/[^\n;&|/]+/)?(?:config\.yaml|shell-hooks-allowlist\.json|plugins/h-guard(?![\w-]))|\$\{?HERMES_HOME\}?[/\\](?:profiles[/\\][^\n;&|/\\]+[/\\])?(?:config\.yaml|shell-hooks-allowlist\.json|plugins[/\\]h-guard(?![\w-])))[^\n;&|]*\|\s*(?:tee|sponge)\b'
       # 移动、删除 Hermes 的主目录或插件目录；hermes 命令停用、删除插件，改 plugins 下的设置或整个替换、去掉 plugins（unset、set --force）
       - '(?<![\w.])(?<![^\w]-)(?<!^-)[a-z]?(?:rm|unlink|mv|cp|install|ln|truncate|tee|chmod|chown|shred|sed\s+-i|perl\s+-[a-z]*i|python[0-9.]*\s+-c|node\s+-e|jq\b[^\n;&|]*>)\b[^\n;&|]*(?:\.hermes(?:/plugins)?|\$\{?HERMES_HOME\}?(?:[/\\]plugins)?)/?(?=$|[\s''\"`;&|)])'
-      - '(?<![\w.-])hermes(?:\.exe)?[''\")]*\s(?:[^\n;&|]*\s)?plugins\s+(?:disable|remove|rm|uninstall)\b'
-      - '(?<![\w.-])hermes(?:\.exe)?[''\")]*\s(?:[^\n;&|]*\s)?config\s+(?:set|unset)\s+[''\"]?plugins(?:\.|[''\"]?(?=$|[\s;&|)]))'
+      # 从子命令开始匹配、向前找 hermes（后顾）：从每个 hermes 开始向后找会在一长串 hermes 上退化成平方
+      - '(?<=(?<![\w.-])hermes(?:\.exe)?[''\")]*\s(?:[^\n;&|]*\s)?)plugins\s+(?:disable|remove|rm|uninstall)\b'
+      - '(?<=(?<![\w.-])hermes(?:\.exe)?[''\")]*\s(?:[^\n;&|]*\s)?)config\s+(?:set|unset)\s+[''\"]?plugins(?:\.|[''\"]?(?=$|[\s;&|)]))'
     # PowerShell：写入、删除、移动、复制到受保护路径的 cmdlet 及其别名，.NET 的文件写入，重定向；
     # 路径可用 \ 或 /，也可拆在 Join-Path 的几个参数里；另覆盖 Windows 的配置与缓存目录（$env:APPDATA、${env:APPDATA}、
     # %LOCALAPPDATA% 下的 h-guard）与 macOS 上 PowerShell 用的 ~/Library 目录。
@@ -268,6 +269,7 @@ examples:
     - {shell: posix, command: "hermes config unset plugins"}
     - {shell: posix, command: "hermes config set plugins '{}' --force"}
     - {shell: posix, command: "hermes config set 'plugins' '{enabled: []}' --force"}
+    - {shell: posix, command: "./venv/bin/hermes --profile work plugins disable h-guard"}
     - {shell: powershell, command: "Remove-Item -Recurse $env:LOCALAPPDATA\\hermes\\plugins\\h-guard"}
     - {shell: powershell, command: "Set-Content ~\\.hermes\\config.yaml -Value 'plugins: {}'"}
     - {action: file_write, path: "~/.hermes/config.yaml"}
@@ -304,6 +306,7 @@ examples:
     - {shell: posix, command: "hermes config set approvals.timeout 600"}
     - {shell: posix, command: "hermes config get plugins"}
     - {shell: posix, command: "hermes config set plugins_note x"}
+    - {shell: posix, command: "echo plugins disable h-guard"}
     - {shell: posix, command: "rm -rf ~/.hermes/plugins/other-plugin"}
     - {action: file_write, path: "~/.hermes/skills/notes/SKILL.md"}
     - {action: file_write, path: "~/.hermes/plugins/other/__init__.py"}
