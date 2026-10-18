@@ -527,10 +527,14 @@ from a chat, OpenClaw can forward plugin approvals to fixed targets
 - Runs outside the Gateway: in the smoke test `openclaw agent exec` loaded the
   plugin only for discovery, so its tool calls, tool output and prompts were
   not checked.
-- The Codex and Copilot agent runtimes: OpenClaw does not promise
-  `before_agent_run` there, and the plugin's tool result middleware is
-  registered for OpenClaw's own runtime only. Tool calls those runtimes relay
-  to `before_tool_call` have not been tested.
+- Prompts and tool output on the Codex and Copilot agent runtimes: OpenClaw
+  does not emit `before_agent_run` there, and the plugin's tool result
+  middleware is registered for OpenClaw's own runtime only, so on those turns
+  only the tool calls OpenClaw relays to `before_tool_call` are checked (not
+  tested). `install` and `h-guard status` note it when the configuration (or a
+  file it pulls in with `$include`) selects `codex` or `copilot` with
+  `agentRuntime.id`; an OpenAI model that `auto` mode hands to Codex
+  implicitly is not detected.
 - A parameter rewrite returned by another plugin's `before_tool_call`: every
   plugin sees the original parameters, so h-guard checks the call as the model
   made it.

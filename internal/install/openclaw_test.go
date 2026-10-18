@@ -469,3 +469,25 @@ func TestOpenClawIncludes(t *testing.T) {
 		t.Errorf("the plugin was not removed once no file mentions it: %v", err)
 	}
 }
+
+// TestOpenClawRuntimes：配置（含 $include 引入的文件）选择了 codex 或 copilot 运行时时，install 与 status 注明这些运行时上
+// 提示词与工具结果不检查；只选 OpenClaw 自己的运行时不提。
+func TestOpenClawRuntimes(t *testing.T) {
+	tg := target(t, "linux")
+	config := OpenClawConfig(tg)
+	writeFile(t, config, `{"agents": {"defaults": {"models": {"anthropic/x": {"agentRuntime": {"id": "openclaw"}}}}}, "models": {"$include": "./models.json5"}}`)
+	writeFile(t, filepath.Join(filepath.Dir(config), "models.json5"), "{providers: {openai: {agentRuntime: {id: 'codex'}}, 'github-copilot': {agentRuntime: { mode: 'explicit', id: \"copilot\" }}}}")
+	notes := strings.Join(OpenClawNotes(tg), "\n")
+	for _, rt := range []string{"codex", "copilot"} {
+		if !strings.Contains(notes, "runs some models on the "+rt+" agent runtime") {
+			t.Errorf("notes lack the %s runtime:\n%s", rt, notes)
+		}
+	}
+	if strings.Contains(notes, "openclaw agent runtime") {
+		t.Errorf("notes mention the OpenClaw runtime:\n%s", notes)
+	}
+	writeFile(t, filepath.Join(filepath.Dir(config), "models.json5"), "{}")
+	if notes := strings.Join(OpenClawNotes(tg), "\n"); strings.Contains(notes, "agent runtime") {
+		t.Errorf("notes without codex or copilot:\n%s", notes)
+	}
+}

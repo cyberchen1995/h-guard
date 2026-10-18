@@ -498,8 +498,32 @@ func readOpenClawState(b []byte, dir string, same func(a, b string) bool, expand
 	}, nil
 }
 
+// openclawRuntimeRe 找出 agentRuntime 选择的 codex、copilot 运行时（provider 或 model 一级的 agentRuntime.id）。
+var openclawRuntimeRe = regexp.MustCompile(`["']?agentRuntime["']?\s*:\s*\{[^{}]*?["']?id["']?\s*:\s*["'](codex|copilot)["']`)
+
+// openclawRuntimes 返回配置（及其 $include 引入的文件）里明确选择的 codex、copilot 运行时：这些运行时不发出
+// before_agent_run，插件的工具结果 middleware 也只为 OpenClaw 自己的运行时注册。只看文本：OpenAI 模型在 auto 模式下
+// 隐式选择 Codex 的情况看不出来（文档里说明）。
+func openclawRuntimes(t Target) []string {
+	includes, _ := OpenClawIncludes(t)
+	var found []string
+	for _, f := range append([]string{OpenClawConfig(t)}, includes...) {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			continue
+		}
+		for _, m := range openclawRuntimeRe.FindAllStringSubmatch(string(b), -1) {
+			if !slices.Contains(found, m[1]) {
+				found = append(found, m[1])
+			}
+		}
+	}
+	slices.Sort(found)
+	return found
+}
+
 // OpenClawNotes 返回 install 与 status 共用的提醒：OpenClaw 的版本、配置只读（install 时附上要加入的设置）、停用了全部
-// 插件、用 --profile 选择的配置档。
+// 插件、选择了 codex 或 copilot 运行时、用 --profile 选择的配置档。
 func OpenClawNotes(t Target) []string {
 	notes := ExtNotes(t, "openclaw")
 	if k := openclawManaged(t); k != "" {
@@ -516,6 +540,9 @@ func OpenClawNotes(t Target) []string {
 		if st, err := readOpenClawState(b, OpenClawPluginDir(t), t.samePath, func(p string) string { return openclawPath(t, p) }); err == nil && st.disabled {
 			notes = append(notes, fmt.Sprintf("plugins.enabled is false in %s, so OpenClaw loads no plugins, h-guard's included", OpenClawConfig(t)))
 		}
+	}
+	for _, rt := range openclawRuntimes(t) {
+		notes = append(notes, fmt.Sprintf("OpenClaw's configuration runs some models on the %s agent runtime, where OpenClaw does not emit before_agent_run and h-guard's tool output middleware is not registered: prompts and tool output on those turns are not checked, and only the tool calls OpenClaw relays to before_tool_call are", rt))
 	}
 	if p := strings.TrimSpace(t.Getenv("OPENCLAW_PROFILE")); p != "" && !strings.EqualFold(p, "default") &&
 		t.Getenv("OPENCLAW_STATE_DIR") == "" && t.Getenv("OPENCLAW_CONFIG_PATH") == "" {
