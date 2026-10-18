@@ -32,6 +32,8 @@ func Inspect(t Target, harness string) []string {
 		return inspectExt(t, harness, OMPExtension(t))
 	case "dsh":
 		return inspectDSH(t)
+	case "hermes":
+		return inspectHermes(t)
 	}
 	return nil
 }
@@ -45,6 +47,7 @@ var extHarnesses = map[string]struct {
 	"pi":       {"pi", "pi", PiWritten, 0},
 	"omp":      {"omp", "oh-my-pi", OMPWritten, 0},
 	"dsh":      {"dsh", "DeepSeek Harness", DSHWritten, 0},
+	"hermes":   {"hermes", "Hermes Agent", HermesWritten, 0},
 }
 
 // ExtNotes 返回 harness 的版本提醒（install 与 status 共用）。
@@ -147,6 +150,21 @@ func harnessVersion(t Target, name string) string {
 		return ""
 	case name == "codex":
 		return f[len(f)-1]
+	case name == "hermes":
+		// Hermes Agent v2026.9.24+3.gabc1234 (2026.9.24) …：取 v 之后、+ 之前的版本；没有安装记录也不是 git 检出时
+		// 打印 vunknown，退回括号里的发布日期（与版本号相同）
+		for _, s := range f {
+			if len(s) > 1 && s[0] == 'v' && s[1] >= '0' && s[1] <= '9' {
+				v, _, _ := strings.Cut(s[1:], "+")
+				return v
+			}
+		}
+		for _, s := range f {
+			if d := strings.TrimSuffix(strings.TrimPrefix(s, "("), ")"); len(s) > 2 && s[0] == '(' && d != "" && d[0] >= '0' && d[0] <= '9' {
+				return d
+			}
+		}
+		return ""
 	}
 	return f[0]
 }

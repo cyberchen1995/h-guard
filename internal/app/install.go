@@ -89,7 +89,7 @@ func runInstall(args []string, o Options) int {
 		}
 		notes := func(t install.Target) []string { return install.ExtNotes(t, harness) }
 		return installWithShell(o, t, harness, "opencode", steps, notes, *shell, *write, *remove)
-	case "pi", "omp", "dsh":
+	case "pi", "omp", "dsh", "hermes":
 		return installExt(o, t, harness, *write, *remove)
 	}
 	steps, err := install.ClaudeCode(t, *remove)
@@ -120,7 +120,7 @@ func runInstall(args []string, o Options) int {
 
 // installable 是 install 能接入的 harness；shellHarnesses 是标不出 shell、要由 harnesses.<name>.shell 给出的 harness。
 var (
-	installable    = []string{"claudecode", "codex", "opencode", "pi", "omp", "dsh"}
+	installable    = []string{"claudecode", "codex", "opencode", "pi", "omp", "dsh", "hermes"}
 	shellHarnesses = map[string]bool{"codex": true, "opencode": true}
 )
 
@@ -164,13 +164,16 @@ func installWithShell(o Options, t install.Target, harness, product string, step
 	})
 }
 
-// installExt 写出或删掉 pi、omp 的扩展与 DeepSeek Harness 的插件。
+// installExt 写出或删掉 pi、omp 的扩展，DeepSeek Harness 与 Hermes Agent 的插件。
 func installExt(o Options, t install.Target, harness string, write, remove bool) int {
 	var steps []install.Step
 	var err error
-	if harness == "dsh" {
+	switch harness {
+	case "dsh":
 		steps, err = install.DSH(t, remove)
-	} else {
+	case "hermes":
+		steps, err = install.Hermes(t, remove)
+	default:
 		steps, err = install.Pi(t, harness, remove)
 	}
 	if err != nil {
@@ -186,6 +189,8 @@ func installExt(o Options, t install.Target, harness string, write, remove bool)
 		switch harness {
 		case "dsh":
 			fmt.Fprintln(o.Stdout, "restart DeepSeek Harness for the change to take effect; the plugin is mounted for every profile")
+		case "hermes":
+			fmt.Fprintf(o.Stdout, "restart Hermes (hermes gateway restart, then start new sessions) for the change to take effect; other profiles under %s are not changed\n", filepath.Join(install.HermesHome(t), "profiles"))
 		default:
 			fmt.Fprintf(o.Stdout, "restart %s (or run /reload) for the change to take effect\n", harness)
 		}

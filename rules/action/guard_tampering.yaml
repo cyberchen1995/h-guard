@@ -55,6 +55,15 @@ match:
       # 目录里别的文件（plugins/other.js）不算
       - '(?<![\w.])(?<![^\w]-)(?<!^-)[a-z]?(?:rm|unlink|mv|cp|install|ln|truncate|tee|chmod|chown|shred|sed\s+-i|perl\s+-[a-z]*i|python[0-9.]*\s+-c|node\s+-e|jq\b[^\n;&|]*>)\b[^\n;&|]*(?:\.config/opencode(?:/plugins?)?|\.pi(?:/agent(?:/extensions)?)?|\.omp(?:/agent(?:/extensions)?)?|\.dsh)/?(?=$|[\s''"`;&|)])'
       - '(?<![\w.])(?<![^\w]-)(?<!^-)[a-z]?(?:rm|unlink|mv|cp|install|ln|truncate|tee|chmod|chown|shred|sed\s+-i|perl\s+-[a-z]*i|python[0-9.]*\s+-c|node\s+-e|jq\b[^\n;&|]*>)\b[^\n;&|]*\$\{?(?:XDG_CONFIG_HOME\}?[/\\]opencode(?:[/\\]plugins?)?|(?:PI_CODING_AGENT_DIR|DSH_HOME)\}?(?:[/\\]extensions)?|PI_CONFIG_DIR\}?(?:[/\\]agent(?:[/\\]extensions)?)?)[/\\]?(?=$|[\s''"`;&|)])'
+      # Hermes Agent：配置（plugins.enabled、plugins.disabled 决定加载哪些插件）、h-guard 的插件目录与 shell hook 的同意记录，
+      # 含各配置档（profiles/<名字>）与 HERMES_HOME 指定的目录
+      - '(?<![\w.])(?<![^\w]-)(?<!^-)[a-z]?(?:rm|unlink|mv|cp|install|ln|truncate|tee|chmod|chown|shred|sed\s+-i|perl\s+-[a-z]*i|python[0-9.]*\s+-c|node\s+-e|jq\b[^\n;&|]*>)\b[^\n;&|]*(?:\.hermes/(?:profiles/[^\n;&|/]+/)?(?:config\.yaml|shell-hooks-allowlist\.json|plugins/h-guard(?![\w-]))|\$\{?HERMES_HOME\}?[/\\](?:profiles[/\\][^\n;&|/\\]+[/\\])?(?:config\.yaml|shell-hooks-allowlist\.json|plugins[/\\]h-guard(?![\w-])))'
+      - '>>?\s*[^\n;&|]*(?:\.hermes/(?:profiles/[^\n;&|/]+/)?(?:config\.yaml|shell-hooks-allowlist\.json|plugins/h-guard(?![\w-]))|\$\{?HERMES_HOME\}?[/\\](?:profiles[/\\][^\n;&|/\\]+[/\\])?(?:config\.yaml|shell-hooks-allowlist\.json|plugins[/\\]h-guard(?![\w-])))'
+      - '(?:\.hermes/(?:profiles/[^\n;&|/]+/)?(?:config\.yaml|shell-hooks-allowlist\.json|plugins/h-guard(?![\w-]))|\$\{?HERMES_HOME\}?[/\\](?:profiles[/\\][^\n;&|/\\]+[/\\])?(?:config\.yaml|shell-hooks-allowlist\.json|plugins[/\\]h-guard(?![\w-])))[^\n;&|]*\|\s*(?:tee|sponge)\b'
+      # 移动、删除 Hermes 的主目录或插件目录；hermes 命令停用、删除插件或改 plugins 下的设置
+      - '(?<![\w.])(?<![^\w]-)(?<!^-)[a-z]?(?:rm|unlink|mv|cp|install|ln|truncate|tee|chmod|chown|shred|sed\s+-i|perl\s+-[a-z]*i|python[0-9.]*\s+-c|node\s+-e|jq\b[^\n;&|]*>)\b[^\n;&|]*(?:\.hermes(?:/plugins)?|\$\{?HERMES_HOME\}?(?:[/\\]plugins)?)/?(?=$|[\s''\"`;&|)])'
+      - '(?<![\w.-])hermes(?:\.exe)?[''\")]*\s(?:[^\n;&|]*\s)?plugins\s+(?:disable|remove|rm|uninstall)\b'
+      - '(?<![\w.-])hermes(?:\.exe)?[''\")]*\s(?:[^\n;&|]*\s)?config\s+(?:set|unset)\s+[''\"]?plugins\.'
     # PowerShell：写入、删除、移动、复制到受保护路径的 cmdlet 及其别名，.NET 的文件写入，重定向；
     # 路径可用 \ 或 /，也可拆在 Join-Path 的几个参数里；另覆盖 Windows 的配置与缓存目录（$env:APPDATA、${env:APPDATA}、
     # %LOCALAPPDATA% 下的 h-guard）与 macOS 上 PowerShell 用的 ~/Library 目录。
@@ -74,6 +83,11 @@ match:
       # 整个扩展目录（或它的上级目录），含 $env: 写法
       - '(?<![\w.-])(?:set-content|sc|add-content|ac|out-file|clear-content|clc|remove-item|rm|ri|del|erase|rd|rmdir|move-item|mi|mv|move|copy-item|cpi|cp|copy|rename-item|rni|ren|new-item|ni|set-item|si|set-itemproperty|sp|tee-object|tee)\b[^\n;&|]*(?:\.config[\\/]opencode(?:[\\/]plugins?)?|\.pi(?:[\\/]agent(?:[\\/]extensions)?)?|\.omp(?:[\\/]agent(?:[\\/]extensions)?)?|\.dsh)[\\/]?(?=$|[\s''"`;&|),])'
       - '(?<![\w.-])(?:set-content|sc|add-content|ac|out-file|clear-content|clc|remove-item|rm|ri|del|erase|rd|rmdir|move-item|mi|mv|move|copy-item|cpi|cp|copy|rename-item|rni|ren|new-item|ni|set-item|si|set-itemproperty|sp|tee-object|tee)\b[^\n;&|]*\$(?:\{env:|env:)(?:xdg_config_home\}?[\\/]opencode(?:[\\/]plugins?)?|(?:pi_coding_agent_dir|dsh_home)\}?(?:[\\/]extensions)?|pi_config_dir\}?(?:[\\/]agent(?:[\\/]extensions)?)?)[\\/]?(?=$|[\s''"`;&|),])'
+      # Hermes Agent 的配置、h-guard 插件与 shell hook 的同意记录（~\.hermes、%LOCALAPPDATA%\hermes、$env:HERMES_HOME），以及整个目录
+      - '(?<![\w.-])(?:set-content|sc|add-content|ac|out-file|clear-content|clc|remove-item|rm|ri|del|erase|rd|rmdir|move-item|mi|mv|move|copy-item|cpi|cp|copy|rename-item|rni|ren|new-item|ni|set-item|si|set-itemproperty|sp|tee-object|tee)\b[^\n;&|]*(?:\.hermes|appdata[\\/]local[\\/]hermes|\$(?:\{env:|env:)(?:localappdata\}?[\\/]hermes|hermes_home\}?))[\\/](?:profiles[\\/][^\n;&|\\/]+[\\/])?(?:config\.yaml|shell-hooks-allowlist\.json|plugins[\\/]h-guard(?![\w-]))'
+      - '\[(?:system\.)?io\.file\]::(?:write|append|delete|move|copy|replace|create|open)\w*\s*\([^\n]*(?:\.hermes|appdata[\\/]local[\\/]hermes|\$(?:\{env:|env:)(?:localappdata\}?[\\/]hermes|hermes_home\}?))[\\/](?:profiles[\\/][^\n;&|\\/]+[\\/])?(?:config\.yaml|shell-hooks-allowlist\.json|plugins[\\/]h-guard(?![\w-]))'
+      - '>>?\s*[^\n;&|]*(?:\.hermes|appdata[\\/]local[\\/]hermes|\$(?:\{env:|env:)(?:localappdata\}?[\\/]hermes|hermes_home\}?))[\\/](?:profiles[\\/][^\n;&|\\/]+[\\/])?(?:config\.yaml|shell-hooks-allowlist\.json|plugins[\\/]h-guard(?![\w-]))'
+      - '(?<![\w.-])(?:set-content|sc|add-content|ac|out-file|clear-content|clc|remove-item|rm|ri|del|erase|rd|rmdir|move-item|mi|mv|move|copy-item|cpi|cp|copy|rename-item|rni|ren|new-item|ni|set-item|si|set-itemproperty|sp|tee-object|tee)\b[^\n;&|]*(?:\.hermes|appdata[\\/]local[\\/]hermes|\$(?:\{env:|env:)(?:localappdata\}?[\\/]hermes|hermes_home\}?))(?:[\\/]plugins)?[\\/]?(?=$|[\s''\"`;&|),])'
   file:
     # 文件动作（Write、Edit、NotebookEdit 等）按路径匹配，不调模型。
     # {config}、{cache} 是 h-guard 实际使用的目录；~ 开头的写法另覆盖默认位置。
@@ -146,6 +160,23 @@ match:
       - '**/.omp/config.yml'
       - '**/.omp/config.yaml'
       - '**/.omp/settings.json'
+      # Hermes Agent：配置（决定加载哪些插件）、h-guard 的插件目录、shell hook 的同意记录与插件目录本身；
+      # {hermes_home} 是 HERMES_HOME（默认 ~/.hermes，Windows 上是 %LOCALAPPDATA%\hermes），另覆盖各配置档与系统的托管配置
+      - '{hermes_home}/config.yaml'
+      - '{hermes_home}/shell-hooks-allowlist.json'
+      - '{hermes_home}/plugins'
+      - '{hermes_home}/plugins/h-guard'
+      - '{hermes_home}/plugins/h-guard/**'
+      - '{hermes_home}/profiles/*/config.yaml'
+      - '{hermes_home}/profiles/*/plugins/h-guard/**'
+      - '~/.hermes/config.yaml'
+      - '~/.hermes/shell-hooks-allowlist.json'
+      - '~/.hermes/plugins'
+      - '~/.hermes/plugins/h-guard'
+      - '~/.hermes/plugins/h-guard/**'
+      - '~/.hermes/profiles/*/config.yaml'
+      - '~/.hermes/profiles/*/plugins/h-guard/**'
+      - '/etc/hermes/config.yaml'
 bypassable_by_request: false
 # 本地命中不能被模型的低分否决（维护者决定，2026-10-13）：本地模型曾把往指令缓存写假指令的命令判为 0。
 # 代价：动词组只看动词与路径的先后，不分读写方向，只读的用法也会命中并请求确认，例如
@@ -225,6 +256,21 @@ examples:
     - {shell: powershell, command: "Move-Item ~\\.omp\\agent\\extensions C:\\x"}
     - {shell: powershell, command: "Move-Item $env:PI_CODING_AGENT_DIR\\extensions C:\\x"}
     - {action: file_rename, path: "~/.omp/agent/extensions"}
+    - {shell: posix, command: "sed -i '/h-guard/d' ~/.hermes/config.yaml"}
+    - {shell: posix, command: "rm -rf ~/.hermes/plugins/h-guard"}
+    - {shell: posix, command: "mv ~/.hermes/plugins /tmp/x"}
+    - {shell: posix, command: "echo '{}' > ~/.hermes/shell-hooks-allowlist.json"}
+    - {shell: posix, command: "rm \"$HERMES_HOME/plugins/h-guard/__init__.py\""}
+    - {shell: posix, command: "cp /tmp/c.yaml ~/.hermes/profiles/work/config.yaml"}
+    - {shell: posix, command: "hermes plugins disable h-guard"}
+    - {shell: posix, command: "hermes -p work plugins remove h-guard"}
+    - {shell: posix, command: "hermes config set plugins.disabled '[h-guard]'"}
+    - {shell: powershell, command: "Remove-Item -Recurse $env:LOCALAPPDATA\\hermes\\plugins\\h-guard"}
+    - {shell: powershell, command: "Set-Content ~\\.hermes\\config.yaml -Value 'plugins: {}'"}
+    - {action: file_write, path: "~/.hermes/config.yaml"}
+    - {action: file_delete, path: "~/.hermes/plugins/h-guard/__init__.py"}
+    - {action: file_rename, path: "~/.hermes/plugins"}
+    - {action: file_write, path: "~/.hermes/profiles/work/config.yaml"}
   miss:
     - {shell: powershell, command: "Get-Content ~\\.claude\\settings.json"}
     - {shell: posix, command: "cat ~/.claude/settings.json"}
@@ -250,3 +296,9 @@ examples:
     - {shell: posix, command: "rm ~/.config/opencode/plugins/other.js"}
     - {shell: posix, command: "cat ~/.pi/agent/extensions/notes.md"}
     - {action: file_write, path: "~/.pi/agent/extensions/other.js"}
+    - {shell: posix, command: "cat ~/.hermes/config.yaml"}
+    - {shell: posix, command: "hermes plugins list"}
+    - {shell: posix, command: "hermes config set approvals.timeout 600"}
+    - {shell: posix, command: "rm -rf ~/.hermes/plugins/other-plugin"}
+    - {action: file_write, path: "~/.hermes/skills/notes/SKILL.md"}
+    - {action: file_write, path: "~/.hermes/plugins/other/__init__.py"}

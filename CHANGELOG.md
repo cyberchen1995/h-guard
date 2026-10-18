@@ -31,10 +31,30 @@ minor releases. Every such change is recorded in this file.
   `$env:` form. Path patterns can use `{xdg_config}`, `{pi_agent_dir}`,
   `{omp_config}` and `{dsh_home}`.
 
+- `h-guard install hermes` connects Hermes Agent through a Python plugin in
+  `$HERMES_HOME/plugins/h-guard`, enabled in `plugins.enabled`. Tool calls are
+  checked on `pre_tool_call` (`ask` goes to Hermes's own approval, keyed to the
+  one call; it becomes `deny` when Hermes would approve without asking), tool
+  results and background process output are replaced on `deny`, prompts from
+  messaging platforms are blocked after admission, and other prompts get a
+  warning on `pre_llm_call`, since they cannot be blocked there. The plugin
+  was written against Hermes 2026.9.24 and smoke-tested by driving its hooks
+  through Hermes's plugin manager, not yet with a model.
+- `harnesses.hermes.notify` (off by default) sends h-guard's masked reason for
+  chosen decisions to the originating chat, or a configured `hermes send`
+  target, as a best-effort notification.
+- New degradation `prompt_not_blocked`: a `deny` on a prompt the harness cannot
+  hold back becomes a `warn` that says the prompt has already reached the model.
+- The locked `guard_tampering` rule also protects Hermes Agent's
+  `config.yaml`, h-guard's plugin directory and the shell-hook allowlist (also
+  per profile, under `HERMES_HOME` and on Windows), and the `hermes plugins
+  disable|remove` and `hermes config set plugins.*` commands. Path patterns can
+  use `{hermes_home}`.
+
 ### Public packages
 
 - New adapters `pkg/harness/opencode`, `pkg/harness/pi` (registers `pi` and
-  `omp`) and `pkg/harness/dsh`.
+  `omp`), `pkg/harness/dsh` and `pkg/harness/hermes`.
 - `pkg/harness` adds `UnknownToolError` for tools an adapter does not know.
 - `pkg/harness` adds `ErrNoAction` and the optional `NoActionRenderer`: an
   adapter that answers every request (extension protocol) replies `pass` to a

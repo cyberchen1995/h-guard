@@ -145,7 +145,7 @@
       }
     },
     "harnesses": {
-      "description": "Settings per harness (claudecode, codex, opencode, pi, omp, dsh, ...).",
+      "description": "Settings per harness (claudecode, codex, opencode, pi, omp, dsh, hermes, ...).",
       "type": "object",
       "additionalProperties": {
         "type": "object",
@@ -160,6 +160,23 @@
             "description": "Tools the harness's adapter does not know that only read and need no confirmation; * and ? match any characters. Tools the adapter knows are always checked.",
             "type": "array",
             "items": {"type": "string"}
+          },
+          "notify": {
+            "description": "Hermes Agent only: send h-guard's (masked) reason to a messaging channel through `hermes send` when a decision is in `on`. The target is the chat the session came from; sessions without one (CLI, cron) use `to`. Best effort: it never changes or delays the decision.",
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "enabled": {"description": "Send notifications.", "type": "boolean", "default": false},
+              "on": {
+                "description": "Decisions that are sent (default: deny and warn); a decision counts both before and after h-guard adjusted it to what the harness can do.",
+                "type": "array",
+                "items": {"type": "string", "enum": ["deny", "ask", "warn"]}
+              },
+              "to": {
+                "description": "Target for sessions without a chat, written as for `hermes send --to`: a platform (its home channel), platform:chat_id, platform:chat_id:thread_id or platform:#channel.",
+                "type": "string"
+              }
+            }
           }
         }
       }

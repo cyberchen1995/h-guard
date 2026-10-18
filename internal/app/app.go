@@ -29,6 +29,7 @@ import (
 	_ "github.com/cyberchen1995/h-guard/pkg/harness/codex"
 	_ "github.com/cyberchen1995/h-guard/pkg/harness/dsh"
 	_ "github.com/cyberchen1995/h-guard/pkg/harness/generic"
+	_ "github.com/cyberchen1995/h-guard/pkg/harness/hermes"
 	_ "github.com/cyberchen1995/h-guard/pkg/harness/opencode"
 	_ "github.com/cyberchen1995/h-guard/pkg/harness/pi"
 	_ "github.com/cyberchen1995/h-guard/pkg/judge/anthropic" // 内置判断后端
@@ -139,7 +140,7 @@ const usage = `usage:
   h-guard eval [--backend <name>] [--sweep] [--shell posix|powershell | --cases <file>] [--repeat <K>] [--bootstrap <N>] [--seed <n>] [--yes] [--config <file>]
   h-guard eval --outbound [--backend <name>] [--sweep] [--threshold <t>] [--cases <file>] [--yes] [--config <file>]
   h-guard init
-  h-guard install claudecode|codex|opencode|pi|omp|dsh [--write] [--remove] [--timeout <seconds>] [--shell posix|powershell]
+  h-guard install claudecode|codex|opencode|pi|omp|dsh|hermes [--write] [--remove] [--timeout <seconds>] [--shell posix|powershell]
   h-guard migrate <questions.json> [--write]
   h-guard config validate [--rules <dir>] | show | init [--config <file>]
   h-guard version
@@ -294,6 +295,15 @@ func piAgentDir(o Options) string {
 	return install.ExpandPiDir(o.Home, d)
 }
 
+// hermesHome 是 Hermes Agent 的主目录（install hermes 写插件的目录）：$HERMES_HOME，默认 ~/.hermes（Windows 上是
+// %LOCALAPPDATA%\hermes）；没有主目录时为空。
+func hermesHome(o Options) string {
+	if o.Home == "" {
+		return ""
+	}
+	return install.HermesHome(install.Target{Home: o.Home, GOOS: o.GOOS, Getenv: o.Getenv})
+}
+
 // newEngine 组装 Engine：action 检查与 outbound 检查。文件动作的保护路径用主目录、h-guard 实际的配置与缓存目录，
 // 以及这次 --config 加载的文件展开。
 func (s setup) newEngine(o Options, j action.Judge, oj outbound.Judge) *engine.Engine {
@@ -301,7 +311,8 @@ func (s setup) newEngine(o Options, j action.Judge, oj outbound.Judge) *engine.E
 		Paths: paths.Env{Home: o.Home, FoldCase: paths.FoldCaseDefault, Windows: paths.WindowsDefault,
 			Vars: map[string]string{rules.VarConfig: o.ConfigDir, rules.VarCache: o.CacheDir, rules.VarExtraConfig: s.extra,
 				rules.VarClaudeConfig: o.Getenv("CLAUDE_CONFIG_DIR"), rules.VarCodexHome: o.Getenv("CODEX_HOME"),
-				rules.VarXDGConfig: o.Getenv("XDG_CONFIG_HOME"), rules.VarPiAgentDir: piAgentDir(o), rules.VarDSHHome: install.ExpandDSHHome(o.Home, o.Getenv("DSH_HOME")), rules.VarOMPConfig: ompConfig(o)}}}
+				rules.VarXDGConfig: o.Getenv("XDG_CONFIG_HOME"), rules.VarPiAgentDir: piAgentDir(o), rules.VarDSHHome: install.ExpandDSHHome(o.Home, o.Getenv("DSH_HOME")), rules.VarOMPConfig: ompConfig(o),
+				rules.VarHermesHome: hermesHome(o)}}}
 	o2 := &outbound.Check{Rules: s.rules, Config: s.cfg, Judge: oj}
 	return &engine.Engine{
 		Checks: []guard.Check{c, o2}, Catalog: s.catalog, Locale: s.locale,

@@ -22,3 +22,8 @@ var Pi []byte
 //
 //go:embed dsh/h-guard.mjs
 var DSH []byte
+
+// Hermes 是 Hermes Agent 的 Python 插件（plugin.yaml 与 __init__.py），根目录为 hermes/。
+//
+//go:embed hermes/plugin.yaml hermes/__init__.py
+var Hermes embed.FS

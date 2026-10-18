@@ -192,7 +192,35 @@ type Policy struct {
 type Harness struct {
 	Shell         guard.Shell `yaml:"shell"`
 	ReadOnlyTools []string    `yaml:"read_only_tools"`
+	Notify        Notify      `yaml:"notify"`
 }
+
+// Notify 是消息渠道通知（只有 Hermes 支持，harnesses.hermes.notify）：开启后 h-guard 的结论在 On 里时（默认 deny 与
+// warn），插件把已遮蔽的说明发到消息渠道。目标是来源会话所在的对话；没有时（CLI、定时任务）是 To（hermes send --to 的
+// 写法，如 telegram 或 telegram:<chat_id>[:<thread_id>]），To 也为空时不发。
+type Notify struct {
+	Enabled bool     `yaml:"enabled"`
+	On      []string `yaml:"on"`
+	To      string   `yaml:"to"`
+}
+
+// NotifyFor 返回 harness 的通知设置：发通知的结论与没有来源对话时的目标；没有开启时 ok 为假。
+func (c *Config) NotifyFor(harness string) (on []guard.Decision, to string, ok bool) {
+	n := c.Harnesses[harness].Notify
+	if !n.Enabled {
+		return nil, "", false
+	}
+	if len(n.On) == 0 {
+		return []guard.Decision{guard.DecisionDeny, guard.DecisionWarn}, n.To, true
+	}
+	for _, d := range n.On {
+		on = append(on, guard.Decision(d))
+	}
+	return on, n.To, true
+}
+
+// notifyTarget 是 hermes send --to 的目标：平台名，后面可以跟 :<chat_id>[:<thread_id>] 或 :#<频道名>。
+var notifyTarget = regexp.MustCompile(`^[a-z][a-z0-9_-]*(?::[^\s:][^\s]*)?$`)
 
 // ReadOnlyTool 报告 harness 不认识的工具 tool 是否被配置为只读（harnesses.<name>.read_only_tools）。
 func (c *Config) ReadOnlyTool(harness, tool string) bool {
@@ -504,6 +532,18 @@ func (c *Config) issues() []Issue {
 			if _, err := path.Match(p, ""); err != nil || strings.TrimSpace(p) == "" {
 				bad(fmt.Sprintf("harnesses.%s.read_only_tools[%d]", name, i), "want a tool name, optionally with * or ?")
 			}
+		}
+		n := c.Harnesses[name].Notify
+		if name != "hermes" && (n.Enabled || len(n.On) > 0 || n.To != "") {
+			bad("harnesses."+name+".notify", "only hermes sends notifications")
+		}
+		for i, d := range n.On {
+			if d != "deny" && d != "ask" && d != "warn" {
+				bad(fmt.Sprintf("harnesses.%s.notify.on[%d]", name, i), "want deny, ask or warn")
+			}
+		}
+		if n.To != "" && !notifyTarget.MatchString(n.To) {
+			bad("harnesses."+name+".notify.to", "want a hermes send target such as telegram or telegram:<chat_id>")
 		}
 	}
 	for _, id := range sortedKeys(c.Rules) {

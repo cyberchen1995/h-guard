@@ -92,11 +92,14 @@ const (
 	VarDSHHome    = "dsh_home"
 	// VarOMPConfig 是 oh-my-pi 的配置根目录：主目录下的 $PI_CONFIG_DIR（没有设置时为空）。
 	VarOMPConfig = "omp_config"
+	// VarHermesHome 是 Hermes Agent 的主目录：$HERMES_HOME，没有设置时是默认位置（~/.hermes，Windows 上是
+	// %LOCALAPPDATA%\hermes）。
+	VarHermesHome = "hermes_home"
 )
 
 // placeholders 是路径模式可以用的占位符。
 var placeholders = map[string]bool{VarConfig: true, VarCache: true, VarExtraConfig: true, VarClaudeConfig: true, VarCodexHome: true,
-	VarXDGConfig: true, VarPiAgentDir: true, VarDSHHome: true, VarOMPConfig: true}
+	VarXDGConfig: true, VarPiAgentDir: true, VarDSHHome: true, VarOMPConfig: true, VarHermesHome: true}
 
 // ExecMatch 是命令正则，按 shell 分组：any 用于所有 shell。
 type ExecMatch struct {

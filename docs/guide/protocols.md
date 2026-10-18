@@ -228,8 +228,8 @@ same `session_id`.
 ## Extension protocol v1
 
 Some harnesses deliver events only to code running inside them (Claude Code's
-mods, opencode's plugins, pi's and oh-my-pi's extensions and DeepSeek Harness's
-Cordis plugins are the built-in cases). A thin extension inside the harness forwards each
+mods, opencode's plugins, pi's and oh-my-pi's extensions, DeepSeek Harness's
+Cordis plugins and Hermes Agent's Python plugins are the built-in cases). A thin extension inside the harness forwards each
 event to h-guard and turns the reply into the harness's own return value. It
 makes no decisions itself; the harness-specific parsing lives in h-guard's
 adapter for that harness.
@@ -248,7 +248,7 @@ the reply is valid. Requests are limited to 16 MiB.
 | Field | Meaning |
 |---|---|
 | `protocol` | `h-guard.ext/v1`. |
-| `harness` | Harness name, matching an adapter registered in h-guard (`claudecode`, `opencode`, `pi`, `omp`, `dsh`). |
+| `harness` | Harness name, matching an adapter registered in h-guard (`claudecode`, `opencode`, `pi`, `omp`, `dsh`, `hermes`). |
 | `harness_version` | The version string the harness reports, passed on as is. Optional. |
 | `hook` | The harness's hook name (table below). |
 | `session` | `{"id": ..., "cwd": ...}`; `id` is required. |
@@ -267,13 +267,18 @@ The built-in extensions send these hooks:
 | `pi`, `omp` | `input` | `{text, source}`; oh-my-pi also sends prompts found on its `context` event, with `source: "context"` | |
 | `dsh` | `tools/pre-execute`, `tools/post-execute` | `{name, callId, arguments, nested}` | `{isError, content}` (`tools/post-execute`) |
 | `dsh` | `agent/pre-step` | `{messages: [{source: {kind}, content}], session: {origin, delegationDepth}}` | |
+| `hermes` | `pre_tool_call` | `{tool_name, args, tool_call_id, approval, backend}`; `approval` is how Hermes would handle an approval request (`prompt`, `blocked`, `auto`, or empty when unknown) | |
+| `hermes` | `transform_tool_result`, `transform_terminal_output` | `{tool_name, args, tool_call_id, status}`, or `{command, returncode, env_type}` for background process output | `{content}`: the result string |
+| `hermes` | `post_gateway_admission`, `pre_llm_call` | `{text, platform, is_bot}`, or `{text, platform, parent_session_id}` | |
 
 Only text content blocks are passed on; images are left out.
 
 **Reply:** `{"protocol": "h-guard.ext/v1", "action": "pass|deny|ask|warn",
 "message": "...", "hint": "..."}`. `message` and `hint` are localized. Every
 reply other than `pass` carries a non-empty `message`; a reply without one is
-not valid. There is no `allow`. Every request that h-guard understands gets a
+not valid. There is no `allow`. Replies to `hermes` may also carry
+`"notify": {"to": "..."}` when `harnesses.hermes.notify` asks for a channel
+notification; other extensions ignore unknown fields. Every request that h-guard understands gets a
 reply, `pass` included; a tool call that has nothing to check (such as an MCP
 tool) gets `pass`. A request h-guard does not understand gets no output, which
 the extension treats as a failure.
@@ -290,7 +295,7 @@ through and tell the user. It must also apply `deny` and `ask` even if
 `message` is somehow empty, using a fixed text.
 
 The stock binary has adapters for `claudecode`, `codex`, `opencode`, `pi`,
-`omp`, `dsh` and `generic`; all but `codex` and `generic` read extension
+`omp`, `dsh`, `hermes` and `generic`; all but `codex` and `generic` read extension
 requests. Connecting a new harness this way needs
 an adapter for it, written against `pkg/harness` and `pkg/harness/extproto` and
 registered in your own build of h-guard (see

@@ -2,7 +2,7 @@
 
 [English](README.md)
 
-h-guard 是 agent harness 的安全护栏。它检查 agent 将要执行的操作（shell 命令与文件操作）和经过它的内容（你的提示词与工具输出），在破坏性操作执行或秘密外泄之前拒绝、请求确认或提示。目前接入 Claude Code、Codex、opencode、pi、oh-my-pi 与 DeepSeek Harness，其他 agent harness 可以通过 generic JSON 契约接入。
+h-guard 是 agent harness 的安全护栏。它检查 agent 将要执行的操作（shell 命令与文件操作）和经过它的内容（你的提示词与工具输出），在破坏性操作执行或秘密外泄之前拒绝、请求确认或提示。目前接入 Claude Code、Codex、opencode、pi、oh-my-pi、DeepSeek Harness 与 Hermes Agent，其他 agent harness 可以通过 generic JSON 契约接入。
 
 <p align="center"><img src=".github/assets/how-it-works.zh-CN.svg" alt="h-guard 工作原理" width="720"></p>
 
@@ -63,6 +63,7 @@ h-guard install opencode --write      # opencode 1.x：把插件写到 ~/.config
 h-guard install pi --write            # pi：把扩展写到 ~/.pi/agent/extensions
 h-guard install omp --write           # oh-my-pi：把扩展写到 ~/.omp/agent/extensions
 h-guard install dsh --write           # DeepSeek Harness：在 ~/.dsh/cordis.patch.yml 中挂载插件
+h-guard install hermes --write        # Hermes Agent：把插件写到 ~/.hermes/plugins 并启用
 ```
 
 Codex 用户需要打开 Codex，运行 `/hooks` 检查并信任 h-guard 的 hook。新增或改动过的 hook 在信任之前不会运行。
@@ -186,8 +187,9 @@ rules:
 | pi | 测试过的版本及以上 | 1.3.0（冒烟测试） |
 | oh-my-pi | 测试过的版本及以上 | 18.11.3（冒烟测试） |
 | DeepSeek Harness | 测试过的版本及以上 | 0.2.1-rc.2（冒烟测试） |
+| Hermes Agent | 测试过的版本及以上 | 2026.9.24（直接调用插件 hook） |
 
-opencode、pi、oh-my-pi 与 DeepSeek Harness 的扩展按各 harness 的源码编写，在 CI 里用模拟的 harness API 测试，并在真实 harness 里配合模拟的模型服务做过冒烟测试（拒绝、请求确认、替换工具输出、拦下提示词）。它们还没有录制会话。
+opencode、pi、oh-my-pi 与 DeepSeek Harness 的扩展按各 harness 的源码编写，在 CI 里用模拟的 harness API 测试，并在真实 harness 里配合模拟的模型服务做过冒烟测试（拒绝、请求确认、替换工具输出、拦下提示词）。它们还没有录制会话。Hermes Agent 的插件按 Hermes 的源码编写，在 CI 里用模拟的插件上下文测试，并由 Hermes 自己的插件管理器加载、直接调用各个 hook 验证过；还没有配合模型或消息网关运行过。
 
 harness 版本未经验证时，`install` 与 `status` 会说明，但不拒绝。其他 agent harness 可以通过 [generic 契约](docs/guide/protocols.md#generic-harness-contract-v1)调用 h-guard。各 harness 的接入方式、能做与不能做的事见 [harness 指南](docs/guide/harnesses.md)。
 
@@ -199,7 +201,9 @@ harness 版本未经验证时，`install` 与 `status` 会说明，但不拒绝�
 - **opencode 同样不支持请求确认。** opencode 的插件 API 没有请求用户确认的办法，所以那里的 `ask` 同样变成 `deny`；提示以 TUI 的 toast 显示，`opencode run` 里看不到。
 - **DeepSeek Harness 显示不了提示。** 提示只写进它的日志；被拦下的提示词直接丢弃，对话里没有说明。
 - **oh-my-pi 的 `eval` 工具一律请求确认。** h-guard 读不懂 Python 与 JavaScript 代码，所以每次 `eval` 调用都需要你确认。
-- **pi、oh-my-pi 与 DeepSeek Harness 上不认识的工具请求确认。** 不在 h-guard 对这几个 harness 自带工具的名单里的工具（比如扩展添加的）需要你确认，直到你把它列进 `harnesses.<name>.read_only_tools`。
+- **Hermes Agent 在消息平台以外拦不下提示词。** 在 CLI、TUI 或 Desktop 里输入、h-guard 本应拦下的提示词已经交给了模型；h-guard 改为在这一轮里加一段提示（`prompt_not_blocked`）。`--yolo` 或 `approvals.mode: off` 时 h-guard 的请求确认变成拒绝；除了可选的渠道通知，Hermes 没有向你显示提示的办法。
+- **Hermes Agent 的 `execute_code` 一律请求确认。** 脚本能直接启动进程、改动文件，所以每次调用都需要你确认。
+- **pi、oh-my-pi、DeepSeek Harness 与 Hermes Agent 上不认识的工具请求确认。** 不在 h-guard 对这几个 harness 自带工具的名单里的工具（比如扩展添加的）需要你确认，直到你把它列进 `harnesses.<name>.read_only_tools`。
 - **Codex 的 hook 需要信任。** `install codex --write` 之后要在 Codex 里用 `/hooks` 信任这些 hook，否则它们不运行，`h-guard status` 也看不出来。
 - **提示词的来源靠推断。** Claude Code 会标出自动消息（定时任务、子 agent 回报）；Codex 不标，h-guard 按已知格式识别它的自动消息。识别不出的自动消息算作你本人的话，模型开启时可能被当作你对某个操作的要求。
 - **Windows 没有经过实机验证。** Windows 上的路径处理、PowerShell 的 hook 外包脚本与 Codex 的命令形式只在 CI 与交叉编译中测试过。
@@ -214,7 +218,7 @@ harness 版本未经验证时，`install` 与 `status` 会说明，但不拒绝�
 ```sh
 h-guard install claudecode --remove --write
 h-guard install codex --remove --write
-h-guard install opencode --remove --write   # pi、omp、dsh 同理
+h-guard install opencode --remove --write   # pi、omp、dsh、hermes 同理
 ```
 
 `--remove` 只删除 h-guard 自己的条目，harness 配置里的其他内容保持不变。之后删除程序（`brew uninstall h-guard` 或直接删除文件），如有需要再删除 h-guard 的配置目录。
