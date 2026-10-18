@@ -379,3 +379,18 @@ func TestLeftoverClaimDoesNotBlockApproval(t *testing.T) {
 		t.Errorf("approve with a leftover claim: %v", err)
 	}
 }
+
+// TestRevokeReportsAnActiveGrantThatStays：已批准的授权删不掉时撤销失败，即使待批准记录删掉了。
+func TestRevokeReportsAnActiveGrantThatStays(t *testing.T) {
+	s, _ := newStore(t)
+	id := "0123456789"
+	// 不空的目录删不掉
+	if err := os.MkdirAll(filepath.Join(s.path("active", id), "x"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	os.MkdirAll(filepath.Dir(s.path("pending", id)), 0o700)
+	os.WriteFile(s.path("pending", id), []byte("{}"), 0o600)
+	if err := s.Revoke(id); err == nil || errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("revoke: %v", err)
+	}
+}

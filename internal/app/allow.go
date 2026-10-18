@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	iofs "io/fs"
 	"strings"
 	"time"
 
@@ -40,8 +41,11 @@ func runAllow(args []string, o Options) int {
 	}
 	id := strings.ToLower(strings.TrimSpace(pos[0]))
 	if *revoke {
-		if err := st.Revoke(id); err != nil {
+		if err := st.Revoke(id); errors.Is(err, iofs.ErrNotExist) {
 			fmt.Fprintf(o.Stderr, "h-guard: nothing to revoke for %s\n", id)
+			return 1
+		} else if err != nil {
+			fmt.Fprintf(o.Stderr, "h-guard: cannot revoke %s: %v\n", id, err)
 			return 1
 		}
 		fmt.Fprintf(o.Stdout, "revoked %s\n", id)

@@ -20,6 +20,9 @@ type Entry struct {
 // ErrNotInstalled 表示 harness 里没有 h-guard 的入口。
 var ErrNotInstalled = errors.New("h-guard is not installed for this harness")
 
+// ErrPluginChanged 表示 Claude Code 插件的文件与这个 h-guard 写的不一样，不运行其中的入口。
+var ErrPluginChanged = errors.New("the plugin files differ from this h-guard version (missing, edited or written by another version), so they are not run; run h-guard install claudecode --write")
+
 // Entries 按 harness 的写法返回已安装的入口（键是 hook 的事件名；harness 对一个事件运行其中每一个），
 // 供自测像 harness 一样运行 h-guard：
 //   - claudecode：PreToolUse 运行插件里的外包脚本（Windows 上经 PowerShell 运行 pretooluse.ps1），
@@ -81,6 +84,14 @@ func claudeEntries(t Target) (map[string][]Entry, error) {
 	}
 	if err := json.Unmarshal(b, &cfg); err != nil {
 		return nil, fmt.Errorf("%s cannot be read: %w", filepath.Join(dir, "hguard.json"), err)
+	}
+	// 外包脚本与 hguard.json 里的命令都会被运行：与这个 h-guard 写的不一样（被改过、别的版本写的）就不运行
+	read := func(name string) string {
+		b, _ := os.ReadFile(filepath.Join(dir, name))
+		return strings.TrimSpace(string(b))
+	}
+	if stalePlugin(t, dir, read("hguard-bin"), read("hguard-timeout")) {
+		return nil, ErrPluginChanged
 	}
 	out := map[string][]Entry{}
 	if argv := cfg.Commands["prompt.submit"]; len(argv) > 0 {

@@ -121,16 +121,20 @@ func Record(dir, harness, event, version string, now time.Time) error {
 	return store.WriteAtomic(path, b, 0o600)
 }
 
-// WriteSelftest 记下 harness 最近一次自测的结果。
+// WriteSelftest 记下 harness 最近一次自测的结果。没通过的结果写不进去时删掉之前的结果：
+// 不能让更早一次通过的结果留在 status 里。
 func WriteSelftest(dir, harness string, st Selftest) error {
 	if dir == "" {
 		return nil
 	}
 	b, err := json.Marshal(st)
-	if err != nil {
-		return err
+	if err == nil {
+		err = store.WriteAtomic(selftestPath(dir, harness), b, 0o600)
 	}
-	return store.WriteAtomic(selftestPath(dir, harness), b, 0o600)
+	if err != nil && !st.Passed {
+		_ = os.Remove(selftestPath(dir, harness))
+	}
+	return err
 }
 
 // ReadSelftest 读 harness 最近一次自测的结果；没有时 ok 为假。

@@ -377,12 +377,18 @@ func (s *Store) Consume(op Op) bool {
 }
 
 // Revoke 删除编号为 id 的授权与待批准记录；都不存在时返回 fs.ErrNotExist。
+// 有一条在却删不掉时返回那个错误：已批准的授权还在就不能说撤销了。
 func (s *Store) Revoke(id string) error {
 	if s.Dir == "" || !validID.MatchString(id) {
 		return fs.ErrNotExist
 	}
 	e1 := os.Remove(s.path("active", id))
 	e2 := os.Remove(s.path("pending", id))
+	for _, err := range []error{e1, e2} {
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
+	}
 	if e1 != nil && e2 != nil {
 		return fs.ErrNotExist
 	}

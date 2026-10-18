@@ -613,3 +613,24 @@ func TestStatusShowsJudgeOnlyCategories(t *testing.T) {
 		t.Errorf("status:\n%s", out)
 	}
 }
+
+// TestSelftestDoesNotRunAChangedPlugin：插件文件与这个 h-guard 写的不一样时自测失败，也不运行其中的入口。
+func TestSelftestDoesNotRunAChangedPlugin(t *testing.T) {
+	e := hostInstallEnv(t)
+	var calls []string
+	e.runEntry = inProcessEntries(e, &calls)
+	e.run(nil, "install", "claudecode", "--write")
+	script := filepath.Join(e.configDir, "extensions", "claudecode", "hooks", "pretooluse.sh")
+	if runtime.GOOS == "windows" {
+		script = strings.TrimSuffix(script, ".sh") + ".ps1"
+	}
+	b, _ := os.ReadFile(script)
+	os.WriteFile(script, append(b, "\n# edited\n"...), 0o700)
+	out, _, code := e.run(nil, "selftest", "claudecode")
+	if code != 1 || !strings.Contains(out, "so they are not run") || len(calls) != 0 {
+		t.Errorf("exit %d, entries run %v\n%s", code, calls, out)
+	}
+	if status, _, _ := e.run(nil, "status"); strings.Contains(status, "self-test: passed") {
+		t.Errorf("status:\n%s", status)
+	}
+}
