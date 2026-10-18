@@ -38,13 +38,18 @@ func statusProtection(s setup, o Options) {
 	}
 	_, jst := s.actionJudge(o)
 	judgeUsable := jst.backend != nil && jst.consent == consentGranted
-	fmt.Fprintf(o.Stdout, "  prompts and tool output: %s (scans %s)\n", listOrNone(outboundCoverage(s, judgeUsable)), outboundScope[s.cfg.Outbound.Tier])
+	// 类别题要另外同意 outbound 范围：只同意了 action 范围时模型不检查提示词与工具输出
+	fmt.Fprintf(o.Stdout, "  prompts and tool output: %s (scans %s)\n", listOrNone(outboundCoverage(s, judgeUsable && jst.outbound)), outboundScope[s.cfg.Outbound.Tier])
 	for _, gap := range coverageGaps(s, judgeUsable) {
 		fmt.Fprintln(o.Stdout, "  not covered:", gap)
 	}
-	if guard.Decision(s.cfg.Policy.WhenAskUnsupported) == guard.DecisionPass {
+	switch {
+	case guard.Decision(s.cfg.Policy.WhenAskUnsupported) == guard.DecisionPass:
 		fmt.Fprintln(o.Stdout, "  codex: cannot ask, and policy.when_ask_unsupported is pass, so every ask lets the operation run")
-	} else {
+	case o.CacheDir == "" || o.ConfigDir == "":
+		// 授权记录在缓存目录、签名密钥在配置目录：缺一个就不提供单次授权
+		fmt.Fprintln(o.Stdout, "  codex: cannot ask, so every ask blocks; one-time approvals are unavailable (no cache or configuration directory)")
+	default:
 		fmt.Fprintln(o.Stdout, "  codex: cannot ask, so every ask blocks; approve one stopped operation with h-guard allow <id>")
 	}
 }

@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cyberchen1995/h-guard/internal/consent"
 	"github.com/cyberchen1995/h-guard/internal/install"
 	"github.com/cyberchen1995/h-guard/internal/seen"
 )
@@ -599,7 +600,15 @@ func TestStatusShowsJudgeOnlyCategories(t *testing.T) {
 	if out, _, _ := e.run(nil, "status"); strings.Contains(out, "acme-codename") && strings.Contains(out, "judge only") {
 		t.Errorf("listed without consent:\n%s", out)
 	}
+	// 只同意了 action 范围：模型不检查提示词与工具输出
 	e.grant(srv)
+	if out, _, _ := e.run(nil, "status"); strings.Contains(out, "acme-codename warn (judge only") {
+		t.Errorf("listed with action-only consent:\n%s", out)
+	}
+	id := consent.Identity{Backend: "jev", Type: "typesafe", Target: srv.URL}
+	if err := (consent.Store{Dir: e.configDir}).Grant(id, []consent.Scope{consent.ScopeAction, consent.ScopeOutbound}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
 	if out, _, _ := e.run(nil, "status"); !strings.Contains(out, "acme-codename warn (judge only, not on Codex)") {
 		t.Errorf("status:\n%s", out)
 	}
