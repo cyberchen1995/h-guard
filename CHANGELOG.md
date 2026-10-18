@@ -45,7 +45,9 @@ minor releases. Every such change is recorded in this file.
 - The locked `guard_tampering` rule also protects `openclaw.json` (including
   `OPENCLAW_CONFIG_PATH`, `OPENCLAW_STATE_DIR` and named profiles), the
   `~/.openclaw` directory, and OpenClaw commands that change plugin settings or
-  disable the plugin. Path patterns can use `{openclaw_config}`.
+  disable the plugin, reset or uninstall OpenClaw's configuration and state
+  (`openclaw reset`, `openclaw uninstall --state`/`--all`, `--reset` on
+  `onboard`, `setup` and `gateway`). Path patterns can use `{openclaw_config}`.
 
 ### Public packages
 

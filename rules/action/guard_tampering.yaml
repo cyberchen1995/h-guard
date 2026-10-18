@@ -67,6 +67,11 @@ match:
       - '(?<![\w.-])openclaw\b[^\n;&|]*\bconfig\s+(?:set|unset)\b[^\n;&|]*\bplugins\b'
       - '(?<![\w.-])openclaw\b[^\n;&|]*\bconfig\s+patch\b'
       - '(?<![\w.-])openclaw\b[^\n;&|]*\bplugins\s+(?:disable|uninstall)\b[^\n;&|]*\bh-guard\b'
+      # 重置或卸载 OpenClaw 的配置与状态（openclaw reset、openclaw uninstall --state/--all、onboard、setup 与
+      # gateway --dev 的 --reset）同样去掉 h-guard 的插件设置；--dry-run 的用法也请求确认
+      - '(?<![\w.-])openclaw\b(?:\s+--?[\w-]+(?:=\S+|\s+[^\s;&|-]\S*)?)*\s+reset\b'
+      - '(?<![\w.-])openclaw\b(?:\s+--?[\w-]+(?:=\S+|\s+[^\s;&|-]\S*)?)*\s+uninstall\b[^\n;&|]*\s--(?:state|all)\b'
+      - '(?<![\w.-])openclaw\b(?:\s+--?[\w-]+(?:=\S+|\s+[^\s;&|-]\S*)?)*\s+(?:onboard|setup|gateway)\b[^\n;&|]*\s--reset\b'
     # PowerShell：写入、删除、移动、复制到受保护路径的 cmdlet 及其别名，.NET 的文件写入，重定向；
     # 路径可用 \ 或 /，也可拆在 Join-Path 的几个参数里；另覆盖 Windows 的配置与缓存目录（$env:APPDATA、${env:APPDATA}、
     # %LOCALAPPDATA% 下的 h-guard）与 macOS 上 PowerShell 用的 ~/Library 目录。
@@ -263,6 +268,14 @@ examples:
     - {action: file_write, path: "~/.openclaw-dev/openclaw.json"}
     - {action: file_rename, path: "~/.openclaw"}
     - {action: file_write, path: "~/.config/h-guard/extensions/openclaw/index.mjs"}
+    - {shell: posix, command: "openclaw reset --scope config --yes --non-interactive"}
+    - {shell: posix, command: "openclaw --profile work reset --scope full --yes"}
+    - {shell: posix, command: "openclaw uninstall --state --yes --non-interactive"}
+    - {shell: posix, command: "openclaw uninstall --all --yes"}
+    - {shell: posix, command: "openclaw onboard --reset --reset-scope full"}
+    - {shell: posix, command: "openclaw setup --reset --non-interactive"}
+    - {shell: posix, command: "openclaw gateway run --dev --reset"}
+    - {shell: powershell, command: "openclaw reset --scope config --yes --non-interactive"}
   miss:
     - {shell: powershell, command: "Get-Content ~\\.claude\\settings.json"}
     - {shell: posix, command: "cat ~/.claude/settings.json"}
@@ -294,3 +307,7 @@ examples:
     - {shell: posix, command: "openclaw plugins disable other-plugin"}
     - {shell: posix, command: "ls ~/.openclaw/workspace"}
     - {action: file_write, path: "~/.openclaw/workspace/notes.md"}
+    - {shell: posix, command: "openclaw uninstall --service --yes --non-interactive"}
+    - {shell: posix, command: "openclaw plugins uninstall other-plugin"}
+    - {shell: posix, command: "openclaw onboard --non-interactive"}
+    - {shell: posix, command: "openclaw sessions list --json"}
