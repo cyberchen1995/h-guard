@@ -562,6 +562,12 @@ from a chat, OpenClaw can forward plugin approvals to fixed targets
   file it pulls in with `$include`) selects `codex` or `copilot` with
   `agentRuntime.id`; an OpenAI model that `auto` mode hands to Codex
   implicitly is not detected.
+- Messages steered into a running turn from the Control UI, WebChat or other
+  Gateway clients (`chat.send`), and by plugins (`steerActiveRun`): OpenClaw
+  injects them into the run directly, with only the observing
+  `message_received` hook, so h-guard cannot stop them. Channel messages are
+  checked in `before_dispatch`. `install` and `h-guard status` note this while
+  `messages.queue.mode` is `steer` (the default) globally or for a channel.
 - A parameter rewrite returned by another plugin's `before_tool_call`: every
   plugin sees the original parameters, so h-guard checks the call as the model
   made it.

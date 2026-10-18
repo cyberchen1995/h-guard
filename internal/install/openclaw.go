@@ -567,6 +567,24 @@ func openclawRuntimes(e OpenClawEffective) []string {
 	return found
 }
 
+// openclawSteers 报告 OpenClaw 是否会把运行期间收到的消息插进这次运行：messages.queue.mode 没有设置或是 steer
+// （默认），或某个渠道（byChannel）用 steer。会话自己的 /queue 设置与 chat.send 的单次设置读不到，不算在内。
+func openclawSteers(e OpenClawEffective) bool {
+	messages, _ := e.Merged["messages"].(map[string]any)
+	queue, _ := messages["queue"].(map[string]any)
+	mode, _ := queue["mode"].(string)
+	if mode == "" || strings.EqualFold(mode, "steer") {
+		return true
+	}
+	byChannel, _ := queue["byChannel"].(map[string]any)
+	for _, m := range byChannel {
+		if s, _ := m.(string); strings.EqualFold(s, "steer") {
+			return true
+		}
+	}
+	return false
+}
+
 // OpenClawNotes 返回 install 与 status 共用的提醒：OpenClaw 的版本、配置只读（install 时附上要加入的设置）、停用了全部
 // 插件、选择了 codex 或 copilot 运行时、用 --profile 选择的配置档。
 func OpenClawNotes(t Target) []string {
@@ -580,6 +598,9 @@ func OpenClawNotes(t Target) []string {
 	}
 	if st := readOpenClawState(eff, OpenClawPluginDir(t), t.samePath, func(p string) string { return openclawPath(t, p) }); eff.Err == nil && st.disabled {
 		notes = append(notes, fmt.Sprintf("plugins.enabled is false in OpenClaw's configuration (%s), so OpenClaw loads no plugins, h-guard's included", OpenClawConfig(t)))
+	}
+	if openclawSteers(eff) {
+		notes = append(notes, "OpenClaw steers messages that arrive during a run into that run (messages.queue.mode steer, the default): h-guard checks those from channels in before_dispatch, but messages sent from the Control UI, WebChat or other Gateway clients, or by plugins, go into the run without a hook that can stop them and are not checked")
 	}
 	for _, rt := range openclawRuntimes(eff) {
 		notes = append(notes, fmt.Sprintf("OpenClaw's configuration runs some models on the %s agent runtime, where OpenClaw does not emit before_agent_run and h-guard's tool output middleware is not registered: prompts and tool output on those turns are not checked, and only the tool calls OpenClaw relays to before_tool_call are", rt))

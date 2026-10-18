@@ -561,3 +561,22 @@ func TestOpenClawRuntimes(t *testing.T) {
 		t.Errorf("notes without codex or copilot:\n%s", notes)
 	}
 }
+
+// TestOpenClawSteerNote：消息队列默认是 steer：install 与 status 注明 Gateway 客户端与插件插进运行的消息不检查；
+// 全局与各渠道都不用 steer 时不提。
+func TestOpenClawSteerNote(t *testing.T) {
+	tg := target(t, "linux")
+	config := OpenClawConfig(tg)
+	const note = "messages sent from the Control UI, WebChat or other Gateway clients"
+	for cfg, want := range map[string]bool{
+		`{}`: true,
+		`{"messages": {"queue": {"mode": "steer"}}}`:                                          true,
+		`{"messages": {"queue": {"mode": "followup", "byChannel": {"telegram": "steer"}}}}`:   true,
+		`{"messages": {"queue": {"mode": "collect", "byChannel": {"telegram": "followup"}}}}`: false,
+	} {
+		writeFile(t, config, cfg)
+		if got := strings.Contains(strings.Join(OpenClawNotes(tg), "\n"), note); got != want {
+			t.Errorf("%s: steer note %v, want %v", cfg, got, want)
+		}
+	}
+}
