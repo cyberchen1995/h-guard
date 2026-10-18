@@ -99,6 +99,12 @@ func openclawLegacy(config string) bool {
 	return filepath.Base(config) == openclawLegacyConfig || filepath.Base(filepath.Dir(config)) == openclawLegacyDir
 }
 
+// mustRead 读出文件；读不到时为空。
+func mustRead(p string) []byte {
+	b, _ := os.ReadFile(p)
+	return b
+}
+
 func exists(p string) bool {
 	_, err := os.Stat(p)
 	return err == nil
@@ -125,9 +131,24 @@ var (
 // openclawMaxIncludes 是 OpenClawIncludes 最多跟进的文件数。
 const openclawMaxIncludes = 64
 
-// OpenClawIncludes 返回 OpenClaw 的配置用 $include 引入的文件（逐层跟进，相对路径按引入它的文件所在目录解析），
-// 不含配置文件本身。unresolved 为 true 表示有引入的文件读不到，或超过 openclawMaxIncludes：它们里面的设置看不到。
+// OpenClawIncludes 返回 OpenClaw 的配置用 $include 引入的文件（不含配置文件本身）：LoadOpenClawConfig 合并时读到的，
+// 加上按文本找到的（scanIncludes：配置不能解析时也不漏掉）。unresolved 为 true 表示配置或引入的文件读不到、不能解析，
+// 它们里面的设置看不到。
 func OpenClawIncludes(t Target) (files []string, unresolved bool) {
+	e := LoadOpenClawConfig(t)
+	files = slices.Clone(e.Includes)
+	scanned, scanUnresolved := scanIncludes(t)
+	for _, f := range scanned {
+		if !slices.Contains(files, f) {
+			files = append(files, f)
+		}
+	}
+	return files, e.Err != nil || scanUnresolved
+}
+
+// scanIncludes 按文本找出 $include 引入的文件（逐层跟进，相对路径按引入它的文件所在目录解析）。unresolved 为 true
+// 表示有引入的文件读不到，或超过 openclawMaxIncludes。
+func scanIncludes(t Target) (files []string, unresolved bool) {
 	seen := map[string]bool{}
 	queue := []string{OpenClawConfig(t)}
 	for len(queue) > 0 {
@@ -218,36 +239,19 @@ func isOurOpenClawPlugin(files map[string][]byte) bool {
 //     hooks.allowConversationAccess（before_agent_run 要它）与 hooks.timeouts；plugins.allow 不为空时加入 h-guard。
 //     plugins.entries.h-guard 的其他键（如通知设置 config）与文件的其余内容原样保留。
 //
-// openclaw.json 必须是普通 JSON：OpenClaw 也读 JSON5（注释、尾逗号、不带引号的键）与 $include，h-guard 不改写它们，
-// 遇到时报错并给出要手工加入的内容。移除先去掉这些设置，再删插件目录。
-//
-// OpenClaw 的配置只读时（openclawManaged：Nix 或 OPENCLAW_CONFIG_READONLY），配置在别处管理，h-guard 不改 openclaw.json：
-// 安装只写插件目录，要加入的设置由 OpenClawNotes 给出；移除时报错，要先在管理配置的地方去掉这些设置（否则删掉插件
-// 目录后 OpenClaw 加载不到它）。只计划，不写入（Apply 执行）。
+// openclaw.json 必须是普通 JSON：OpenClaw 也读 JSON5（注释、尾逗号、不带引号的键）与 $include，h-guard 不改写它们。
+// 这时与 OpenClaw 的配置只读时（openclawManaged：Nix 或 OPENCLAW_CONFIG_READONLY）一样，h-guard 不改配置：安装只写
+// 插件目录，实际生效的配置（LoadOpenClawConfig）里还缺这些设置时，另有一步列出要手工加入的内容（Step.Manual）；
+// 移除时，实际生效的配置里还有 h-guard 的设置（或配置读不全）就报错，要先手工去掉（否则删掉插件目录后 OpenClaw
+// 加载不到它），没有时只删插件目录。移除先去掉这些设置，再删插件目录。只计划，不写入（Apply 执行）。
 func OpenClaw(t Target, remove bool) ([]Step, error) {
 	if !remove && t.Timeout > openclawMaxTimeout {
 		return nil, fmt.Errorf("OpenClaw waits at most 600 seconds for a hook, and h-guard needs 5 seconds of that as a margin; use --timeout %d or less", openclawMaxTimeout)
 	}
 	dir := OpenClawPluginDir(t)
 	config := OpenClawConfig(t)
-	managed := openclawManaged(t)
-	if managed != "" && remove {
-		// 配置（及其 $include 引入的文件）里还有 h-guard 的设置，或有引入的文件读不到时拒绝：删掉插件目录后 OpenClaw
-		// 就加载不到它
-		includes, unresolved := OpenClawIncludes(t)
-		refuse := unresolved
-		if b, err := os.ReadFile(config); err == nil {
-			st, err := readOpenClawState(b, dir, t.samePath, func(p string) string { return openclawPath(t, p) })
-			refuse = refuse || err != nil || st.loaded || st.entry
-		}
-		for _, f := range includes {
-			b, err := os.ReadFile(f)
-			refuse = refuse || err != nil || bytes.Contains(b, []byte(openclawID))
-		}
-		if refuse {
-			return nil, fmt.Errorf("%s is 1, so OpenClaw's configuration is read-only and h-guard does not edit %s or the files it includes; remove %s from plugins.load.paths and plugins.entries.%s where the configuration is managed, restart the Gateway, then run this again to delete the plugin", managed, config, dir, openclawID)
-		}
-	}
+	ms := openclawHookMS(t.Timeout)
+	expand := func(p string) string { return openclawPath(t, p) }
 	files, err := openclawFiles(t)
 	if err != nil {
 		return nil, err
@@ -264,24 +268,46 @@ func OpenClaw(t Target, remove bool) ([]Step, error) {
 	if !remove {
 		plugin.Summary = "write h-guard's OpenClaw plugin"
 	}
-	if managed != "" {
-		if keepDir {
-			return nil, nil
-		}
-		return []Step{plugin}, nil
-	}
-	ms := openclawHookMS(t.Timeout)
 	change := func(old []byte, exists bool) ([]byte, error) {
-		return openclawConfigEdit(old, exists, dir, ms, remove, t.samePath, func(p string) string { return openclawPath(t, p) })
+		return openclawConfigEdit(old, exists, dir, ms, remove, t.samePath, expand)
 	}
-	old, err := os.ReadFile(config)
-	exists := err == nil
-	if err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return nil, err
+	var old, next []byte
+	manual := ""
+	if k := openclawManaged(t); k != "" {
+		manual = k + " is 1, so OpenClaw's configuration is read-only"
+	} else {
+		var err error
+		old, err = os.ReadFile(config)
+		exists := err == nil
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return nil, err
+		}
+		next, err = change(old, exists)
+		var me manualEditError
+		switch {
+		case errors.As(err, &me):
+			manual = string(me)
+		case err != nil:
+			return nil, fmt.Errorf("%s: %w", config, err)
+		}
 	}
-	next, err := change(old, exists)
-	if err != nil {
-		return nil, fmt.Errorf("%s: %w", config, err)
+	if manual != "" {
+		eff := LoadOpenClawConfig(t)
+		st := readOpenClawState(eff, dir, t.samePath, expand)
+		if remove {
+			if eff.Err != nil || st.loaded || st.entry {
+				return nil, fmt.Errorf("%s, so h-guard does not edit %s or the files it includes; remove %s from plugins.load.paths and plugins.entries.%s yourself, restart the Gateway, then run this again to delete the plugin", manual, config, dir, openclawID)
+			}
+			if keepDir {
+				return nil, nil
+			}
+			return []Step{plugin}, nil
+		}
+		steps := []Step{plugin}
+		if eff.Err != nil || !st.complete(ms) {
+			steps = append(steps, Step{Path: config, Summary: manual + ", so h-guard does not edit it; add these settings yourself", Manual: openclawSnippet(dir, ms)})
+		}
+		return steps, nil
 	}
 	summary, preview := "load the plugin in openclaw.json", openclawSnippet(dir, ms)
 	if remove {
@@ -304,6 +330,11 @@ func OpenClaw(t Target, remove bool) ([]Step, error) {
 	}
 	return []Step{plugin, set}, nil
 }
+
+// manualEditError 表示 openclaw.json 的写法 h-guard 不改写（JSON5、$include），设置要用户自己加入或去掉。
+type manualEditError string
+
+func (e manualEditError) Error() string { return string(e) }
 
 // openclawSnippet 是 install 写进 openclaw.json 的设置（预览，也是无法改写时要手工加入的内容）。
 func openclawSnippet(dir string, ms int) string {
@@ -335,7 +366,7 @@ func openclawConfigEdit(old []byte, exists bool, dir string, ms int, remove bool
 	if exists && len(bytes.TrimSpace(old)) > 0 {
 		var err error
 		if o, err = parseObject(old); err != nil {
-			return nil, fmt.Errorf("not plain JSON (%v); OpenClaw also reads JSON5 (comments, trailing commas, unquoted keys), which h-guard does not rewrite. Add these settings yourself:\n%s", err, openclawSnippet(dir, ms))
+			return nil, manualEditError(fmt.Sprintf("openclaw.json is not plain JSON (%v), and h-guard does not rewrite JSON5 (comments, trailing commas, unquoted keys)", err))
 		}
 	}
 	before := o.marshal()
@@ -356,7 +387,7 @@ func openclawConfigEdit(old []byte, exists bool, dir string, ms int, remove bool
 		o    object
 	}{{"", o}, {"plugins.", plugins}, {"plugins.load.", load}, {"plugins.entries.", entries}} {
 		if _, ok := sub.o.get("$include"); ok {
-			return nil, fmt.Errorf("%s$include splits the configuration into several files, which h-guard does not edit. Add these settings yourself:\n%s", sub.name, openclawSnippet(dir, ms))
+			return nil, manualEditError(fmt.Sprintf("%s$include in openclaw.json splits the configuration into several files, which h-guard does not edit", sub.name))
 		}
 	}
 	paths, err := stringList(load, "paths")
@@ -461,8 +492,8 @@ type openclawState struct {
 	disabled     bool           // plugins.enabled 为 false
 }
 
-// readOpenClawState 读出 openclaw.json 里与 h-guard 有关的设置；文件不是普通 JSON 时报错。
-func readOpenClawState(b []byte, dir string, same func(a, b string) bool, expand func(string) string) (openclawState, error) {
+// readOpenClawState 读出实际生效的配置里与 h-guard 有关的设置（类型不对的值当作没有）。
+func readOpenClawState(e OpenClawEffective, dir string, same func(a, b string) bool, expand func(string) string) openclawState {
 	var cfg struct {
 		Plugins struct {
 			Enabled *bool `json:"enabled"`
@@ -478,46 +509,59 @@ func readOpenClawState(b []byte, dir string, same func(a, b string) bool, expand
 			}
 		}
 	}
-	if _, err := parseObject(b); err != nil {
-		return openclawState{}, err
-	}
-	if err := json.Unmarshal(b, &cfg); err != nil {
-		return openclawState{}, err
-	}
+	plugins, _ := e.Merged["plugins"].(map[string]any)
+	_ = OpenClawEffective{Merged: map[string]any{"plugins": plugins}}.decode(&cfg)
 	p := cfg.Plugins
-	e, ok := p.Entries[openclawID]
+	en, ok := p.Entries[openclawID]
 	return openclawState{
 		loaded:       slices.ContainsFunc(p.Load.Paths, func(s string) bool { return same(expand(s), dir) }),
 		entry:        ok,
-		enabled:      e.Enabled,
-		conversation: e.Hooks.AllowConversationAccess,
-		timeouts:     e.Hooks.Timeouts,
+		enabled:      en.Enabled,
+		conversation: en.Hooks.AllowConversationAccess,
+		timeouts:     en.Hooks.Timeouts,
 		denied:       slices.Contains(p.Deny, openclawID),
 		notAllowed:   len(p.Allow) > 0 && !slices.Contains(p.Allow, openclawID),
 		disabled:     p.Enabled != nil && !*p.Enabled,
-	}, nil
+	}
 }
 
-// openclawRuntimeRe 找出 agentRuntime 选择的 codex、copilot 运行时（provider 或 model 一级的 agentRuntime.id）。
-var openclawRuntimeRe = regexp.MustCompile(`["']?agentRuntime["']?\s*:\s*\{[^{}]*?["']?id["']?\s*:\s*["'](codex|copilot)["']`)
-
-// openclawRuntimes 返回配置（及其 $include 引入的文件）里明确选择的 codex、copilot 运行时：这些运行时不发出
-// before_agent_run，插件的工具结果 middleware 也只为 OpenClaw 自己的运行时注册。只看文本：OpenAI 模型在 auto 模式下
-// 隐式选择 Codex 的情况看不出来（文档里说明）。
-func openclawRuntimes(t Target) []string {
-	includes, _ := OpenClawIncludes(t)
-	var found []string
-	for _, f := range append([]string{OpenClawConfig(t)}, includes...) {
-		b, err := os.ReadFile(f)
-		if err != nil {
-			continue
+// complete 报告设置是否齐全：加载并启用插件、允许读对话、各 hook 的超时够长、没有被 allow 或 deny 挡住。
+func (st openclawState) complete(ms int) bool {
+	if !st.loaded || !st.entry || !st.enabled || !st.conversation || st.denied || st.notAllowed {
+		return false
+	}
+	for _, h := range openclawHooks {
+		if st.timeouts[h] < ms {
+			return false
 		}
-		for _, m := range openclawRuntimeRe.FindAllStringSubmatch(string(b), -1) {
-			if !slices.Contains(found, m[1]) {
-				found = append(found, m[1])
+	}
+	return true
+}
+
+// openclawRuntimes 返回实际生效的配置里用 agentRuntime.id 明确选择的 codex、copilot 运行时（provider 或 model 一级）：
+// 这些运行时不发出 before_agent_run，插件的工具结果 middleware 也只为 OpenClaw 自己的运行时注册。OpenAI 模型在 auto
+// 模式下隐式选择 Codex 的情况看不出来（文档里说明）。
+func openclawRuntimes(e OpenClawEffective) []string {
+	var found []string
+	var walk func(v any)
+	walk = func(v any) {
+		switch x := v.(type) {
+		case map[string]any:
+			for k, item := range x {
+				if rt, ok := item.(map[string]any); ok && k == "agentRuntime" {
+					if id, _ := rt["id"].(string); (id == "codex" || id == "copilot") && !slices.Contains(found, id) {
+						found = append(found, id)
+					}
+				}
+				walk(item)
+			}
+		case []any:
+			for _, item := range x {
+				walk(item)
 			}
 		}
 	}
+	walk(e.Merged)
 	slices.Sort(found)
 	return found
 }
@@ -526,22 +570,17 @@ func openclawRuntimes(t Target) []string {
 // 插件、选择了 codex 或 copilot 运行时、用 --profile 选择的配置档。
 func OpenClawNotes(t Target) []string {
 	notes := ExtNotes(t, "openclaw")
+	eff := LoadOpenClawConfig(t)
 	if k := openclawManaged(t); k != "" {
-		n := fmt.Sprintf("%s is 1, so OpenClaw's configuration is read-only and h-guard does not edit %s", k, OpenClawConfig(t))
-		if t.Timeout > 0 { // install：给出要在管理配置的地方加入的设置
-			n += "; add these settings where it is managed:\n" + strings.TrimSuffix(openclawSnippet(OpenClawPluginDir(t), openclawHookMS(t.Timeout)), "\n")
-		}
-		notes = append(notes, n)
+		notes = append(notes, fmt.Sprintf("%s is 1, so OpenClaw's configuration is read-only and h-guard does not edit %s", k, OpenClawConfig(t)))
 	}
 	if config := OpenClawConfig(t); openclawLegacy(config) && strings.TrimSpace(t.Getenv("OPENCLAW_CONFIG_PATH")) == "" {
 		notes = append(notes, fmt.Sprintf("OpenClaw uses the configuration from before its rename, %s, so h-guard installs there", config))
 	}
-	if b, err := os.ReadFile(OpenClawConfig(t)); err == nil {
-		if st, err := readOpenClawState(b, OpenClawPluginDir(t), t.samePath, func(p string) string { return openclawPath(t, p) }); err == nil && st.disabled {
-			notes = append(notes, fmt.Sprintf("plugins.enabled is false in %s, so OpenClaw loads no plugins, h-guard's included", OpenClawConfig(t)))
-		}
+	if st := readOpenClawState(eff, OpenClawPluginDir(t), t.samePath, func(p string) string { return openclawPath(t, p) }); eff.Err == nil && st.disabled {
+		notes = append(notes, fmt.Sprintf("plugins.enabled is false in OpenClaw's configuration (%s), so OpenClaw loads no plugins, h-guard's included", OpenClawConfig(t)))
 	}
-	for _, rt := range openclawRuntimes(t) {
+	for _, rt := range openclawRuntimes(eff) {
 		notes = append(notes, fmt.Sprintf("OpenClaw's configuration runs some models on the %s agent runtime, where OpenClaw does not emit before_agent_run and h-guard's tool output middleware is not registered: prompts and tool output on those turns are not checked, and only the tool calls OpenClaw relays to before_tool_call are", rt))
 	}
 	if p := strings.TrimSpace(t.Getenv("OPENCLAW_PROFILE")); p != "" && !strings.EqualFold(p, "default") &&
@@ -555,12 +594,13 @@ func OpenClawNotes(t Target) []string {
 func inspectOpenClaw(t Target) []string {
 	dir, config := OpenClawPluginDir(t), OpenClawConfig(t)
 	files, _ := snapshot(dir)
-	var st openclawState
-	if b, err := os.ReadFile(config); err == nil {
-		var cerr error
-		if st, cerr = readOpenClawState(b, dir, t.samePath, func(p string) string { return openclawPath(t, p) }); cerr != nil {
-			return []string{fmt.Sprintf("problem: %s cannot be read as plain JSON: %v", config, cerr)}
-		}
+	eff := LoadOpenClawConfig(t)
+	if eff.Err != nil {
+		return []string{fmt.Sprintf("problem: OpenClaw's configuration cannot be read: %v", eff.Err)}
+	}
+	st := readOpenClawState(eff, dir, t.samePath, func(p string) string { return openclawPath(t, p) })
+	if eff.Include { // 设置可能在引入的文件里：说的是合并之后的配置
+		config += " (with the files it includes)"
 	}
 	if len(files) == 0 && !st.loaded && !st.entry {
 		return []string{"not installed (h-guard install openclaw)"}
@@ -569,6 +609,11 @@ func inspectOpenClaw(t Target) []string {
 	fix := "; run h-guard install openclaw --write"
 	if openclawManaged(t) != "" {
 		fix = "; add it where OpenClaw's configuration is managed"
+	} else if _, err := openclawConfigEdit(mustRead(OpenClawConfig(t)), eff.Exists, dir, openclawHookMS(20), false, t.samePath, func(p string) string { return openclawPath(t, p) }); err != nil {
+		var me manualEditError
+		if errors.As(err, &me) {
+			fix = "; add it yourself (" + string(me) + ")"
+		}
 	}
 	switch {
 	case !st.loaded:

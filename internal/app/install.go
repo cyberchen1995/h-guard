@@ -219,6 +219,9 @@ func applySteps(o Options, steps []install.Step, write, remove bool, done func()
 		if s.Changes() {
 			changes = append(changes, s)
 		}
+		if s.Manual != "" {
+			fmt.Fprintf(o.Stdout, "to do yourself: %s: %s\n%s", s.Summary, s.Path, s.Manual)
+		}
 	}
 	if len(changes) == 0 {
 		if remove {

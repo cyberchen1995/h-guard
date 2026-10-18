@@ -331,3 +331,22 @@ func TestOpenClawIncludeProtected(t *testing.T) {
 		}
 	}
 }
+
+// TestInstallOpenClawJSON5：openclaw.json 是 JSON5 时 install 写出插件，不改配置，打印要自己加入的设置；退出码为 0。
+func TestInstallOpenClawJSON5(t *testing.T) {
+	e := hostInstallEnv(t)
+	config := filepath.Join(e.home, ".openclaw", "openclaw.json")
+	os.MkdirAll(filepath.Dir(config), 0o700)
+	json5 := "{\n  // edited by hand\n  gateway: {mode: 'local'},\n}\n"
+	os.WriteFile(config, []byte(json5), 0o600)
+	out, errs, code := e.run(nil, "install", "openclaw", "--write")
+	if code != 0 || !strings.Contains(out, "to do yourself: openclaw.json is not plain JSON") || !strings.Contains(out, `"allowConversationAccess": true`) {
+		t.Errorf("install: %d\n%s%s", code, out, errs)
+	}
+	if b, _ := os.ReadFile(config); string(b) != json5 {
+		t.Errorf("openclaw.json changed: %s", b)
+	}
+	if _, err := os.Stat(filepath.Join(e.configDir, "extensions", "openclaw", "index.mjs")); err != nil {
+		t.Errorf("the plugin was not written: %v", err)
+	}
+}

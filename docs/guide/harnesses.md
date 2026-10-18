@@ -366,16 +366,25 @@ the load path and the entry (and `h-guard` from `plugins.allow` when other
 plugins remain listed there), then the plugin.
 
 OpenClaw reads `openclaw.json` as JSON5 and can split it with `$include`, but
-it writes plain JSON itself. `install` only edits plain JSON: when the file has
-comments, trailing commas, unquoted keys or `$include`, it changes nothing and
-prints the settings to add yourself. It also refuses while `plugins.deny`
-lists `h-guard`. When OpenClaw's configuration is read-only
+it writes plain JSON itself. `install` only edits plain JSON. When the file has
+comments, trailing commas, unquoted keys or `$include` where h-guard's
+settings go, and when OpenClaw's configuration is read-only
 (`OPENCLAW_NIX_MODE=1`, where Nix manages it, or `OPENCLAW_CONFIG_READONLY=1`),
-`install` writes only the plugin and prints the settings to add where the
-configuration is managed; `install --remove` refuses while the configuration
-or a file it pulls in with `$include` still mentions `h-guard`, or while such
-a file cannot be read, and `h-guard status` notes the mode. A named profile
-(`--profile`, `OPENCLAW_PROFILE`) has its own state directory; set `OPENCLAW_STATE_DIR` or `OPENCLAW_CONFIG_PATH` to install
+`install` writes only the plugin and prints the settings to add yourself
+("to do yourself: …"), unless the effective configuration already has them.
+`install --remove` then refuses while the effective configuration still
+loads the plugin or cannot be read completely, and otherwise deletes only the
+plugin. `install` refuses while `plugins.deny` lists `h-guard`.
+
+`install`, `install --remove`, `h-guard status` and the protected-file rules
+all read the effective configuration the way OpenClaw does: `openclaw.json`
+merged with the files it pulls in with `$include` (a single file replaces the
+object, a list is merged in order, sibling keys override, up to 10 levels,
+relative paths from the including file), all parsed as JSON5. `h-guard
+status` notes a read-only configuration.
+
+A named profile (`--profile`, `OPENCLAW_PROFILE`) has its own state
+directory; set `OPENCLAW_STATE_DIR` or `OPENCLAW_CONFIG_PATH` to install
 there.
 
 The plugin runs in the Gateway process and starts h-guard through OpenClaw's

@@ -42,6 +42,9 @@ type Step struct {
 	Path    string
 	Summary string
 	Preview []byte
+	// Manual 是 h-guard 不能替用户做、要用户自己完成的改动（如只读或 JSON5 的配置里要加入的设置）；这一步没有改动，
+	// Apply 跳过它，install 总是打印它
+	Manual  string
 	changes bool
 	lockDir string       // 执行时持有的读改写锁
 	verify  func() error // 可选：执行前（持锁）复核计划时读到的状态，不论这一步有没有改动

@@ -179,14 +179,9 @@ func TestOpenClawRemove(t *testing.T) {
 	}
 }
 
-// TestOpenClawRefuses：JSON5 写法、$include、deny 里的 h-guard、不是对象的 plugins 都报错，什么都不写。
+// TestOpenClawRefuses：deny 里的 h-guard、不是对象的 plugins 等报错，什么都不写。
 func TestOpenClawRefuses(t *testing.T) {
 	for name, tt := range map[string]struct{ config, want string }{
-		"comment":        {"{\n  // my gateway\n  \"gateway\": {\"mode\": \"local\"}\n}\n", "not plain JSON"},
-		"trailing comma": {`{"gateway": {"mode": "local"},}`, "not plain JSON"},
-		"unquoted key":   {`{gateway: {mode: "local"}}`, "not plain JSON"},
-		"include":        {`{"$include": "./base.json5"}`, "$include"},
-		"plugin include": {`{"plugins": {"$include": "./plugins.json5"}}`, "plugins.$include"},
 		"denied":         {`{"plugins": {"deny": ["h-guard"]}}`, "plugins.deny lists h-guard"},
 		"plugins string": {`{"plugins": "x"}`, "plugins"},
 		"paths string":   {`{"plugins": {"load": {"paths": "/x"}}}`, "paths is not a list of strings"},
@@ -198,11 +193,6 @@ func TestOpenClawRefuses(t *testing.T) {
 			t.Errorf("%s: %v, want %q", name, err, tt.want)
 			continue
 		}
-		if strings.Contains(tt.want, "JSON") || strings.Contains(tt.want, "$include") {
-			if !strings.Contains(err.Error(), `"allowConversationAccess": true`) {
-				t.Errorf("%s: the error does not say what to add:\n%v", name, err)
-			}
-		}
 		if got := readFile(t, OpenClawConfig(tg)); got != tt.config {
 			t.Errorf("%s: the config was changed: %s", name, got)
 		}
@@ -210,11 +200,84 @@ func TestOpenClawRefuses(t *testing.T) {
 			t.Errorf("%s: plugin written: %v", name, err)
 		}
 	}
-	// JSON5 的配置在 status 里报告
+}
+
+// TestOpenClawManualConfig：openclaw.json 用 JSON5 写法或 $include 时 h-guard 不改它：install 照样写出插件目录，另有
+// 一步列出要手工加入的设置；实际生效的配置（合并引入的文件之后）已有这些设置时不再列出。status 按合并后的配置
+// 报告；remove 在设置还在时拒绝，去掉之后只删插件目录。
+func TestOpenClawManualConfig(t *testing.T) {
+	for name, tt := range map[string]struct{ config, want string }{
+		"comment":        {"{\n  // my gateway\n  \"gateway\": {\"mode\": \"local\"}\n}\n", "not plain JSON"},
+		"trailing comma": {`{"gateway": {"mode": "local"},}`, "not plain JSON"},
+		"unquoted key":   {`{gateway: {mode: "local"}}`, "not plain JSON"},
+		"include":        {`{"$include": "./base.json5"}`, "$include"},
+		"plugin include": {`{"plugins": {"$include": "./plugins.json5"}}`, "plugins.$include"},
+	} {
+		tg := target(t, "linux")
+		config := OpenClawConfig(tg)
+		writeFile(t, config, tt.config)
+		writeFile(t, filepath.Join(filepath.Dir(config), "base.json5"), "{}")
+		writeFile(t, filepath.Join(filepath.Dir(config), "plugins.json5"), "{}")
+		steps := plan(t, tg, "openclaw", false)
+		var manual *Step
+		for i, st := range steps {
+			if st.Manual != "" {
+				manual = &steps[i]
+			}
+		}
+		if manual == nil || !strings.Contains(manual.Summary, tt.want) || !strings.Contains(manual.Manual, `"allowConversationAccess": true`) || manual.Changes() {
+			t.Errorf("%s: manual step %+v, want one that says %q and lists the settings", name, manual, tt.want)
+		}
+		apply(t, steps)
+		if got := readFile(t, config); got != tt.config {
+			t.Errorf("%s: the config was changed: %s", name, got)
+		}
+		if _, err := os.Stat(filepath.Join(OpenClawPluginDir(tg), "index.mjs")); err != nil {
+			t.Errorf("%s: the plugin was not written: %v", name, err)
+		}
+		if lines := strings.Join(Inspect(tg, "openclaw"), "\n"); !strings.Contains(lines, "does not list") || !strings.Contains(lines, "add it yourself") {
+			t.Errorf("%s: status:\n%s", name, lines)
+		}
+	}
+
+	// 设置放在引入的 JSON5 文件里：status 不报缺少，install 不再列出，remove 拒绝；去掉之后只删插件目录
 	tg := target(t, "linux")
-	writeFile(t, OpenClawConfig(tg), "{ // x\n}")
-	if lines := strings.Join(Inspect(tg, "openclaw"), "\n"); !strings.Contains(lines, "cannot be read as plain JSON") {
-		t.Errorf("status: %s", lines)
+	config := OpenClawConfig(tg)
+	dir, _ := json.Marshal(OpenClawPluginDir(tg))
+	writeFile(t, config, `{"plugins": {"$include": "./plugins.json5"}}`)
+	frag := filepath.Join(filepath.Dir(config), "plugins.json5")
+	writeFile(t, frag, "{\n  // h-guard\n  load: {paths: ["+string(dir)+"]},\n  entries: {'h-guard': {enabled: true, hooks: {allowConversationAccess: true,\n"+
+		"    timeouts: {before_tool_call: 25000, before_agent_run: 25000, after_tool_call: 25000}}}},\n}\n")
+	apply(t, plan(t, tg, "openclaw", false))
+	steps := plan(t, tg, "openclaw", false)
+	for _, st := range steps {
+		if st.Manual != "" || st.Changes() {
+			t.Errorf("settings in an include: step %+v", st)
+		}
+	}
+	lines := strings.Join(Inspect(tg, "openclaw"), "\n")
+	if strings.Contains(lines, "does not list") || strings.Contains(lines, "is not true") || strings.Contains(lines, "OpenClaw waits") {
+		t.Errorf("status with the settings in an include:\n%s", lines)
+	}
+	if _, err := OpenClaw(tg, true); err == nil || !strings.Contains(err.Error(), "remove") {
+		t.Errorf("remove with the settings in an include: %v, want a refusal", err)
+	}
+	writeFile(t, frag, "{}")
+	apply(t, plan(t, tg, "openclaw", true))
+	if _, err := os.Stat(OpenClawPluginDir(tg)); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("the plugin was not removed: %v", err)
+	}
+	if got := readFile(t, config); got != `{"plugins": {"$include": "./plugins.json5"}}` {
+		t.Errorf("openclaw.json changed on remove: %s", got)
+	}
+
+	// 读不全的配置：status 报告，remove 拒绝
+	writeFile(t, config, `{"plugins": {"$include": "./missing.json5"}}`)
+	if lines := strings.Join(Inspect(tg, "openclaw"), "\n"); !strings.Contains(lines, "cannot be read") {
+		t.Errorf("status with a missing include:\n%s", lines)
+	}
+	if _, err := OpenClaw(tg, true); err == nil {
+		t.Errorf("remove with a missing include: want a refusal")
 	}
 }
 
@@ -386,10 +449,15 @@ func TestOpenClawReadOnly(t *testing.T) {
 		config := OpenClawConfig(tg)
 		writeFile(t, config, `{"gateway": {"port": 18789}}`)
 		steps := plan(t, tg, "openclaw", false)
+		manual := false
 		for _, s := range steps {
-			if s.Path == config {
+			if s.Path == config && s.Changes() {
 				t.Errorf("%s: install edits %s", k, config)
 			}
+			manual = manual || strings.Contains(s.Manual, `"allowConversationAccess": true`) && strings.Contains(s.Summary, k+" is 1")
+		}
+		if !manual {
+			t.Errorf("%s: no step lists the settings to add: %+v", k, steps)
 		}
 		apply(t, steps)
 		if got := readFile(t, config); got != `{"gateway": {"port": 18789}}` {
@@ -399,7 +467,7 @@ func TestOpenClawReadOnly(t *testing.T) {
 			t.Errorf("%s: the plugin was not written: %v", k, err)
 		}
 		notes := strings.Join(OpenClawNotes(tg), "\n")
-		if !strings.Contains(notes, k+" is 1, so OpenClaw's configuration is read-only") || !strings.Contains(notes, `"allowConversationAccess": true`) {
+		if !strings.Contains(notes, k+" is 1, so OpenClaw's configuration is read-only") {
 			t.Errorf("%s: notes:\n%s", k, notes)
 		}
 		status := Target{Home: tg.Home, ConfigDir: tg.ConfigDir, CacheDir: tg.CacheDir, GOOS: "linux", Getenv: tg.Getenv}

@@ -65,10 +65,12 @@ minor releases. Every such change is recorded in this file.
 - `h-guard install openclaw` connects OpenClaw (written against and
   smoke-tested with 2026.10.4). It writes a native plugin to h-guard's
   configuration directory and loads it from `openclaw.json`
-  (`plugins.load.paths`, `plugins.entries.h-guard`); it refuses an
-  `openclaw.json` that uses JSON5 syntax or `$include` and prints the settings
-  to add instead, and leaves a read-only configuration (`OPENCLAW_NIX_MODE`,
-  `OPENCLAW_CONFIG_READONLY`) alone, printing the settings to add there. Tool calls are checked in `before_tool_call` (`ask` becomes a
+  (`plugins.load.paths`, `plugins.entries.h-guard`). When `openclaw.json`
+  uses JSON5 syntax or `$include`, or the configuration is read-only
+  (`OPENCLAW_NIX_MODE`, `OPENCLAW_CONFIG_READONLY`), it writes only the plugin
+  and prints the settings to add yourself. install, status and the rules read
+  the effective configuration (JSON5, merged with its `$include` files). Tool
+  calls are checked in `before_tool_call` (`ask` becomes a
   plugin approval), tool output in the tool result middleware and prompts in
   `before_agent_run`. OpenClaw's own tools are classified like pi's, and for
   `browser`, `message`, `sessions`, `transcripts` and `canvas` by action (only
