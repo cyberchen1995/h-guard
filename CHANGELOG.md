@@ -20,9 +20,9 @@ minor releases. Every such change is recorded in this file.
 - `h-guard selftest [claudecode|codex]` runs the installed entries the way the
   harness does, with a simulated `rm -rf /` (never executed) and a prompt with
   a made-up API key, and checks that both are blocked. Nothing is executed and
-  the judge is not called (an entry from an older h-guard build may still ask a
-  judge you consented to about the made-up prompt). Claude Code plugin files
-  that differ from what this h-guard writes are not run.
+  the judge is not called. Entries that run another h-guard program, and
+  Claude Code plugin files that differ from what this h-guard writes, are not
+  run: reinstall with this h-guard first.
 - Every interruption now names the operation and its target (the command and
   working directory), the impact and a safer way to continue. Action rules can
   carry localized `impact` and `advice` texts; all built-in rules do.

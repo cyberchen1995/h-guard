@@ -15,6 +15,8 @@ import (
 type Entry struct {
 	Argv []string
 	Env  []string
+	// Program 是入口最终运行的 h-guard 程序（Claude Code 的外包脚本运行 hguard-bin 里记下的那个）
+	Program string
 }
 
 // ErrNotInstalled 表示 harness 里没有 h-guard 的入口。
@@ -95,15 +97,15 @@ func claudeEntries(t Target) (map[string][]Entry, error) {
 	}
 	out := map[string][]Entry{}
 	if argv := cfg.Commands["prompt.submit"]; len(argv) > 0 {
-		out["prompt.submit"] = []Entry{{Argv: append(append([]string{}, argv...), "--event", "prompt.submit")}}
+		out["prompt.submit"] = []Entry{{Argv: append(append([]string{}, argv...), "--event", "prompt.submit"), Program: argv[0]}}
 	}
 	env := []string{"CLAUDE_PLUGIN_ROOT=" + dir}
 	if t.GOOS == "windows" {
 		// 与插件的 hooks.json 一样经 PowerShell 运行外包脚本：脚本本身、PowerShell 或执行策略出问题时自测也失败
 		out["PreToolUse"] = []Entry{{Argv: []string{"powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
-			filepath.Join(dir, "hooks", "pretooluse.ps1")}, Env: env}}
+			filepath.Join(dir, "hooks", "pretooluse.ps1")}, Env: env, Program: read("hguard-bin")}}
 	} else {
-		out["PreToolUse"] = []Entry{{Argv: []string{"sh", filepath.Join(dir, "hooks", "pretooluse.sh")}, Env: env}}
+		out["PreToolUse"] = []Entry{{Argv: []string{"sh", filepath.Join(dir, "hooks", "pretooluse.sh")}, Env: env, Program: read("hguard-bin")}}
 	}
 	return out, nil
 }
@@ -151,7 +153,7 @@ func codexEntries(t Target) (map[string][]Entry, error) {
 				}
 				// 本项目的命令形如 <bin> hook codex --event <事件> --timeout <秒>（isOurCodexHook 已核对），参数里没有引号
 				args := strings.Fields(strings.TrimSpace(cmd)[len(binToken(cmd)):])
-				out[ev] = append(out[ev], Entry{Argv: append([]string{commandBin(cmd)}, args...)})
+				out[ev] = append(out[ev], Entry{Argv: append([]string{commandBin(cmd)}, args...), Program: commandBin(cmd)})
 			}
 		}
 	}

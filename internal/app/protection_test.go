@@ -692,3 +692,21 @@ func TestStatusEscapesTheTestedVersion(t *testing.T) {
 		t.Errorf("status: %q", out)
 	}
 }
+
+// TestSelftestRunsOnlyThisHGuard：hooks.json 里的入口指向别的同名程序时自测不运行它，提示用这个 h-guard 重新安装。
+func TestSelftestRunsOnlyThisHGuard(t *testing.T) {
+	e := hostInstallEnv(t)
+	var calls []string
+	e.runEntry = inProcessEntries(e, &calls)
+	e.run(nil, "install", "codex", "--write", "--shell", "posix")
+	other := fakeBin(t)
+	hooks := filepath.Join(e.home, ".codex", "hooks.json")
+	b, _ := os.ReadFile(hooks)
+	quoted, _ := json.Marshal(e.bin)
+	otherQuoted, _ := json.Marshal(other)
+	os.WriteFile(hooks, []byte(strings.ReplaceAll(string(b), strings.Trim(string(quoted), `"`), strings.Trim(string(otherQuoted), `"`))), 0o600)
+	out, _, code := e.run(nil, "selftest", "codex")
+	if code != 1 || len(calls) != 0 || !strings.Contains(out, "not run: the entry runs") {
+		t.Errorf("exit %d, entries run %v\n%s", code, calls, out)
+	}
+}

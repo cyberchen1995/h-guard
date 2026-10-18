@@ -394,3 +394,26 @@ func TestRevokeReportsAnActiveGrantThatStays(t *testing.T) {
 		t.Errorf("revoke: %v", err)
 	}
 }
+
+// TestConsumeDropsAGrantItCannotRecord：记不下「已用」时不放行，授权也删掉，不能留到之后再用。
+func TestConsumeDropsAGrantItCannotRecord(t *testing.T) {
+	s, _ := newStore(t)
+	id, err := s.Offer(op, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := approveID(s, id, DefaultTTL); err != nil {
+		t.Fatal(err)
+	}
+	// 「已用」目录的位置是一个悬空的符号链接：查得到「没用过」，却建不了目录
+	if err := os.Symlink(filepath.Join(t.TempDir(), "missing"), s.usedDir()); err != nil {
+		t.Skip("symlinks unavailable:", err)
+	}
+	if s.Consume(op) {
+		t.Fatal("consumed without recording the use")
+	}
+	os.Remove(s.usedDir())
+	if s.Has(op) || s.Consume(op) {
+		t.Error("the grant survived a failed consume")
+	}
+}

@@ -356,23 +356,28 @@ func (s *Store) Has(op Op) bool {
 
 // Consume 用掉 op 的授权：有可用的授权时记下已用、再删除它，返回 true。
 // 已用记录以独占方式创建，并发的两次调用只有一次成功；先记下已用再删除：中途被终止时，
-// 留下的授权记录已经作废，放回缓存的副本同样不能再用。记不下已用就不放行。
+// 留下的授权记录已经作废，放回缓存的副本同样不能再用。记不下已用就不放行，并删掉授权记录：
+// 批准的是下一次重试，这次重试用不掉它也不能留到之后再放行一次。
 func (s *Store) Consume(op Op) bool {
 	g, ok := s.active(op)
 	if !ok {
 		return false
 	}
+	active := s.path("active", op.ID())
 	if err := os.MkdirAll(s.usedDir(), 0o700); err != nil {
+		_ = os.Remove(active)
 		return false
 	}
 	f, err := os.OpenFile(s.usedPath(g), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
+		_ = os.Remove(active)
 		return false
 	}
 	if f.Close() != nil {
+		_ = os.Remove(active)
 		return false
 	}
-	_ = os.Remove(s.path("active", op.ID()))
+	_ = os.Remove(active)
 	return true
 }
 

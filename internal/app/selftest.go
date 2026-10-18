@@ -299,6 +299,12 @@ func runSelftest(args []string, o Options) int {
 					res.Passed, res.Detail = false, fmt.Sprintf("not every entry ran: the self-test stops after %s (%d entries for %s)", selftestBudget, len(entries[c.event]), c.event)
 					break
 				}
+				// 只运行指向这个 h-guard 的入口：hooks.json 或插件里写的程序可能被换成了别的（只看名字与参数认不出来），
+				// 自测不替它运行；指向旧版本时请用户用这个 h-guard 重新安装
+				if !sameProgram(o, e.Program) {
+					res.Passed, res.Detail = false, "not run: the entry runs "+action.Visible(e.Program)+", not this h-guard; reinstall with this h-guard"
+					break
+				}
 				// 被测的 h-guard 记下自己的版本（自测记录，不算 harness 运行）：入口指向的可能不是当前这个 h-guard
 				_ = seen.Clear(seen.Dir(o.CacheDir), seen.SelftestRuns(h))
 				out, err := o.RunEntry(e.Argv, append(slices.Clone(e.Env), selftestEnv+"=1"), c.input(cwd))
@@ -416,4 +422,18 @@ func configFingerprint(o Options) string {
 		add(filepath.FromSlash(n))
 	}
 	return hex.EncodeToString(h.Sum(nil))[:16]
+}
+
+// sameProgram 报告 prog 是不是这个 h-guard（install 写进入口的程序）：按文件身份比较，符号链接与不同写法的同一路径都算。
+func sameProgram(o Options, prog string) bool {
+	if o.Executable == nil || prog == "" {
+		return false
+	}
+	exe, err := o.Executable()
+	if err != nil {
+		return false
+	}
+	a, err1 := os.Stat(prog)
+	b, err2 := os.Stat(exe)
+	return err1 == nil && err2 == nil && os.SameFile(a, b)
 }
