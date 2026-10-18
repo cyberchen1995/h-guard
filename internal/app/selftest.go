@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -281,6 +282,17 @@ func runSelftest(args []string, o Options) int {
 		// Claude Code 的插件配置有问题时不运行入口：插件没登记或被改过时，入口里的程序与命令可能不是 h-guard 写下的
 		// （hguard-bin 与 hguard.json 一起改掉也能通过文件比对），自测不该替它运行。Codex 的入口是 hooks.json 里
 		// Codex 自己会运行的 h-guard 命令，照常逐个检查，好报出每个事件缺了什么
+		// 每个入口（包括自测不运行的工具输出入口）都要指向这个 h-guard：harness 会运行它们每一个
+		for _, ev := range slices.Sorted(maps.Keys(entries)) {
+			for _, e := range entries[ev] {
+				if !sameProgram(o, e.Program) {
+					d := ev + " runs " + action.Visible(e.Program) + ", not this h-guard; reinstall with this h-guard"
+					fmt.Fprintf(o.Stdout, "  FAIL entry: %s\n", d)
+					st.Passed = false
+					st.Cases = append(st.Cases, seen.Case{Name: "entry", Detail: d})
+				}
+			}
+		}
 		var cases []selftestCase
 		if st.Passed || h != "claudecode" {
 			cases = selftestCases(h)

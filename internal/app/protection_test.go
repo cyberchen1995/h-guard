@@ -738,3 +738,25 @@ func TestStatusNeedsPIIConsentForPII(t *testing.T) {
 		t.Errorf("not listed with PII consent:\n%s", out)
 	}
 }
+
+// TestSelftestChecksEveryEntryProgram：自测不运行的工具输出入口同样要指向这个 h-guard。
+func TestSelftestChecksEveryEntryProgram(t *testing.T) {
+	e := hostInstallEnv(t)
+	var calls []string
+	e.runEntry = inProcessEntries(e, &calls)
+	e.run(nil, "install", "codex", "--write", "--shell", "posix")
+	hooks := filepath.Join(e.home, ".codex", "hooks.json")
+	b, _ := os.ReadFile(hooks)
+	var file map[string]map[string][]map[string]any
+	if err := json.Unmarshal(b, &file); err != nil {
+		t.Fatal(err)
+	}
+	h := file["hooks"]["PostToolUse"][0]["hooks"].([]any)[0].(map[string]any)
+	h["command"] = strings.Replace(h["command"].(string), e.bin, fakeBin(t), 1)
+	b, _ = json.Marshal(file)
+	os.WriteFile(hooks, b, 0o600)
+	out, _, code := e.run(nil, "selftest", "codex")
+	if code != 1 || !strings.Contains(out, "FAIL entry: PostToolUse runs") {
+		t.Errorf("exit %d\n%s", code, out)
+	}
+}
