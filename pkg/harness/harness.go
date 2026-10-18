@@ -1,7 +1,11 @@
 // Package harness 定义 harness 适配接口与能力声明。
 package harness
 
-import "github.com/cyberchen1995/h-guard/pkg/guard"
+import (
+	"errors"
+
+	"github.com/cyberchen1995/h-guard/pkg/guard"
+)
 
 // TargetUnparsedError 表示已知会改动文件或执行命令的工具调用，目标无法解析（如 patch 格式不认识）。Parse 以
 // *TargetUnparsedError 返回；Event 尽量填好 Harness、SessionID、Cwd、Tool 等字段，并带上能读出的动作（如命令本身；
@@ -12,6 +16,16 @@ type TargetUnparsedError struct {
 }
 
 func (*TargetUnparsedError) Error() string { return "harness: the tool's target cannot be parsed" }
+
+// UnknownToolError 表示 adapter 不认识的工具：它不在已知只读的名单里，也不是 adapter 能读出动作的工具，可能执行命令
+// 或改动文件。Parse 以 *UnknownToolError 返回，Event 填好 Harness、SessionID、Cwd、Tool 等字段（没有动作）。调用方按配置
+// harnesses.<name>.read_only_tools 判断：列出的工具不检查（与 ErrNoAction 相同），其余请求确认，带 tool_unknown。
+// 只在 harness 自带的工具可以列全时使用；分不出 harness 自带工具与 MCP 等外部工具的 adapter 不用它。
+type UnknownToolError struct {
+	Event guard.Event
+}
+
+func (*UnknownToolError) Error() string { return "harness: the tool is not known" }
 
 // ShellDefaulter 由标不出 shell 的 adapter 实现（如 Codex）。WithShell 返回一个副本，
 // 它把解析出的 exec 动作的 shell 设为 s；调用方按配置 harnesses.<name>.shell 传入。副本同样不保存其他状态。
@@ -59,4 +73,14 @@ type TranscriptReader interface {
 // 输出 RenderParseFailure 的结果并以它的退出码退出，而不是什么都不输出。
 type ParseFailureRenderer interface {
 	RenderParseFailure() (stdout []byte, exitCode int)
+}
+
+// ErrNoAction 表示这次工具调用不产生要检查的动作（如 MCP 工具）。adapter 的 Parse 返回包装了它的错误
+// （errors.Is 为真）；调用方不检查这次调用。
+var ErrNoAction = errors.New("harness: tool call carries no action")
+
+// NoActionRenderer 由要求每个请求都有回复的 adapter 实现（扩展接入协议：扩展把空输出当作 h-guard 无法运行）：
+// Parse 返回 ErrNoAction 时，调用方输出 RenderNoAction 的结果并以它的退出码退出。其余读不懂的输入仍然什么都不输出。
+type NoActionRenderer interface {
+	RenderNoAction() (stdout []byte, exitCode int)
 }

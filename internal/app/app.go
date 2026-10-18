@@ -20,6 +20,7 @@ import (
 	"github.com/cyberchen1995/h-guard/internal/config"
 	"github.com/cyberchen1995/h-guard/internal/engine"
 	"github.com/cyberchen1995/h-guard/internal/i18n"
+	"github.com/cyberchen1995/h-guard/internal/install"
 	"github.com/cyberchen1995/h-guard/internal/rules"
 	"github.com/cyberchen1995/h-guard/internal/store"
 	"github.com/cyberchen1995/h-guard/pkg/detect/paths"
@@ -27,7 +28,10 @@ import (
 
 	_ "github.com/cyberchen1995/h-guard/pkg/harness/claudecode" // 内置 adapter
 	_ "github.com/cyberchen1995/h-guard/pkg/harness/codex"
+	_ "github.com/cyberchen1995/h-guard/pkg/harness/dsh"
 	_ "github.com/cyberchen1995/h-guard/pkg/harness/generic"
+	_ "github.com/cyberchen1995/h-guard/pkg/harness/opencode"
+	_ "github.com/cyberchen1995/h-guard/pkg/harness/pi"
 	_ "github.com/cyberchen1995/h-guard/pkg/judge/anthropic" // 内置判断后端
 	_ "github.com/cyberchen1995/h-guard/pkg/judge/exec"
 	_ "github.com/cyberchen1995/h-guard/pkg/judge/openai"
@@ -158,7 +162,7 @@ const usage = `usage:
   h-guard eval [--backend <name>] [--sweep] [--shell posix|powershell | --cases <file>] [--repeat <K>] [--bootstrap <N>] [--seed <n>] [--yes] [--config <file>]
   h-guard eval --outbound [--backend <name>] [--sweep] [--threshold <t>] [--cases <file>] [--yes] [--config <file>]
   h-guard init
-  h-guard install claudecode|codex [--write] [--remove] [--timeout <seconds>] [--shell posix|powershell]
+  h-guard install claudecode|codex|opencode|pi|omp|dsh [--write] [--remove] [--timeout <seconds>] [--shell posix|powershell]
   h-guard migrate <questions.json> [--write]
   h-guard config validate [--rules <dir>] | show | init [--config <file>]
   h-guard version
@@ -298,13 +302,33 @@ func loadConfig(o Options, extra string, checkKinds bool) (setup, error) {
 	return s, nil
 }
 
+// ompConfig 是 oh-my-pi 的配置根目录：主目录下的 $PI_CONFIG_DIR；没有设置时为空（{omp_config} 的模式不匹配，
+// 默认的 ~/.omp 由 ~/ 开头的模式覆盖）。
+func ompConfig(o Options) string {
+	d := o.Getenv("PI_CONFIG_DIR")
+	if d == "" || o.Home == "" {
+		return ""
+	}
+	return filepath.Join(o.Home, d)
+}
+
+// piAgentDir 是 $PI_CODING_AGENT_DIR，开头的 ~ 与 pi 一样展开（install pi 写扩展的目录与它一致）；没有设置时为空。
+func piAgentDir(o Options) string {
+	d := o.Getenv("PI_CODING_AGENT_DIR")
+	if d == "" || o.Home == "" {
+		return d
+	}
+	return install.ExpandPiDir(o.Home, d)
+}
+
 // newEngine 组装 Engine：action 检查与 outbound 检查。文件动作的保护路径用主目录、h-guard 实际的配置与缓存目录，
 // 以及这次 --config 加载的文件展开。
 func (s setup) newEngine(o Options, j action.Judge, oj outbound.Judge) *engine.Engine {
 	c := &action.Check{Rules: s.rules, Config: s.cfg, Catalog: s.catalog, Locale: s.locale, Judge: j,
 		Paths: paths.Env{Home: o.Home, FoldCase: paths.FoldCaseDefault, Windows: paths.WindowsDefault,
 			Vars: map[string]string{rules.VarConfig: o.ConfigDir, rules.VarCache: o.CacheDir, rules.VarExtraConfig: s.extra,
-				rules.VarClaudeConfig: o.Getenv("CLAUDE_CONFIG_DIR"), rules.VarCodexHome: o.Getenv("CODEX_HOME")}}}
+				rules.VarClaudeConfig: o.Getenv("CLAUDE_CONFIG_DIR"), rules.VarCodexHome: o.Getenv("CODEX_HOME"),
+				rules.VarXDGConfig: o.Getenv("XDG_CONFIG_HOME"), rules.VarPiAgentDir: piAgentDir(o), rules.VarDSHHome: install.ExpandDSHHome(o.Home, o.Getenv("DSH_HOME")), rules.VarOMPConfig: ompConfig(o)}}}
 	o2 := &outbound.Check{Rules: s.rules, Config: s.cfg, Judge: oj}
 	return &engine.Engine{
 		Checks: []guard.Check{c, o2}, Catalog: s.catalog, Locale: s.locale,

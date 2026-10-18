@@ -135,18 +135,21 @@ func statusRules(s setup, o Options) {
 	}
 }
 
-// statusHarnesses 报告各 harness 的入口（install.Inspect）与 Codex 的 shell 配置。
+// statusHarnesses 报告各 harness 的入口（install.Inspect）与 Codex、opencode 的 shell 配置。
 func statusHarnesses(s setup, o Options) {
 	if o.Home == "" {
 		return
 	}
 	t := install.Target{Home: o.Home, ConfigDir: o.ConfigDir, CacheDir: o.CacheDir, GOOS: o.GOOS, Getenv: o.Getenv, Run: o.RunHarness, Now: o.Now}
-	for _, h := range []string{"claudecode", "codex"} {
+	for _, h := range installable {
 		for _, line := range install.Inspect(t, h) {
 			fmt.Fprintf(o.Stdout, "%s: %s\n", h, line)
 		}
 	}
 	fmt.Fprintf(o.Stdout, "codex commands are checked as %s (harnesses.codex.shell)\n", s.cfg.ShellFor("codex"))
+	if strings.HasPrefix(install.Inspect(t, "opencode")[0], "installed") { // 装了 opencode 时才说明
+		fmt.Fprintf(o.Stdout, "opencode commands are checked as %s (harnesses.opencode.shell)\n", s.cfg.ShellFor("opencode"))
+	}
 }
 
 // statusHealth 汇总近 7 天健康记录里的降级原因码（按次数从多到少），并写明日志位置。

@@ -30,6 +30,11 @@ Fuzz targets live next to the code they cover (`pkg/detect/...`,
 go test -run '^$' -fuzz '^FuzzFind$' -fuzztime 30s ./pkg/detect/pii/
 ```
 
+The opencode, pi/oh-my-pi and DeepSeek Harness extensions have JavaScript tests
+under `extensions/*/tests`. They run against simulated harness APIs and a
+freshly built h-guard; `go test ./extensions/` runs them when `node` is on
+`PATH` (CI runners have it), and skips them otherwise or with `-short`.
+
 The Claude Code plugin has its own tests; they need the `claude` CLI and are not
 part of CI:
 

@@ -27,6 +27,7 @@ const (
 	KeyErrorConfigInvalid      = "error.config_invalid"      // {detail}
 	KeyErrorInputTooLarge      = "error.input_too_large"     //
 	KeyErrorTargetUnparsed     = "error.target_unparsed"     // {tool}
+	KeyErrorToolUnknown        = "error.tool_unknown"        // {tool} {harness}
 	KeyDegradeAskUnsupported   = "degrade.ask_unsupported"   //
 	KeySourceLocal             = "source.local"              //
 	KeySourceJudge             = "source.judge"              //
@@ -47,7 +48,7 @@ const (
 var AllKeys = []string{
 	KeyActionBlocked, KeyActionDangerous, KeyActionRadius, KeyActionNotRequested, KeyActionGuardSelf, KeyActionGuardSelfFile,
 	KeyActionFileRule, KeyActionJudgeUnavailable, KeyActionEvidenceTruncated, KeyActionRegexTimeout, KeyActionBudgetExceeded,
-	KeyActionProbe, KeyActionOperation, KeyActionOperationHere, KeyActionImpact, KeyActionAdvice, KeyOutboundCredentials, KeyOutboundPrivateKey, KeyOutboundPII, KeyOutboundCustom, KeyOutboundJudge, KeyErrorInternal, KeyErrorConfigInvalid, KeyErrorInputTooLarge, KeyErrorTargetUnparsed, KeyDegradeAskUnsupported,
+	KeyActionProbe, KeyActionOperation, KeyActionOperationHere, KeyActionImpact, KeyActionAdvice, KeyOutboundCredentials, KeyOutboundPrivateKey, KeyOutboundPII, KeyOutboundCustom, KeyOutboundJudge, KeyErrorInternal, KeyErrorConfigInvalid, KeyErrorInputTooLarge, KeyErrorTargetUnparsed, KeyErrorToolUnknown, KeyDegradeAskUnsupported,
 	KeySourceLocal, KeySourceJudge, KeySourceBoth, KeyHintManual, KeyHintConsent, KeyHintJudgeUnavailable,
 	KeyHintSplit, KeyHintNarrow, KeyHintRequest, KeyHintOutbound, KeyHintOutboundJudge, KeyHintGrant, KeyListSeparator,
 }
