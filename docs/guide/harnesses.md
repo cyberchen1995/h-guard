@@ -480,6 +480,13 @@ OpenClaw differences:
   (percent-encoding, `localhost`, Windows drive letters; a URL OpenClaw
   rejects, such as one with a remote host, reads nothing). Remote URLs and
   OpenClaw's own `media://` store are not checked.
+- **Output scanned as file content.** At outbound tier 2, the output of tools
+  that return locally stored content is scanned like a file read: `read`,
+  `grep`, `pdf`, `memory_get`, `memory_search`, `skills_read`,
+  `skills_search`, `sessions_history`, `sessions_search`, `sessions_list` with
+  messages (`messageLimit`, `includeLastMessage`, `includeDerivedTitles`),
+  `transcripts` `show` and `summarize`, `dashboard` `read`, `process` output,
+  commands that read files, Code Mode cells and the Tool Search dispatcher.
 - **Tool Search.** The dispatcher (`tool_call`; `dispatch_action` in newer
   versions) passes: OpenClaw runs the target tool through `before_tool_call`
   again, where it is checked. Its output is scanned as file content.

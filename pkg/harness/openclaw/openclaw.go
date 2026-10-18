@@ -169,7 +169,7 @@ func (Adapter) Parse(raw []byte) (guard.Event, error) {
 				}
 			}
 			ev.Kind, ev.Text = guard.EventToolOutput, extadapter.Text(r.Content)
-			ev.FileContent = fileContent(d.ToolName, in, shells(in, d.Platform), codeMode)
+			ev.FileContent = fileContent(d.ToolName, in, rawParams, shells(in, d.Platform), codeMode)
 			break
 		}
 		ev.Kind = guard.EventAction
@@ -417,6 +417,29 @@ func partlyReadOnly(tool string, in params, raw json.RawMessage, platform string
 	return acts, nil
 }
 
+// listsMessages 报告 sessions_list 是否要求带上会话里的消息（messageLimit 大于 0，includeLastMessage 或
+// includeDerivedTitles）；参数读不懂
+// 时按带上处理。
+func listsMessages(raw json.RawMessage) bool {
+	if extadapter.IsNull(raw) {
+		return false
+	}
+	var p map[string]any
+	if json.Unmarshal(raw, &p) != nil {
+		return true
+	}
+	for _, k := range []string{"includeLastMessage", "includeDerivedTitles"} { // 标题取自会话的第一条消息
+		if v, ok := p[k]; ok && v != false {
+			return true
+		}
+	}
+	if v, ok := p["messageLimit"]; ok {
+		n, isNum := v.(float64)
+		return !isNum || n > 0
+	}
+	return false
+}
+
 // widgetCapabilities 报告 show_widget 是否给组件要了能力：capabilities.tools（让组件发提示词、触发定时任务）或
 // capabilities.netOrigins（让组件访问外部来源）。
 func widgetCapabilities(raw json.RawMessage) bool {
@@ -436,13 +459,21 @@ func widgetCapabilities(raw json.RawMessage) bool {
 }
 
 // fileContent 报告工具结果是不是文件内容：读文件的工具，或读文件的命令。
-func fileContent(tool string, in params, sh []guard.Shell, codeMode bool) bool {
+func fileContent(tool string, in params, raw json.RawMessage, sh []guard.Shell, codeMode bool) bool {
 	if codeMode { // Code Mode 单元里的工具调用（如 read）取回的值可以原样返回
 		return true
 	}
 	switch tool {
 	case "read", "grep", "pdf", "memory_get", "skills_read":
 		return true
+	case "memory_search", "skills_search": // 记忆文件与技能文件的摘录
+		return true
+	case "transcripts": // show 是会议记录的原文与笔记，summarize 按记录总结
+		return in.Action == "show" || in.Action == "summarize" || in.Action == ""
+	case "dashboard": // read 取回仪表盘组件保存的内容（如会话报告）
+		return in.Action == "read" || in.Action == ""
+	case "sessions_list": // messageLimit、includeLastMessage、includeDerivedTitles 时带上会话里的消息
+		return listsMessages(raw)
 	case "tool_call", "dispatch_action": // Tool Search 调用目标工具，结果里是目标工具（可能是 read）的结果
 		return true
 	case "exec":
