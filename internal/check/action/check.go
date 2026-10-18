@@ -258,6 +258,9 @@ func clip(s string, n int) string {
 }
 
 // merge 以更严的结论为主（同样严时以先出现的为主、原因合在一起），合并全部命中与降级原因。
+// maxMergedReasons 是一次调用的全部动作合起来最多保留的说明条数（每个动作的操作、后果、建议各算一条）。
+const maxMergedReasons = 24
+
 func merge(acc, v guard.Verdict) guard.Verdict {
 	base, other := acc, v
 	if guard.Stricter(acc.Decision, v.Decision) != acc.Decision {
@@ -267,6 +270,10 @@ func merge(acc, v guard.Verdict) guard.Verdict {
 	if acc.Decision == v.Decision {
 		// 同样严：两个动作的说明都保留（一次补丁改了几个受保护的文件时，每个文件都写明），前进路径取先出现的
 		out.Reasons = append(slices.Clone(acc.Reasons), v.Reasons...)
+		// 说明总数有上限：一次调用里成百上千个同样结论的动作不能把回复撑到几 MB
+		if len(out.Reasons) > maxMergedReasons {
+			out.Reasons = out.Reasons[:maxMergedReasons]
+		}
 	}
 	out.Findings = append(slices.Clone(base.Findings), other.Findings...)
 	for _, f := range other.Fallbacks {

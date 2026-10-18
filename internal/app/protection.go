@@ -36,9 +36,10 @@ func statusProtection(s setup, o Options) {
 	if len(off) > 0 {
 		fmt.Fprintln(o.Stdout, "  off:", strings.Join(off, ", "))
 	}
-	fmt.Fprintf(o.Stdout, "  prompts and tool output: %s (scans %s)\n", listOrNone(outboundCoverage(s)), outboundScope[s.cfg.Outbound.Tier])
 	_, jst := s.actionJudge(o)
-	for _, gap := range coverageGaps(s, jst.backend != nil && jst.consent == consentGranted) {
+	judgeUsable := jst.backend != nil && jst.consent == consentGranted
+	fmt.Fprintf(o.Stdout, "  prompts and tool output: %s (scans %s)\n", listOrNone(outboundCoverage(s, judgeUsable)), outboundScope[s.cfg.Outbound.Tier])
+	for _, gap := range coverageGaps(s, judgeUsable) {
 		fmt.Fprintln(o.Stdout, "  not covered:", gap)
 	}
 	if guard.Decision(s.cfg.Policy.WhenAskUnsupported) == guard.DecisionPass {
@@ -161,7 +162,8 @@ func fileKindsCovered(r *rules.Rule, tier int) bool {
 }
 
 // outboundCoverage 是生效的 outbound 类别与动作。
-func outboundCoverage(s setup) []string {
+// judgeUsable 是判断后端真的能用：只靠类别题的类别只有这时才被检查。
+func outboundCoverage(s setup, judgeUsable bool) []string {
 	active := map[string]bool{}
 	for _, r := range s.rules.Outbound() {
 		if rules.OutboundStateOf(r, s.cfg.Outbound.Tier, s.cfg.Category(r.Category).Enabled).Effective {
@@ -172,11 +174,11 @@ func outboundCoverage(s setup) []string {
 	for _, name := range slices.Sorted(maps.Keys(active)) {
 		out = append(out, name+" "+string(s.cfg.Category(name).Action))
 	}
-	// 只有类别题、没有本地规则的类别由模型检查，命中只提示
-	if s.cfg.Judge.Enabled && s.cfg.OutboundJudge() {
+	// 只有类别题、没有本地规则的类别由模型检查，命中只提示；Codex 显示不了提示，在 Codex 上不检查
+	if judgeUsable && s.cfg.OutboundJudge() {
 		for _, name := range slices.Sorted(maps.Keys(s.cfg.Outbound.Categories)) {
 			if c := s.cfg.Category(name); c.Enabled && c.Question != nil && !active[name] {
-				out = append(out, name+" warn (judge only)")
+				out = append(out, name+" warn (judge only, not on Codex)")
 			}
 		}
 	}

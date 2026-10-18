@@ -1015,3 +1015,15 @@ func TestEarlyDenyCommitIsExplained(t *testing.T) {
 		t.Errorf("commits = %+v", commits)
 	}
 }
+
+// TestMergedReasonsAreBounded：一次调用里大量同样结论的动作，说明总数有上限。
+func TestMergedReasonsAreBounded(t *testing.T) {
+	c := newCheck(t, false, action.Judge{})
+	cmds := make([]string, 200)
+	for i := range cmds {
+		cmds[i] = "rm -rf /"
+	}
+	if v := run(t, c, event(nil, cmds...)); v.Decision != guard.DecisionDeny || len(v.Reasons) > 30 {
+		t.Errorf("decision %s, %d reasons", v.Decision, len(v.Reasons))
+	}
+}

@@ -571,11 +571,19 @@ func TestSelftestRunsCommandWindowsOnWindows(t *testing.T) {
 	}
 }
 
-// TestStatusShowsJudgeOnlyCategories：只有类别题、没有本地规则的类别由模型检查，摘要照样列出。
+// TestStatusShowsJudgeOnlyCategories：只有类别题、没有本地规则的类别由模型检查，模型能用时摘要列出；
+// 还没同意时没有检查，不列出。
 func TestStatusShowsJudgeOnlyCategories(t *testing.T) {
 	e := newEnv(t)
-	e.config("version: 1\njudge: {enabled: true, backend: claude-haiku}\noutbound: {categories: {acme-codename: {action: warn, question: {question: 'Does the text name Project Falcon?'}}}}\n")
-	if out, _, _ := e.run(nil, "status"); !strings.Contains(out, "acme-codename warn (judge only)") {
+	srv := newJevServer(t, 0.9)
+	e.judgeConfig(srv, "")
+	b, _ := os.ReadFile(filepath.Join(e.configDir, "config.yaml"))
+	e.config(string(b) + "outbound: {categories: {acme-codename: {action: warn, question: {question: 'Does the text name Project Falcon?'}}}}\n")
+	if out, _, _ := e.run(nil, "status"); strings.Contains(out, "acme-codename") && strings.Contains(out, "judge only") {
+		t.Errorf("listed without consent:\n%s", out)
+	}
+	e.grant(srv)
+	if out, _, _ := e.run(nil, "status"); !strings.Contains(out, "acme-codename warn (judge only, not on Codex)") {
 		t.Errorf("status:\n%s", out)
 	}
 }
