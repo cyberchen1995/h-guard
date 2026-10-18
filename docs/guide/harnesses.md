@@ -320,13 +320,16 @@ model server); no recorded sessions yet.
    `hooks.allowConversationAccess: true` (OpenClaw only gives prompts to a
    plugin that has it) and `hooks.timeouts` for `before_tool_call`,
    `before_agent_run` and `after_tool_call` (the timeout plus 5 seconds; the
-   tool result middleware runs on the `after_tool_call` budget). When
+   tool result middleware runs on the `after_tool_call` budget; OpenClaw allows
+   at most 600 seconds, so `--timeout` can be at most 595). When
    `plugins.allow` is not empty, `h-guard` is added to it. The rest of the file
    is kept, and so are other keys of the entry, such as the notification
    settings below.
 
 `openclaw.json` is `$OPENCLAW_CONFIG_PATH`, or `openclaw.json` in
-`$OPENCLAW_STATE_DIR` (default `~/.openclaw`; `$OPENCLAW_HOME` replaces `~`).
+`$OPENCLAW_STATE_DIR` (default `~/.openclaw`; `$OPENCLAW_HOME` replaces `~`;
+as in OpenClaw, a blank `OPENCLAW_HOME` or the literal `undefined` or `null`
+counts as unset).
 Restart the Gateway afterwards (`openclaw gateway restart`). Removing deletes
 the load path and the entry (and `h-guard` from `plugins.allow` when other
 plugins remain listed there), then the plugin.

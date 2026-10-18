@@ -118,6 +118,21 @@ func TestOpenClawInstall(t *testing.T) {
 	}
 }
 
+// TestOpenClawTimeout：OpenClaw 的 hook 超时最多 600 秒，--timeout 要给插件留 5 秒余量：595 可以，596 拒绝；移除不受影响。
+func TestOpenClawTimeout(t *testing.T) {
+	tg := target(t, "linux")
+	tg.Timeout = 595
+	apply(t, plan(t, tg, "openclaw", false))
+	if got := readFile(t, OpenClawConfig(tg)); !strings.Contains(got, `"before_tool_call": 600000`) {
+		t.Errorf("config:\n%s", got)
+	}
+	tg.Timeout = 596
+	if _, err := OpenClaw(tg, false); err == nil || !strings.Contains(err.Error(), "--timeout 595 or less") {
+		t.Errorf("596: %v", err)
+	}
+	apply(t, plan(t, tg, "openclaw", true))
+}
+
 // TestOpenClawNewConfig：没有 openclaw.json 时新建；allow 为空时不加（空的 allow 表示不限制）。
 func TestOpenClawNewConfig(t *testing.T) {
 	tg := target(t, "linux")
@@ -248,6 +263,10 @@ func TestOpenClawPaths(t *testing.T) {
 		want string
 	}{
 		{map[string]string{"OPENCLAW_HOME": "~/oc"}, filepath.Join(tg.Home, "oc", ".openclaw", "openclaw.json")},
+		// OpenClaw 把空白与字面的 undefined、null 当作没有设置
+		{map[string]string{"OPENCLAW_HOME": " undefined "}, filepath.Join(tg.Home, ".openclaw", "openclaw.json")},
+		{map[string]string{"OPENCLAW_HOME": "null", "OPENCLAW_STATE_DIR": "~/state"}, filepath.Join(tg.Home, "state", "openclaw.json")},
+		{map[string]string{"OPENCLAW_HOME": "  "}, filepath.Join(tg.Home, ".openclaw", "openclaw.json")},
 		{map[string]string{"OPENCLAW_STATE_DIR": "~/state"}, filepath.Join(tg.Home, "state", "openclaw.json")},
 		{map[string]string{"OPENCLAW_HOME": "/srv/oc", "OPENCLAW_STATE_DIR": "~/state"}, filepath.Join("/srv/oc", "state", "openclaw.json")},
 		{map[string]string{"OPENCLAW_CONFIG_PATH": "/etc/oc.json", "OPENCLAW_STATE_DIR": "/x"}, "/etc/oc.json"},

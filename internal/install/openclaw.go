@@ -20,9 +20,10 @@ const openclawID = "h-guard"
 // openclawHooks 是插件用到、install 为它们写入超时的 hook。工具结果 middleware 的超时取 after_tool_call 的设置。
 var openclawHooks = []string{"before_tool_call", "before_agent_run", "after_tool_call"}
 
-// OpenClawHome 是 OpenClaw 的主目录：$OPENCLAW_HOME（开头的 ~ 展开到用户主目录），默认用户主目录。
+// OpenClawHome 是 OpenClaw 的主目录：$OPENCLAW_HOME（开头的 ~ 展开到用户主目录），默认用户主目录。与 OpenClaw 一样，
+// 只有空白或是字面的 undefined、null 时当作没有设置。
 func OpenClawHome(t Target) string {
-	if d := strings.TrimSpace(t.Getenv("OPENCLAW_HOME")); d != "" {
+	if d := strings.TrimSpace(t.Getenv("OPENCLAW_HOME")); d != "" && d != "undefined" && d != "null" {
 		return openclawAbs(t.Home, d)
 	}
 	return t.Home
@@ -68,9 +69,12 @@ func OpenClawConfig(t Target) string {
 // OpenClawPluginDir 是写出的插件目录：<config_dir>/extensions/openclaw。
 func OpenClawPluginDir(t Target) string { return filepath.Join(t.ConfigDir, "extensions", "openclaw") }
 
-// openclawHookMS 是写进 openclaw.json 的 hook 超时（毫秒）：比插件等 h-guard 的时间多 5 秒，不超过 OpenClaw 允许的
-// 600000。OpenClaw 等不到 hook 时拦下工具调用（工具结果被换成「输出不可用」），不会放行。
-func openclawHookMS(timeout int) int { return min((timeout+5)*1000, 600000) }
+// openclawHookMS 是写进 openclaw.json 的 hook 超时（毫秒）：比插件等 h-guard 的时间多 5 秒。OpenClaw 等不到 hook 时
+// 拦下工具调用（工具结果被换成「输出不可用」），不会放行；留出余量是为了让插件先等到 h-guard 的回复或自己的兜底。
+func openclawHookMS(timeout int) int { return (timeout + 5) * 1000 }
+
+// openclawMaxTimeout 是 install openclaw 接受的最长 --timeout（秒）：OpenClaw 的 hook 超时最多 600000 毫秒，要留 5 秒余量。
+const openclawMaxTimeout = 595
 
 // openclawFiles 返回插件目录里的全部文件：清单、package.json 与入口（CONFIG 一行是 h-guard 的命令与超时）。
 func openclawFiles(t Target) (map[string][]byte, error) {
@@ -105,6 +109,9 @@ func isOurOpenClawPlugin(files map[string][]byte) bool {
 // openclaw.json 必须是普通 JSON：OpenClaw 也读 JSON5（注释、尾逗号、不带引号的键）与 $include，h-guard 不改写它们，
 // 遇到时报错并给出要手工加入的内容。移除先去掉这些设置，再删插件目录。只计划，不写入（Apply 执行）。
 func OpenClaw(t Target, remove bool) ([]Step, error) {
+	if !remove && t.Timeout > openclawMaxTimeout {
+		return nil, fmt.Errorf("OpenClaw waits at most 600 seconds for a hook, and h-guard needs 5 seconds of that as a margin; use --timeout %d or less", openclawMaxTimeout)
+	}
 	dir := OpenClawPluginDir(t)
 	files, err := openclawFiles(t)
 	if err != nil {
