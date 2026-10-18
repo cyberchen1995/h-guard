@@ -432,6 +432,19 @@ OpenClaw differences:
 - **Code Mode.** A Code Mode `exec` cell is JavaScript; it is not checked
   itself, but each tool call it makes is. Its output is scanned as file
   content.
+- **Tools with read-only actions.** `browser` drives a real, possibly
+  signed-in browser: only observing it passes (`status`, `profiles`, `tabs`,
+  `snapshot`, `console`, `requests`, `errors`, `text`, and `screenshot` and
+  `pdf`, whose `path` is checked as a file write); opening, navigating,
+  clicking and typing (`act`), uploads, downloads, dialogs and the other
+  actions ask. `message` passes reading and sending, replying, reacting and
+  polls, with local attachments (`media`, `path`, `filePath`, `attachments`,
+  `file:` URLs) checked as file reads because they leave for the channel;
+  editing, deleting and pinning messages and managing groups, channels,
+  members, roles, profiles and events ask. `sessions` asks to reset or delete
+  a session, delete a group or hand a session to another owner, and
+  `transcripts` asks to start recording a meeting. An action h-guard does not
+  know asks.
 - **Processes.** Text written or pasted into a running process (`process`
   with `write` or `paste`) is checked as a POSIX command and always asks;
   submitting pending input (`submit`), closing a process's input (`write`

@@ -294,3 +294,52 @@ func TestSubject(t *testing.T) {
 		t.Errorf("deny carries a subject: %q", r.Subject)
 	}
 }
+
+// TestPartlyReadOnly：browser、message、sessions、transcripts 只放行部分子命令；放行的子命令里写到的文件与发出的本地
+// 附件按文件动作检查，其余子命令（包括没写子命令与不认识的）请求确认。
+func TestPartlyReadOnly(t *testing.T) {
+	for _, tt := range []struct {
+		tool   string
+		params map[string]any
+		want   []guard.Action
+	}{
+		{"browser", map[string]any{"action": "snapshot"}, nil},
+		{"browser", map[string]any{"action": "tabs"}, nil},
+		{"browser", map[string]any{"action": "screenshot"}, nil},
+		{"browser", map[string]any{"action": "screenshot", "path": "~/.bashrc"}, []guard.Action{file(guard.ActionFileWrite, "~/.bashrc")}},
+		{"browser", map[string]any{"action": "pdf", "path": "out/page.pdf"}, []guard.Action{file(guard.ActionFileWrite, "out/page.pdf")}},
+		{"message", map[string]any{"action": "read", "target": "channel:1"}, nil},
+		{"message", map[string]any{"action": "send", "message": "done", "media": "https://example.com/a.png"}, nil},
+		{"message", map[string]any{"action": "send", "media": "media://inbound/a.png", "buffer": "data:text/plain;base64,eA=="}, nil},
+		{"message", map[string]any{"action": "send", "media": "~/.ssh/id_rsa"}, []guard.Action{file(guard.ActionFileRead, "~/.ssh/id_rsa")}},
+		{"message", map[string]any{"action": "sendAttachment", "filePath": "file:///etc/shadow", "path": "/etc/shadow"}, []guard.Action{file(guard.ActionFileRead, "/etc/shadow")}},
+		{"message", map[string]any{"action": "upload-file", "file_url": "file:///C:/Users/me/.aws/credentials"}, []guard.Action{file(guard.ActionFileRead, "C:/Users/me/.aws/credentials")}},
+		{"message", map[string]any{"action": "reply", "mediaUrls": []string{"a.png", "https://x/b.png"}, "attachments": []map[string]string{{"url": "C:\\x\\c.txt"}}}, []guard.Action{file(guard.ActionFileRead, "a.png"), file(guard.ActionFileRead, "C:\\x\\c.txt")}},
+		{"sessions", map[string]any{"action": "patch", "label": "x"}, nil},
+		{"transcripts", map[string]any{"action": "list"}, nil},
+	} {
+		ev, err := a.Parse(call(tt.tool, tt.params))
+		if tt.want == nil {
+			if !errors.Is(err, harness.ErrNoAction) {
+				t.Errorf("%s %v: %+v %v, want ErrNoAction", tt.tool, tt.params, ev, err)
+			}
+			continue
+		}
+		if err != nil || asJSON(ev.Actions) != asJSON(tt.want) {
+			t.Errorf("%s %v: %s %v, want %s", tt.tool, tt.params, asJSON(ev.Actions), err, asJSON(tt.want))
+		}
+	}
+	var ut *harness.UnknownToolError
+	for tool, actions := range map[string][]string{
+		"browser":     {"act", "navigate", "open", "focus", "close", "upload", "download", "waitfordownload", "dialog", "emulate", "start", "stop", "importprofile", "", "frob"},
+		"message":     {"edit", "unsend", "delete", "pin", "kick", "ban", "timeout", "role-add", "channel-delete", "set-profile", "addParticipant", "leaveGroup", "", "frob"},
+		"sessions":    {"reset", "delete", "group_delete", "assign_owner", ""},
+		"transcripts": {"start", ""},
+	} {
+		for _, action := range actions {
+			if _, err := a.Parse(call(tool, map[string]any{"action": action})); !errors.As(err, &ut) || ut.Event.Tool != tool {
+				t.Errorf("%s %q: %v, want UnknownToolError", tool, action, err)
+			}
+		}
+	}
+}
