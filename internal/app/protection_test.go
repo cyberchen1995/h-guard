@@ -245,9 +245,12 @@ func TestSelftestFailsWhenClaudeDoesNotLoadThePlugin(t *testing.T) {
 		t.Fatalf("installed: exit %d\n%s", code, out)
 	}
 	os.WriteFile(filepath.Join(e.home, ".claude", "settings.json"), []byte("{}\n"), 0o600)
+	// 不再加载的插件里的入口不运行：其中的程序可能已被换掉
+	calls = nil
 	out, _, code := e.run(nil, "selftest", "claudecode")
-	if code != 1 || !strings.Contains(out, "FAIL configuration: the plugin is written but") {
-		t.Errorf("exit %d\n%s", code, out)
+	if code != 1 || !strings.Contains(out, "FAIL configuration: the plugin is written but") ||
+		!strings.Contains(out, "entries not run") || len(calls) != 0 {
+		t.Errorf("exit %d, entries run %v\n%s", code, calls, out)
 	}
 }
 
@@ -632,5 +635,26 @@ func TestSelftestDoesNotRunAChangedPlugin(t *testing.T) {
 	}
 	if status, _, _ := e.run(nil, "status"); strings.Contains(status, "self-test: passed") {
 		t.Errorf("status:\n%s", status)
+	}
+}
+
+// TestStatusListsExtensionHarnesses：装了扩展协议的 harness 时保护摘要也列出它，只有配置这一层；opencode 不能请求确认，
+// 单次授权只在 Codex 上提供。
+func TestStatusListsExtensionHarnesses(t *testing.T) {
+	e := hostInstallEnv(t)
+	if out, _, _ := e.run(nil, "status"); strings.Contains(out, "  opencode:") {
+		t.Errorf("listed before install:\n%s", out)
+	}
+	e.run(nil, "install", "opencode", "--write", "--shell", "posix")
+	out, _, _ := e.run(nil, "status")
+	for _, w := range []string{
+		// 只看后两层：Windows 上配置里的路径写法可能让配置这一层读成「with problems」
+		"  opencode: config written: yes",
+		"| hook running: not tracked for opencode | self-test: not available for opencode",
+		"  opencode: cannot ask either, so every ask blocks; one-time approvals are only offered on Codex",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("status lacks %q:\n%s", w, out)
+		}
 	}
 }

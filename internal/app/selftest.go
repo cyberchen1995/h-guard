@@ -273,7 +273,16 @@ func runSelftest(args []string, o Options) int {
 				st.Cases = append(st.Cases, seen.Case{Name: "configuration", Detail: p})
 			}
 		}
-		for _, c := range selftestCases(h) {
+		// Claude Code 的插件配置有问题时不运行入口：插件没登记或被改过时，入口里的程序与命令可能不是 h-guard 写下的
+		// （hguard-bin 与 hguard.json 一起改掉也能通过文件比对），自测不该替它运行。Codex 的入口是 hooks.json 里
+		// Codex 自己会运行的 h-guard 命令，照常逐个检查，好报出每个事件缺了什么
+		var cases []selftestCase
+		if st.Passed || h != "claudecode" {
+			cases = selftestCases(h)
+		} else {
+			fmt.Fprintln(o.Stdout, "  FAIL entries not run: fix the configuration problems above first")
+		}
+		for _, c := range cases {
 			res := seen.Case{Name: c.name}
 			if len(entries[c.event]) == 0 {
 				res.Detail = "no h-guard entry for " + c.event + " that runs for every tool (h-guard install " + h + " --write)"

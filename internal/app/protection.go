@@ -19,7 +19,14 @@ func statusProtection(s setup, o Options) {
 	fmt.Fprintln(o.Stdout, "protection:")
 	if o.Home != "" {
 		t := install.Target{Home: o.Home, ConfigDir: o.ConfigDir, CacheDir: o.CacheDir, GOOS: o.GOOS, Getenv: o.Getenv, Now: o.Now}
-		for _, h := range []string{"claudecode", "codex"} {
+		for _, h := range installable {
+			if h != "claudecode" && h != "codex" {
+				// 扩展协议的 harness 只写配置这一层，装了才列出：运行记录与自测目前只覆盖 Claude Code 与 Codex
+				if lines := install.Inspect(t, h); len(lines) > 0 && strings.HasPrefix(lines[0], "installed") {
+					fmt.Fprintf(o.Stdout, "  %s: %s | hook running: not tracked for %s | self-test: not available for %s\n", h, configWritten(lines, h), h, h)
+				}
+				continue
+			}
 			fmt.Fprintf(o.Stdout, "  %s: %s\n", h, strings.Join(harnessLayers(t, o, h, s.extra), " | "))
 		}
 	}
@@ -52,6 +59,20 @@ func statusProtection(s setup, o Options) {
 	default:
 		fmt.Fprintln(o.Stdout, "  codex: cannot ask, so every ask blocks; approve one stopped operation with h-guard allow <id>")
 	}
+	if o.Home != "" && guard.Decision(s.cfg.Policy.WhenAskUnsupported) != guard.DecisionPass {
+		t := install.Target{Home: o.Home, ConfigDir: o.ConfigDir, CacheDir: o.CacheDir, GOOS: o.GOOS, Getenv: o.Getenv, Now: o.Now}
+		if lines := install.Inspect(t, "opencode"); len(lines) > 0 && strings.HasPrefix(lines[0], "installed") {
+			fmt.Fprintln(o.Stdout, "  opencode: cannot ask either, so every ask blocks; one-time approvals are only offered on Codex")
+		}
+	}
+}
+
+// configWritten 是「配置已写入」这一层：install 报告了问题时注明。
+func configWritten(lines []string, h string) string {
+	if slices.ContainsFunc(lines, func(l string) bool { return strings.HasPrefix(l, "problem: ") }) {
+		return "config written: yes, with problems (see " + h + " below)"
+	}
+	return "config written: yes"
 }
 
 // harnessLayers 是一个 harness 的三层状态。Codex 是否信任了 hook 读不到：没有运行记录时写「未验证」。
@@ -60,10 +81,7 @@ func harnessLayers(t install.Target, o Options, h, extra string) []string {
 	if len(lines) == 0 || strings.HasPrefix(lines[0], "not installed") {
 		return []string{fmt.Sprintf("config written: no (h-guard install %s --write)", h)}
 	}
-	written := "config written: yes"
-	if slices.ContainsFunc(lines, func(l string) bool { return strings.HasPrefix(l, "problem: ") }) {
-		written = "config written: yes, with problems (see " + h + " below)"
-	}
+	written := configWritten(lines, h)
 	running := "hook running: not seen since install"
 	if h == "codex" {
 		running = "hook running: unverified (Codex has not run the hooks since they were installed; trust them with /hooks in Codex)"
