@@ -7,6 +7,12 @@ locked: true
 reason:
   en: 'Fork bomb'
   zh-CN: 'fork bomb'
+impact:
+  en: 'It would exhaust the machine''s processes and can make it unresponsive.'
+  zh-CN: '会耗尽系统进程，可能让机器失去响应。'
+advice:
+  en: 'Do not run it.'
+  zh-CN: '不要运行。'
 match:
   exec:
     # any 组沿用 Python 版正则，两种 shell 都适用（不拆分，只收紧）；PowerShell 专有的写法在 powershell 组

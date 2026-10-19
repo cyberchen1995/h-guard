@@ -14,6 +14,10 @@ const (
 	KeyActionRegexTimeout      = "action.regex_timeout"      //
 	KeyActionBudgetExceeded    = "action.budget_exceeded"    //
 	KeyActionProbe             = "action.probe"              //
+	KeyActionOperation         = "action.operation"          // {command} {cwd}
+	KeyActionOperationHere     = "action.operation_here"     // {command}
+	KeyActionImpact            = "action.impact"             // {impact}
+	KeyActionAdvice            = "action.advice"             // {advice}
 	KeyOutboundCredentials     = "outbound.credentials"      // {count} {lines}
 	KeyOutboundPrivateKey      = "outbound.private_key"      // {count} {lines}
 	KeyOutboundPII             = "outbound.pii"              // {count} {lines}
@@ -36,6 +40,7 @@ const (
 	KeyHintRequest             = "hint.request"              //
 	KeyHintOutbound            = "hint.outbound"             //
 	KeyHintOutboundJudge       = "hint.outbound_judge"       //
+	KeyHintGrant               = "hint.grant"                // {id} {minutes}
 	KeyListSeparator           = "list.separator"            // 列表项之间的分隔符
 )
 
@@ -43,7 +48,7 @@ const (
 var AllKeys = []string{
 	KeyActionBlocked, KeyActionDangerous, KeyActionRadius, KeyActionNotRequested, KeyActionGuardSelf, KeyActionGuardSelfFile,
 	KeyActionFileRule, KeyActionJudgeUnavailable, KeyActionEvidenceTruncated, KeyActionRegexTimeout, KeyActionBudgetExceeded,
-	KeyActionProbe, KeyOutboundCredentials, KeyOutboundPrivateKey, KeyOutboundPII, KeyOutboundCustom, KeyOutboundJudge, KeyErrorInternal, KeyErrorConfigInvalid, KeyErrorInputTooLarge, KeyErrorTargetUnparsed, KeyErrorToolUnknown, KeyDegradeAskUnsupported,
+	KeyActionProbe, KeyActionOperation, KeyActionOperationHere, KeyActionImpact, KeyActionAdvice, KeyOutboundCredentials, KeyOutboundPrivateKey, KeyOutboundPII, KeyOutboundCustom, KeyOutboundJudge, KeyErrorInternal, KeyErrorConfigInvalid, KeyErrorInputTooLarge, KeyErrorTargetUnparsed, KeyErrorToolUnknown, KeyDegradeAskUnsupported,
 	KeySourceLocal, KeySourceJudge, KeySourceBoth, KeyHintManual, KeyHintConsent, KeyHintJudgeUnavailable,
-	KeyHintSplit, KeyHintNarrow, KeyHintRequest, KeyHintOutbound, KeyHintOutboundJudge, KeyListSeparator,
+	KeyHintSplit, KeyHintNarrow, KeyHintRequest, KeyHintOutbound, KeyHintOutboundJudge, KeyHintGrant, KeyListSeparator,
 }

@@ -271,3 +271,20 @@ func TestCodexOwnershipIsExact(t *testing.T) {
 		}
 	}
 }
+
+// TestCodexRemoveUsesTheWindowsCommand：Windows 上 commandWindows 是本项目的命令时，它就是本项目的入口：移除时删掉它。
+func TestCodexRemoveUsesTheWindowsCommand(t *testing.T) {
+	tg := target(t, "windows")
+	path := filepath.Join(tg.Home, ".codex", "hooks.json")
+	os.MkdirAll(filepath.Dir(path), 0o700)
+	os.WriteFile(path, []byte(`{"hooks":{"PreToolUse":[{"hooks":[{"type":"command","command":"other","commandWindows":"h-guard hook codex --event PreToolUse --timeout 20","timeout":20}]}]}}`), 0o600)
+	steps, err := Codex(tg, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	apply(t, steps)
+	b, _ := os.ReadFile(path)
+	if strings.Contains(string(b), "h-guard hook codex") {
+		t.Errorf("the Windows h-guard hook stayed:\n%s", b)
+	}
+}

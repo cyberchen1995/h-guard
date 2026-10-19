@@ -1,4 +1,4 @@
-// Package app 是 h-guard 命令行的实现，提供 hook、check、backend、status、eval、install、config、init、migrate、version 命令。
+// Package app 是 h-guard 命令行的实现，提供 hook、check、backend、status、selftest、allow、eval、install、config、init、migrate、version 命令。
 package app
 
 import (
@@ -12,6 +12,7 @@ import (
 	"runtime/debug"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/cyberchen1995/h-guard/internal/check/action"
@@ -39,6 +40,20 @@ import (
 
 // Version 是显示的版本号：构建时的 -ldflags 设置的优先，其次是模块版本（go install 安装的版本），都没有时是 dev。
 var Version = "dev"
+
+// buildID 是运行与自测记录里的版本：Version 加上可执行文件的大小与修改时间。原地重新构建（本地构建都叫 dev）
+// 或换成另一个同版本号的程序之后，之前的记录不再算数。
+var buildID = sync.OnceValue(func() string {
+	exe, err := os.Executable()
+	if err != nil {
+		return Version
+	}
+	fi, err := os.Stat(exe)
+	if err != nil {
+		return Version
+	}
+	return fmt.Sprintf("%s+%x.%x", Version, fi.Size(), fi.ModTime().UnixNano())
+})
 
 func init() {
 	bi, ok := debug.ReadBuildInfo()
@@ -77,6 +92,9 @@ type Options struct {
 	Executable func() (string, error)
 	// RunHarness 运行 harness 的命令行（取版本、校验插件），默认在 PATH 中查找并限时 10 秒；找不到时返回错误。
 	RunHarness func(name string, args ...string) ([]byte, error)
+	// RunEntry 运行 harness 的一个 h-guard 入口（selftest）：argv 不经 shell，env 追加到本进程的环境，stdin 是输入；
+	// 默认限时 30 秒。
+	RunEntry func(argv, env []string, stdin []byte) ([]byte, error)
 	// GOOS 是目标平台，默认 runtime.GOOS。
 	GOOS string
 }
@@ -117,6 +135,9 @@ func (o *Options) fill() {
 	if o.RunHarness == nil {
 		o.RunHarness = runHarness
 	}
+	if o.RunEntry == nil {
+		o.RunEntry = runEntry
+	}
 	if o.GOOS == "" {
 		o.GOOS = runtime.GOOS
 	}
@@ -136,6 +157,8 @@ const usage = `usage:
   h-guard check <command> [--shell posix|powershell] [--request <text>]... [--cwd <dir>] [--no-judge] [--show-request] [--config <file>]
   h-guard backend list | enable <name> | disable <name> [--config <file>]
   h-guard status [--config <file>]
+  h-guard selftest [claudecode|codex]
+  h-guard allow [<id> [--ttl <duration>] | --revoke <id>]
   h-guard eval [--backend <name>] [--sweep] [--shell posix|powershell | --cases <file>] [--repeat <K>] [--bootstrap <N>] [--seed <n>] [--yes] [--config <file>]
   h-guard eval --outbound [--backend <name>] [--sweep] [--threshold <t>] [--cases <file>] [--yes] [--config <file>]
   h-guard init
@@ -167,6 +190,10 @@ func Main(args []string, o Options) int {
 		return runBackend(args[1:], o)
 	case "status":
 		return runStatus(args[1:], o)
+	case "selftest":
+		return runSelftest(args[1:], o)
+	case "allow":
+		return runAllow(args[1:], o)
 	case "eval":
 		return runEval(args[1:], o)
 	case "install":

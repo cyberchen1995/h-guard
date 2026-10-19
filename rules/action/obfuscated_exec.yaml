@@ -11,6 +11,12 @@ vetoable_by_judge: false
 reason:
   en: 'Runs encoded content (decoded and handed to an interpreter), so what actually runs cannot be seen'
   zh-CN: '执行经过编码的内容（解码后交给解释器），看不出实际执行的是什么'
+impact:
+  en: 'What actually runs is hidden in the encoded text, so neither you nor h-guard can review it.'
+  zh-CN: '实际执行的内容藏在编码里，你和 h-guard 都无法审查。'
+advice:
+  en: 'Decode it and look at the plain command first, then run that command instead.'
+  zh-CN: '先解码，看清明文命令，再改为直接运行明文命令。'
 match:
   exec:
     encoded: true

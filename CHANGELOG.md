@@ -9,6 +9,37 @@ minor releases. Every such change is recorded in this file.
 
 ## [Unreleased]
 
+### Added
+
+- `h-guard status` starts with a protection summary. For each harness it shows
+  three separate layers: the configuration is written, the harness has really
+  run the hook (recorded on each hook run; Codex shows "unverified" until it
+  runs one, since its trust state cannot be read), and the last self-test.
+  It then lists which rules interrupt, which only log, which are off, and what
+  is not covered.
+- `h-guard selftest [claudecode|codex]` runs the installed entries the way the
+  harness does, with a simulated `rm -rf /` (never executed) and a prompt with
+  a made-up API key, and checks that both are blocked. Nothing is executed and
+  the judge is not called. Entries that run another h-guard program, and
+  Claude Code plugin files that differ from what this h-guard writes, are not
+  run: reinstall with this h-guard first.
+- Every interruption now names the operation and its target (the command and
+  working directory), the impact and a safer way to continue. Action rules can
+  carry localized `impact` and `advice` texts; all built-in rules do.
+- One-time approvals for harnesses that cannot ask (Codex): a blocked operation
+  that is not a hard rule gets an id, and `h-guard allow <id>`, run by the user
+  in an interactive terminal, lets exactly that operation (harness, working
+  directory, command or files) run once within 10 minutes (`--ttl`, at most
+  1h). `h-guard allow` lists recent blocks, `--revoke` withdraws an approval.
+  Running `h-guard allow` through a harness asks (`guard_tampering`).
+  Approvals are signed with a key in the configuration directory
+  (`grant.key`, created the first time an approval is offered), and so are the
+  stopped operations `h-guard allow` shows; unsigned or edited records are
+  ignored, and used approvals are recorded in the configuration directory so
+  they cannot be replayed. An approval is bound to the exact tool input, and
+  only shell commands get one: tool calls with file actions, partly unparsed
+  operations and commands too long to show in full get no approval. Records keep only a digest and a redacted copy of the operation.
+
 ### Harnesses
 
 - `h-guard install opencode|pi|omp|dsh` connects opencode 1.x, pi, oh-my-pi
@@ -36,6 +67,14 @@ minor releases. Every such change is recorded in this file.
   `PI_CODING_AGENT_DIR`, `PI_CONFIG_DIR` and `DSH_HOME` and in PowerShell's
   `$env:` form. Path patterns can use `{xdg_config}`, `{pi_agent_dir}`,
   `{omp_config}` and `{dsh_home}`.
+- `match.exec` patterns can use the same placeholders (`{pi_agent_dir}`,
+  `{dsh_home}`, `{config}` and the others). Each becomes the directory h-guard
+  sees, escaped, with `/` and `\` as separators and the `~` and `$HOME` forms
+  under the home directory; an unset one never matches. `guard_tampering` uses
+  them, so a command that names the actual path under a custom
+  `PI_CODING_AGENT_DIR`, `DSH_HOME`, `PI_CONFIG_DIR`, `XDG_CONFIG_HOME`,
+  `CLAUDE_CONFIG_DIR` or `CODEX_HOME`, or under h-guard's own directories,
+  asks as well.
 
 ### Public packages
 
