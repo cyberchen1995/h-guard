@@ -146,7 +146,8 @@ func TestInstallHermes(t *testing.T) {
 	}
 }
 
-// TestHermesHomeProtected：HERMES_HOME 指定的目录里的 config.yaml 与 h-guard 的插件受防篡改规则保护。
+// TestHermesHomeProtected：HERMES_HOME 指定的目录里的 config.yaml 与 h-guard 的插件受防篡改规则保护：文件工具，以及
+// 命令里直接写出的实际路径（exec 模式里的 {hermes_home}）。
 func TestHermesHomeProtected(t *testing.T) {
 	e := newEnv(t)
 	e.vars["HERMES_HOME"] = "~/hh"
@@ -155,5 +156,18 @@ func TestHermesHomeProtected(t *testing.T) {
 		if got := extAction(t, mustOut(e, in, "hermes", "pre_tool_call")); got == "pass" {
 			t.Errorf("write %s: %s", p, got)
 		}
+	}
+	e.vars["HERMES_HOME"] = "/opt/data"
+	terminal := func(cmd string) string {
+		in := hermesReq("pre_tool_call", map[string]any{"tool_name": "terminal", "args": map[string]string{"command": cmd}, "approval": "prompt"}, nil)
+		return extAction(t, mustOut(e, in, "hermes", "pre_tool_call"))
+	}
+	for _, cmd := range []string{"rm -rf /opt/data/plugins/h-guard", "sed -i '/h-guard/d' /opt/data/config.yaml", "mv /opt/data/plugins /tmp/x"} {
+		if got := terminal(cmd); got == "pass" {
+			t.Errorf("%s: %s", cmd, got)
+		}
+	}
+	if got := terminal("ls /opt/data/plugins/h-guard"); got != "pass" {
+		t.Errorf("reading the plugin directory: %s", got)
 	}
 }

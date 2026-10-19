@@ -149,12 +149,12 @@ type Example struct {
 
 // ExampleEnv 是样例的环境：主目录 /home/user，工作目录 /home/user/project，
 // {config} 为 /xdg/config/h-guard，{cache} 为 /xdg/cache/h-guard，{extra_config} 为 /etc/guard/extra.yaml，
-// {pi_agent_dir} 为 /opt/pi/agent，{dsh_home} 为 /home/user/my dsh（在主目录之下、含空格），区分大小写；
+// {pi_agent_dir} 为 /opt/pi/agent，{dsh_home} 为 /home/user/my dsh（在主目录之下、含空格），{hermes_home} 为 /opt/hermes，区分大小写；
 // 其余占位符没有值。命令样例也用它展开 exec 模式里的占位符。
 var ExampleEnv = paths.Env{
 	Home: "/home/user", Cwd: "/home/user/project", Lexical: true,
 	Vars: map[string]string{VarConfig: "/xdg/config/h-guard", VarCache: "/xdg/cache/h-guard", VarExtraConfig: "/etc/guard/extra.yaml",
-		VarPiAgentDir: "/opt/pi/agent", VarDSHHome: "/home/user/my dsh"},
+		VarPiAgentDir: "/opt/pi/agent", VarDSHHome: "/home/user/my dsh", VarHermesHome: "/opt/hermes"},
 }
 
 type compiledExec struct {

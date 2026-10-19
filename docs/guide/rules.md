@@ -199,6 +199,7 @@ write patterns with `**/` or `~/` (not a drive letter). Placeholders:
 | `{pi_agent_dir}` | `$PI_CODING_AGENT_DIR`, with a leading `~` expanded (no match when unset) |
 | `{omp_config}` | `$PI_CONFIG_DIR` under the home directory (no match when unset) |
 | `{dsh_home}` | `$DSH_HOME`, with a leading `~` expanded (no match when unset) |
+| `{hermes_home}` | Hermes Agent's home: `$HERMES_HOME` with a leading `~` expanded, otherwise the default `~/.hermes` (`%LOCALAPPDATA%\hermes` on Windows); always set |
 
 Relative targets are resolved against the working directory and symbolic links
 are resolved, so a link to a protected file matches too. `exclude` patterns are
@@ -215,7 +216,8 @@ File examples (`{action, path}`) are matched literally, without touching the
 file system, with the home directory `/home/user`, the working directory
 `/home/user/project`, `{config}` = `/xdg/config/h-guard`, `{cache}` =
 `/xdg/cache/h-guard`, `{extra_config}` = `/etc/guard/extra.yaml`,
-`{pi_agent_dir}` = `/opt/pi/agent` and `{dsh_home}` = `/home/user/my dsh`; the
+`{pi_agent_dir}` = `/opt/pi/agent`, `{dsh_home}` = `/home/user/my dsh` and
+`{hermes_home}` = `/opt/hermes`; the
 other placeholders are unset. Command examples use the same values for
 placeholders in `exec` patterns.
 

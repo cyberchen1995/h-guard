@@ -87,8 +87,9 @@ minor releases. Every such change is recorded in this file.
 - The locked `guard_tampering` rule also protects Hermes Agent's
   `config.yaml`, h-guard's plugin directory and the shell-hook allowlist (also
   per profile, under `HERMES_HOME` and on Windows), and the `hermes plugins
-  disable|remove` and `hermes config set plugins.*` commands. Path patterns can
-  use `{hermes_home}`.
+  disable|remove` and `hermes config set plugins.*` commands. Path patterns, and
+  `exec` patterns, can use `{hermes_home}`, so a command naming the real path of
+  a custom `HERMES_HOME` is covered as well.
 
 ### Public packages
 
