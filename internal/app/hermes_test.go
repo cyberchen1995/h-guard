@@ -175,6 +175,20 @@ func TestHermesHomeProtected(t *testing.T) {
 	if got := terminal("rm -rf /srv/agents/hermes/plugins/h-guard"); got == "pass" {
 		t.Errorf("HERMES_HOME with a variable: %s", got)
 	}
+	// 相对的 HERMES_HOME 按 h-guard 的工作目录（继承自 Hermes）解析
+	e.vars["HERMES_HOME"] = "rel-hermes"
+	wd, _ := os.Getwd()
+	if got := terminal("rm -rf " + filepath.ToSlash(filepath.Join(wd, "rel-hermes", "plugins", "h-guard"))); got == "pass" {
+		t.Errorf("relative HERMES_HOME: %s", got)
+	}
+	// 根目录作托管范围：只保护根目录下的 config.yaml，不是任何路径里的 config.yaml
+	e.vars["HERMES_MANAGED_DIR"] = "/"
+	if got := terminal("tee /config.yaml < /tmp/x"); got == "pass" {
+		t.Errorf("managed config at the root: %s", got)
+	}
+	if got := terminal("tee ./app/config.yaml < /tmp/x"); got != "pass" {
+		t.Errorf("a project's config.yaml with HERMES_MANAGED_DIR=/: %s", got)
+	}
 	// 托管范围的配置（HERMES_MANAGED_DIR）同样受保护：命令里的实际路径与文件工具
 	e.vars["HERMES_MANAGED_DIR"] = "/srv/policy"
 	if got := terminal("sudo tee /srv/policy/config.yaml < /tmp/x"); got == "pass" {
