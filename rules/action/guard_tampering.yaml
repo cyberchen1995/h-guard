@@ -86,6 +86,9 @@ match:
       - '(?<![\w.-])openclaw(?:\.[cm]?js)?\b[^\n;&|]*\bconfig\s+(?:set|unset)\b[^\n;&|]*\bplugins\b'
       - '(?<![\w.-])openclaw(?:\.[cm]?js)?\b[^\n;&|]*\bconfig\s+patch\b'
       - '(?<![\w.-])openclaw(?:\.[cm]?js)?\b[^\n;&|]*\bplugins\s+(?:disable|uninstall)\b[^\n;&|]*\bh-guard\b'
+      # 经 Gateway 的 RPC 改配置或停用、卸载插件（openclaw gateway call config.set、config.patch、config.apply、
+      # plugins.setEnabled、plugins.uninstall；参数看不到，一律请求确认）；config.get 等只读的方法不算
+      - '(?<![\w.-])openclaw(?:\.[cm]?js)?\b[^\n;&|]*\bgateway\s+call\b[^\n;&|]*(?<![\w.-])[''"]?(?:config\.(?:set|patch|apply)|plugins\.(?:setenabled|uninstall))(?![\w.-])'
       # 交互式的配置向导（openclaw configure 与不带子命令的 openclaw config，含 --section plugins）改写 openclaw.json，
       # 能停用插件；--help 与 config 的只读子命令（get、file、schema、validate）不算
       - '(?<![\w.-])openclaw(?:\.[cm]?js)?\b(?:\s+-{1,2}\w[\w-]*(?:=\S+|\s+[^\s;&|-]\S*)?)*\s+config(?:\s+--section(?:=\S+|\s+[^\s;&|-]\S*))*\s*(?=$|[;&|)])'
@@ -325,6 +328,12 @@ examples:
     - {shell: posix, command: "node dist/openclaw.js --profile work configure"}
     - {shell: posix, command: "node openclaw.mjs plugins disable h-guard"}
     - {shell: posix, command: "node openclaw.mjs config --section plugins"}
+    - {shell: posix, command: "openclaw gateway call config.patch --params '{\"raw\": \"{}\"}'"}
+    - {shell: posix, command: "openclaw gateway call config.apply --params @x.json"}
+    - {shell: posix, command: "openclaw gateway call 'config.set' --params '{}'"}
+    - {shell: posix, command: "openclaw --profile work gateway call plugins.setEnabled --params '{\"id\": \"h-guard\", \"enabled\": false}'"}
+    - {shell: posix, command: "node openclaw.mjs gateway call config.patch --params '{}'"}
+    - {shell: powershell, command: "openclaw gateway call config.apply --params '{}'"}
     - {shell: posix, command: "openclaw config --section plugins"}
     - {shell: posix, command: "openclaw --profile work config --section plugins --section model"}
     - {shell: posix, command: "openclaw configure"}
@@ -401,6 +410,9 @@ examples:
     - {shell: posix, command: "cat ~/.openclaw/openclaw.json"}
     - {shell: posix, command: "openclaw config get plugins.entries"}
     - {shell: posix, command: "openclaw config file"}
+    - {shell: posix, command: "openclaw gateway call config.get"}
+    - {shell: posix, command: "openclaw gateway call config.schema.lookup --params '{}'"}
+    - {shell: posix, command: "openclaw gateway call plugins.list"}
     - {shell: posix, command: "node openclaw.mjs config get plugins"}
     - {shell: posix, command: "node openclaw.mjs --help"}
     - {shell: posix, command: "cat node_modules/openclaw/openclaw.mjs"}
