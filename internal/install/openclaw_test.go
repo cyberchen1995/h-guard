@@ -661,44 +661,114 @@ func inspectOK(source string, timeout int) string {
 		"policy": {"allowConversationAccess": true, "hookTimeouts": {"before_tool_call": %[2]d, "before_agent_run": %[2]d, "before_dispatch": %[2]d, "after_tool_call": %[2]d}}}`, source, timeout)
 }
 
+// inspectCold 是不带 --runtime 的 openclaw plugins inspect 的输出：OpenClaw 不加载插件的代码，typedHooks 为空。
+func inspectCold(source string, timeout int) string {
+	return strings.Replace(inspectOK(source, timeout), `[{"name": "before_agent_run"}, {"name": "before_dispatch"}, {"name": "before_tool_call"}]`, "[]", 1)
+}
+
 // TestOpenClawVerify：OpenClaw 自己的结论（openclaw plugins inspect）为准：正常加载、被 deny、配置无效、找不到插件、
-// 少了 hook 或超时不够都照实报告；命令不可用、失败或输出读不懂时说明没能确认，不说成没问题。
+// 少了 hook 或超时不够都照实报告；命令不可用、失败或输出读不懂时说明没能确认，不说成没问题。hook 只能带 --runtime 列出。
 func TestOpenClawVerify(t *testing.T) {
 	tg := target(t, "linux")
+	apply(t, plan(t, tg, "openclaw", false))
 	src := filepath.Join(OpenClawPluginDir(tg), "index.mjs")
 	for name, tt := range map[string]struct {
-		out      string
-		err      error
-		verified bool
-		want     string
+		cold, runtime string // 两次询问的输出；runtime 为空表示不应带 --runtime 问
+		err           error
+		verified      bool
+		want          string
 	}{
-		"loaded":    {inspectOK(src, 25000), nil, true, "verified with OpenClaw"},
-		"short":     {inspectOK(src, 15000), nil, true, "OpenClaw waits 15000ms for before_tool_call but h-guard needs 25000ms"},
-		"elsewhere": {inspectOK("/other/index.mjs", 25000), nil, true, "loads h-guard's plugin from /other/index.mjs"},
-		"denied": {`{"plugin": {"status": "disabled", "enabled": false, "activated": false, "activationReason": "blocked by denylist", "error": "blocked by denylist"}}`,
+		"loaded":    {inspectCold(src, 25000), inspectOK(src, 25000), nil, true, "verified with OpenClaw"},
+		"short":     {inspectCold(src, 15000), inspectOK(src, 15000), nil, true, "OpenClaw waits 15000ms for before_tool_call but h-guard needs 25000ms"},
+		"elsewhere": {inspectCold("/other/index.mjs", 25000), "", nil, true, "loads h-guard's plugin from /other/index.mjs"},
+		"denied": {`{"plugin": {"status": "disabled", "enabled": false, "activated": false, "activationReason": "blocked by denylist", "error": "blocked by denylist"}}`, "",
 			errors.New("exit status 0"), true, "OpenClaw reports h-guard's plugin as disabled (blocked by denylist)"},
-		"invalid": {`{"ok": false, "error": {"message": "OpenClaw config is invalid: ~/.openclaw/openclaw.json"}, "issues": [{"path": "<root>", "message": "Include path escapes config directory: ../x.json5"}]}`,
+		"invalid": {`{"ok": false, "error": {"message": "OpenClaw config is invalid: ~/.openclaw/openclaw.json"}, "issues": [{"path": "<root>", "message": "Include path escapes config directory: ../x.json5"}]}`, "",
 			errors.New("exit status 1"), true, "does not load h-guard's plugin: OpenClaw config is invalid: ~/.openclaw/openclaw.json (<root>: Include path escapes config directory: ../x.json5)"},
-		"not found": {`{"ok": false, "error": {"message": "Plugin not found: h-guard."}}`, errors.New("exit status 1"), true, "Plugin not found: h-guard."},
-		"no hooks": {`{"plugin": {"status": "loaded", "enabled": true, "activated": true, "contracts": {}}, "typedHooks": [], "policy": {}}`, nil, true,
+		"not found": {`{"ok": false, "error": {"message": "Plugin not found: h-guard."}}`, "", errors.New("exit status 1"), true, "Plugin not found: h-guard."},
+		"no hooks": {inspectCold(src, 25000), `{"plugin": {"status": "loaded", "enabled": true, "activated": true, "contracts": {}}, "typedHooks": [], "policy": {}}`, nil, true,
 			"did not register the plugin's before_dispatch hook"},
-		"missing": {"", errors.New("not found in PATH"), false, "could not verify with OpenClaw that it loads h-guard's plugin (openclaw plugins inspect: not found in PATH)"},
-		"garbled": {"Error: boom", nil, false, "could not verify"},
+		"runtime fails": {inspectCold(src, 25000), "Error: boom", nil, true, "note: could not list the plugin's hooks with OpenClaw"},
+		"missing":       {"", "", errors.New("not found in PATH"), false, "could not verify with OpenClaw that it loads h-guard's plugin (openclaw plugins inspect: not found in PATH)"},
+		"garbled":       {"Error: boom", "", nil, false, "could not verify"},
 	} {
 		tg.Query = func(name string, args ...string) ([]byte, error) {
-			if name != "openclaw" || strings.Join(args, " ") != "plugins inspect h-guard --runtime --json" {
-				t.Fatalf("%s: ran %s %v", name, name, args)
+			switch strings.Join(args, " ") {
+			case "plugins inspect h-guard --json":
+				return []byte(tt.cold), tt.err
+			case "plugins inspect h-guard --runtime --json":
+				if tt.runtime == "" {
+					t.Errorf("%s: ran --runtime", name)
+				}
+				return []byte(tt.runtime), nil
 			}
-			return []byte(tt.out), tt.err
+			t.Fatalf("%s: ran %s %v", name, name, args)
+			return nil, nil
 		}
 		lines, verified := OpenClawVerify(tg, 25000)
 		if verified != tt.verified || !strings.Contains(strings.Join(lines, "\n"), tt.want) {
 			t.Errorf("%s: %v %v, want %v and %q", name, lines, verified, tt.verified, tt.want)
 		}
+		if name != "loaded" && strings.Contains(strings.Join(lines, "\n"), "verified with OpenClaw") {
+			t.Errorf("%s: says verified: %v", name, lines)
+		}
 	}
 	tg.Query = nil
 	if lines, verified := OpenClawVerify(tg, 0); verified || !strings.Contains(lines[0], "could not verify") {
 		t.Errorf("no query: %v %v", lines, verified)
+	}
+}
+
+// TestOpenClawVerifyDoesNotRunTamperedPlugin：--runtime 会在运行 h-guard 的进程里执行插件的代码，所以插件目录不正是这个
+// h-guard 写出的文件（改过的入口、多出的文件、符号链接、目录本身是符号链接）时，只做不加载代码的询问，并说明没列出 hook。
+func TestOpenClawVerifyDoesNotRunTamperedPlugin(t *testing.T) {
+	for name, tamper := range map[string]func(t *testing.T, dir string){
+		"edited entry": func(t *testing.T, dir string) {
+			b, _ := os.ReadFile(filepath.Join(dir, "index.mjs"))
+			writeFile(t, filepath.Join(dir, "index.mjs"), string(b)+"\nprocess.exit(1)\n")
+		},
+		"edited manifest": func(t *testing.T, dir string) {
+			writeFile(t, filepath.Join(dir, "package.json"), `{"name": "h-guard", "main": "evil.mjs"}`)
+		},
+		"extra file": func(t *testing.T, dir string) { writeFile(t, filepath.Join(dir, "evil.mjs"), "process.exit(1)") },
+		"extra dir":  func(t *testing.T, dir string) { writeFile(t, filepath.Join(dir, "node_modules", "x.mjs"), "") },
+		"symlinked entry": func(t *testing.T, dir string) {
+			other := filepath.Join(t.TempDir(), "index.mjs")
+			b, _ := os.ReadFile(filepath.Join(dir, "index.mjs"))
+			writeFile(t, other, string(b))
+			os.Remove(filepath.Join(dir, "index.mjs"))
+			if err := os.Symlink(other, filepath.Join(dir, "index.mjs")); err != nil {
+				t.Skip(err)
+			}
+		},
+		"symlinked dir": func(t *testing.T, dir string) {
+			other := filepath.Join(t.TempDir(), "openclaw")
+			if err := os.Rename(dir, other); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(other, dir); err != nil {
+				t.Skip(err)
+			}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			tg := target(t, "linux")
+			apply(t, plan(t, tg, "openclaw", false))
+			dir := OpenClawPluginDir(tg)
+			src := filepath.Join(dir, "index.mjs")
+			tamper(t, dir)
+			var ran []string
+			tg.Query = func(_ string, args ...string) ([]byte, error) {
+				ran = append(ran, strings.Join(args, " "))
+				return []byte(inspectCold(src, 25000)), nil
+			}
+			lines, verified := OpenClawVerify(tg, 25000)
+			joined := strings.Join(lines, "\n")
+			if !verified || slices.Contains(ran, "plugins inspect h-guard --runtime --json") || !strings.Contains(joined, "did not have OpenClaw load the plugin") ||
+				strings.Contains(joined, "verified with OpenClaw") {
+				t.Errorf("ran %v: %v %v", ran, lines, verified)
+			}
+		})
 	}
 }
 

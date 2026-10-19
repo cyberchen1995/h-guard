@@ -2,6 +2,7 @@ package app
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -366,11 +367,30 @@ func TestInstallOpenClawVerifies(t *testing.T) {
 	if code != 0 || !strings.Contains(out, "problem: OpenClaw reports h-guard's plugin as disabled (blocked by denylist)") {
 		t.Errorf("install: %d\n%s%s", code, out, errs)
 	}
-	if len(asked) != 1 || asked[0] != "openclaw plugins inspect h-guard --runtime --json" {
+	if len(asked) != 1 || asked[0] != "openclaw plugins inspect h-guard --json" {
 		t.Errorf("asked %v", asked)
 	}
 	if out, _, _ := e.run(nil, "status"); !strings.Contains(out, "blocked by denylist") {
 		t.Errorf("status:\n%s", out)
+	}
+	// OpenClaw 从 h-guard 写出的插件目录加载它：这时才带 --runtime 问一次，列出 hook
+	src := filepath.Join(e.configDir, "extensions", "openclaw", "index.mjs")
+	asked = nil
+	e.harnessQuery = func(name string, args ...string) ([]byte, error) {
+		asked = append(asked, name+" "+strings.Join(args, " "))
+		return fmt.Appendf(nil, `{"plugin": {"status": "loaded", "enabled": true, "activated": true, "source": %q, "contracts": {"agentToolResultMiddleware": ["openclaw"]}},
+			"typedHooks": [{"name": "before_agent_run"}, {"name": "before_dispatch"}, {"name": "before_tool_call"}],
+			"policy": {"allowConversationAccess": true, "hookTimeouts": {"before_tool_call": 35000, "before_agent_run": 35000, "before_dispatch": 35000, "after_tool_call": 35000}}}`, src), nil
+	}
+	if out, _, _ := e.run(nil, "status"); !strings.Contains(out, "verified with OpenClaw") ||
+		!slices.Equal(asked, []string{"openclaw plugins inspect h-guard --json", "openclaw plugins inspect h-guard --runtime --json"}) {
+		t.Errorf("status asked %v:\n%s", asked, out)
+	}
+	b, _ := os.ReadFile(src)
+	os.WriteFile(src, append(b, "\n// edited\n"...), 0o644)
+	asked = nil
+	if out, _, _ := e.run(nil, "status"); strings.Contains(out, "verified with OpenClaw") || len(asked) != 1 || !strings.Contains(out, "did not have OpenClaw load the plugin") {
+		t.Errorf("status with an edited plugin asked %v:\n%s", asked, out)
 	}
 	e.harnessQuery = nil
 	if out, _, _ := e.run(nil, "status"); !strings.Contains(out, "could not verify with OpenClaw that it loads h-guard's plugin") {

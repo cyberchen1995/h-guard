@@ -77,8 +77,10 @@ minor releases. Every such change is recorded in this file.
   uses JSON5 syntax or `$include`, or the configuration is read-only
   (`OPENCLAW_NIX_MODE`, `OPENCLAW_CONFIG_READONLY`), it writes only the plugin
   and prints the settings to add yourself. install and status ask OpenClaw
-  whether it loads the plugin (`openclaw plugins inspect h-guard --runtime
-  --json`) and report "could not verify" when it cannot be asked. Tool
+  whether it loads the plugin (`openclaw plugins inspect h-guard --json`, and
+  `--runtime` to list its hooks only when the plugin directory holds exactly
+  the files h-guard writes) and report "could not verify" when it cannot be
+  asked. Tool
   calls are checked in `before_tool_call` (`ask` becomes a
   plugin approval), tool output in the tool result middleware and prompts in
   `before_agent_run` and, for channel messages (including those steered into

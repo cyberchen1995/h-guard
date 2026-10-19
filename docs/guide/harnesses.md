@@ -400,9 +400,14 @@ installed with `openclaw plugins install`, the Gateway logs at startup that it
 
 Whether OpenClaw loads the plugin is OpenClaw's call, so `install openclaw
 --write` and `h-guard status` ask it: they run `openclaw plugins inspect
-h-guard --runtime --json` (read-only; it loads the plugin in that process to
-list its hooks, and does not touch the Gateway; no shell, 60 seconds at most)
-and report what it says: loaded with the `before_tool_call`,
+h-guard --json` (read-only: OpenClaw reads the plugin's manifest and the
+configuration without running the plugin's code, and does not touch the
+Gateway; no shell, 60 seconds at most). Only when OpenClaw loads the plugin
+from h-guard's plugin directory, and that directory holds exactly the files
+this h-guard writes (checked right before), do they ask again with
+`--runtime`, which runs the plugin in that process to list its hooks; a
+plugin directory that was edited is never run this way, and the report says
+its hooks were not listed. They report what OpenClaw says: loaded with the `before_tool_call`,
 `before_agent_run` and `before_dispatch` hooks, the tool result middleware,
 conversation access and long enough hook timeouts, or why not (denied,
 disabled, not found, an invalid configuration with OpenClaw's own message).
