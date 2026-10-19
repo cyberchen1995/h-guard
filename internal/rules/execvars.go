@@ -21,6 +21,10 @@ import (
 //   - 值在主目录之下时，主目录的部分另可写成 ~、$HOME、${HOME}、$env:HOME、$env:USERPROFILE、%USERPROFILE%
 //     （路径模式解析目标时会展开 ~，命令文本不会，这几种写法在这里补上）。
 //
+// 值是相对路径时按 env.Cwd（事件的工作目录）解析，与路径模式一致；没有 Cwd 时按原样匹配。
+//
+// 占位符也可以写在后向断言里：regexp2 的后向断言不要求定长。
+//
 // 值为空（环境变量没有设置、没有 --config）时，占位符换成永不匹配的 (?!)：用到它的那一处不匹配，不会变成匹配一切，
 // 规则照常加载；与路径模式里「没有值的模式不匹配」一致。占位符写在可选的位置（(?:{x})?）时，那一处退化为不写它。
 var execPlaceholder = regexp.MustCompile(`(\\*)\{([a-z_]+)\}`)
@@ -49,7 +53,7 @@ func expandExec(p string, env paths.Env) string {
 		if len(m[1])%2 != 0 || !placeholders[m[2]] {
 			return s
 		}
-		return m[1] + execLiteral(env.Vars[m[2]], env.Home)
+		return m[1] + execLiteral(absDir(env.Vars[m[2]], env.Cwd), env.Home)
 	})
 }
 
@@ -71,12 +75,26 @@ func execLiteral(v, home string) string {
 	return "(?i:" + lit + ")"
 }
 
-// normDir 把 \ 换成 /，规范化并去掉末尾的 /（根目录为空）。
+// absDir 把相对路径 v 接到 cwd 下（cwd 为空时原样返回）。以 / 或 \ 开头、带盘符的路径不是相对路径。
+func absDir(v, cwd string) string {
+	if v == "" || cwd == "" || strings.HasPrefix(v, "/") || strings.HasPrefix(v, `\`) || driveLetter.MatchString(v) {
+		return v
+	}
+	return strings.ReplaceAll(cwd, `\`, "/") + "/" + v
+}
+
+var driveLetter = regexp.MustCompile(`^[A-Za-z]:`)
+
+// normDir 把 \ 换成 /，规范化并去掉末尾的 /；根目录保留为 /，不能变成空（空的字面量匹配任何位置）。
 func normDir(v string) string {
 	if v == "" {
 		return ""
 	}
-	return strings.TrimSuffix(pathpkg.Clean(strings.ReplaceAll(v, `\`, "/")), "/")
+	n := pathpkg.Clean(strings.ReplaceAll(v, `\`, "/"))
+	if n == "/" {
+		return n
+	}
+	return strings.TrimSuffix(n, "/")
 }
 
 // literalSegments 把 / 分隔的路径换成正则：各段转义，分隔符匹配 [/\\]+，空格前可有反斜杠。
@@ -88,10 +106,22 @@ func literalSegments(n string) string {
 	return strings.Join(segs, `[/\\]+`)
 }
 
-// execGroup 是一组 exec 模式：不含占位符的在加载时编译，含占位符的匹配时按环境展开编译（结果缓存）。
-type execGroup struct {
-	static    []*regexp2.Regexp
-	templates []string
+// execGroup 是一组 exec 模式，按规则里的顺序：不含占位符的在加载时编译（re），含占位符的匹配时按环境展开编译
+// （tpl，结果缓存）。顺序要保留：每次匹配都有超时，预算也按顺序耗尽，先写的模式先得出结论。
+type execGroup []execPattern
+
+type execPattern struct {
+	re  *regexp2.Regexp
+	tpl string
+}
+
+// static 是不含占位符时的全部模式。
+func (g execGroup) static() []*regexp2.Regexp {
+	out := make([]*regexp2.Regexp, 0, len(g))
+	for _, p := range g {
+		out = append(out, p.re)
+	}
+	return out
 }
 
 // resolvedExec 是按某个环境展开后的全部模式。
@@ -101,10 +131,10 @@ type resolvedExec struct {
 	broken                           bool // 有模式展开后编译失败：按命中处理（只收紧）
 }
 
-// templateKey 是缓存的键：主目录与各占位符的值。
+// templateKey 是缓存的键：主目录、工作目录（相对的值按它解析）与各占位符的值。
 func templateKey(env paths.Env, names []string) string {
 	var b strings.Builder
-	b.WriteString(env.Home)
+	b.WriteString(env.Home + "\x00" + env.Cwd)
 	for _, n := range names {
 		b.WriteString("\x00" + env.Vars[n])
 	}
@@ -136,9 +166,12 @@ func (c *compiledExec) resolve(env paths.Env) *resolvedExec {
 		src *execGroup
 		dst *[]*regexp2.Regexp
 	}{{&c.any, &r.any}, {&c.posix, &r.posix}, {&c.powershell, &r.powershell}, {&c.redirects, &r.redirect}} {
-		*g.dst = append(*g.dst, g.src.static...)
-		for _, p := range g.src.templates {
-			re, err := compileTemplate(p, env)
+		for _, p := range *g.src {
+			if p.tpl == "" {
+				*g.dst = append(*g.dst, p.re)
+				continue
+			}
+			re, err := compileTemplate(p.tpl, env)
 			if err != nil {
 				r.broken = true
 				continue

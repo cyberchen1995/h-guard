@@ -105,7 +105,7 @@ func TestExecPlaceholderCache(t *testing.T) {
 	if r3 == r1 {
 		t.Fatal("a changed environment reused the old patterns")
 	}
-	if ok, _ := r3.any[1].MatchString("rm /b"); !ok {
+	if ok, _ := r3.any[0].MatchString("rm /b"); !ok {
 		t.Error("the re-expanded pattern does not match the new value")
 	}
 	static, err := compileExec(&ExecMatch{Any: []string{`^static$`}})
@@ -114,5 +114,54 @@ func TestExecPlaceholderCache(t *testing.T) {
 	}
 	if static.resolve(a) != &static.base {
 		t.Error("patterns without placeholders are not the precompiled ones")
+	}
+}
+
+// TestExecPlaceholderRootAndRelative：值是根目录时展开为分隔符，不能变成匹配任何位置的空串；相对的值按 Cwd 解析。
+func TestExecPlaceholderRootAndRelative(t *testing.T) {
+	root := paths.Env{Home: "/home/u", Vars: map[string]string{VarDSHHome: "/"}}
+	mustMatch(t, `rm {dsh_home}(?=$|\s)`, root, []string{"rm /", "rm //"}, []string{"rm /tmp/x", "rm x"})
+	rel := paths.Env{Home: "/home/u", Cwd: "/work/project", Vars: map[string]string{VarPiAgentDir: "../agent"}}
+	mustMatch(t, `^rm {pi_agent_dir}[/\\]+x$`, rel, []string{"rm /work/agent/x"}, []string{"rm ../agent/x", "rm /work/project/agent/x"})
+	rel.Cwd = ""
+	mustMatch(t, `^rm {pi_agent_dir}[/\\]+x$`, rel, []string{"rm ../agent/x"}, nil)
+	for _, v := range []string{"/abs", `\abs`, `C:\abs`, "c:rel"} {
+		if got := absDir(v, "/work"); got != v {
+			t.Errorf("absDir(%q) = %q", v, got)
+		}
+	}
+}
+
+// TestExecPlaceholderOrder：展开后的模式保持规则里的顺序（含占位符的与不含的交错）。
+func TestExecPlaceholderOrder(t *testing.T) {
+	c, err := compileExec(&ExecMatch{Any: []string{`a`, `b{dsh_home}`, `c`}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := c.resolve(paths.Env{Vars: map[string]string{VarDSHHome: "/d"}})
+	var got []string
+	for _, re := range r.any {
+		got = append(got, re.String()[:1])
+	}
+	if !slices.Equal(got, []string{"a", "b", "c"}) {
+		t.Errorf("order = %v", got)
+	}
+}
+
+// TestExecPlaceholderInLookbehind：regexp2 的后向断言不要求定长，占位符写在里面也能加载、照常匹配
+// （主目录的几种写法长短不一）。
+func TestExecPlaceholderInLookbehind(t *testing.T) {
+	c, err := compileExec(&ExecMatch{Any: []string{`(?<={config}[/\\]+)x\.yaml`}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, env := range []paths.Env{{Home: "/home/u", Vars: map[string]string{VarConfig: "/etc/hg"}}, {Home: "/home/u", Vars: map[string]string{VarConfig: "/home/u/.config/hg"}}} {
+		r := c.resolve(env)
+		for _, s := range []string{env.Vars[VarConfig] + "/x.yaml", "~/.config/hg/x.yaml"} {
+			ok, _ := r.any[0].MatchString(s)
+			if want := s[0] == '/' || env.Vars[VarConfig][:7] == "/home/u"; ok != want {
+				t.Errorf("%v: %q matched = %v", env.Vars, s, ok)
+			}
+		}
 	}
 }

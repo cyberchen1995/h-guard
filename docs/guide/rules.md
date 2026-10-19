@@ -145,9 +145,12 @@ placeholder becomes the directory or file h-guard sees, matched literally
 `/` and `\` both accepted as separators and a space optionally preceded by
 `\`. When the value is under your home directory, the home part may also be
 written `~`, `$HOME`, `${HOME}`, `$env:HOME`, `$env:USERPROFILE` or
-`%USERPROFILE%`. A placeholder without a value (the variable is unset) never
-matches, so the part of the pattern that needs it does not match; the rest of
-the pattern and the rule still work. Write `\{name}` for literal braces; other
+`%USERPROFILE%`. A relative value is resolved against the working directory
+of the command, as in file patterns. Placeholders also work inside a
+lookbehind, which need not be fixed-length in this dialect. A placeholder
+without a value (the variable is unset) never matches, so the part of the
+pattern that needs it does not match; the rest of the pattern and the rule
+still work. Write `\{name}` for literal braces; other
 names in braces are left as they are.
 
 ```yaml
