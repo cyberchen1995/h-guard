@@ -115,6 +115,19 @@ func TestExecPlaceholderCache(t *testing.T) {
 	if static.resolve(a) != &static.base {
 		t.Error("patterns without placeholders are not the precompiled ones")
 	}
+	// 值都是绝对路径时换工作目录不重新编译；有相对的值时重新编译
+	a.Cwd = "/w1"
+	r4 := c.resolve(a)
+	a.Cwd = "/w2"
+	if c.resolve(a) != r4 {
+		t.Error("a new working directory recompiled absolute placeholders")
+	}
+	rel := paths.Env{Cwd: "/w1", Vars: map[string]string{VarPiAgentDir: "agent"}}
+	r5 := c.resolve(rel)
+	rel.Cwd = "/w2"
+	if c.resolve(rel) == r5 {
+		t.Error("a new working directory reused relative placeholders")
+	}
 }
 
 // TestExecPlaceholderRootAndRelative：值是根目录时展开为分隔符，不能变成匹配任何位置的空串；相对的值按 Cwd 解析。
@@ -128,7 +141,9 @@ func TestExecPlaceholderRootAndRelative(t *testing.T) {
 	// 相对的值：解析后的绝对路径与原样的相对路径都认，相对路径须从参数开头起
 	rel := paths.Env{Home: "/home/u", Cwd: "/work/project", Vars: map[string]string{VarPiAgentDir: "../agent"}}
 	mustMatch(t, `^rm {pi_agent_dir}[/\\]+x$`, rel, []string{"rm /work/agent/x", "rm ../agent/x"},
-		[]string{"rm /work/project/agent/x", "rm /tmp/../agent/x"})
+		[]string{"rm /work/project/agent/x", "rm /tmp/../agent/x", "rm /tmp/work/agent/x"})
+	// PowerShell 数组里逗号后面的路径
+	mustMatch(t, `{pi_agent_dir}[/\\]+x`, rel, []string{"Remove-Item other,../agent/x"}, nil)
 	rel.Cwd = ""
 	mustMatch(t, `^rm {pi_agent_dir}[/\\]+x$`, rel, []string{"rm ../agent/x"}, nil)
 	for _, v := range []string{"/abs", `\abs`, `C:\abs`, "c:rel"} {

@@ -60,13 +60,14 @@ func expandExec(p string, env paths.Env) string {
 			return m[1] + execLiteral(v, env.Home)
 		}
 		// 相对的值：命令里既可能写解析后的绝对路径，也可能照原样写相对路径（shell 按同一个 cwd 解析）
-		return m[1] + "(?:" + execLiteral(abs, env.Home) + "|" + pathStart + execLiteral(v, env.Home) + ")"
+		// 两种写法都须从参数开头起：解析出的 /work/agent 不能匹配 /tmp/work/agent 的后半截
+		return m[1] + pathStart + "(?:" + execLiteral(abs, env.Home) + "|" + execLiteral(v, env.Home) + ")"
 	})
 }
 
-// pathStart 要求路径从一个参数的开头起：前面是行首、空白、引号、= 或 shell 的分隔符。相对路径与根目录展开时用它，
+// pathStart 要求路径从一个参数的开头起：前面是行首、空白、引号、=、shell 的分隔符或 PowerShell 数组的逗号。相对路径与根目录展开时用它，
 // 否则相对路径 agent 会匹配 /x/agent 的后半截，根目录会匹配任何一个 /。
-const pathStart = "(?<![^\\s'\"`=(<>|;&])"
+const pathStart = "(?<![^\\s'\"`=(<>|;&,])"
 
 // execLiteral 是匹配目录 v 的正则（见 execPlaceholder 的说明）；v 为空时永不匹配。
 func execLiteral(v, home string) string {
@@ -147,12 +148,19 @@ type resolvedExec struct {
 	broken                           bool // 有模式展开后编译失败：按命中处理（只收紧）
 }
 
-// templateKey 是缓存的键：主目录、工作目录（相对的值按它解析）与各占位符的值。
+// templateKey 是缓存的键：主目录与各占位符的值；有相对的值时再加上工作目录（按它解析）。值都是绝对路径时
+// 工作目录不影响展开，换目录不该让缓存失效、重新编译。
 func templateKey(env paths.Env, names []string) string {
 	var b strings.Builder
-	b.WriteString(env.Home + "\x00" + env.Cwd)
+	b.WriteString(env.Home)
+	relative := false
 	for _, n := range names {
-		b.WriteString("\x00" + env.Vars[n])
+		v := env.Vars[n]
+		b.WriteString("\x00" + v)
+		relative = relative || absDir(v, env.Cwd) != v
+	}
+	if relative {
+		b.WriteString("\x01" + env.Cwd)
 	}
 	return b.String()
 }
