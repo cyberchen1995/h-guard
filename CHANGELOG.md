@@ -98,7 +98,8 @@ minor releases. Every such change is recorded in this file.
   pre-rename `clawdbot.json`, the files it pulls in with `$include`, wherever
   they are, for file tools and shell commands alike, and `.json5` files next
   to it), the `~/.openclaw` and `~/.clawdbot`
-  directories, and OpenClaw commands that change plugin settings or disable
+  directories, and OpenClaw commands that change plugin settings (including
+  the `openclaw configure` and `openclaw config` wizards) or disable
   the plugin, reset or uninstall OpenClaw's configuration and state
   (`openclaw reset`, `openclaw uninstall --state`/`--all`, `--reset` on
   `onboard`, `setup` and `gateway`). Path and `exec` patterns can use `{openclaw_config}` and

@@ -85,6 +85,10 @@ match:
       - '(?<![\w.-])openclaw\b[^\n;&|]*\bconfig\s+(?:set|unset)\b[^\n;&|]*\bplugins\b'
       - '(?<![\w.-])openclaw\b[^\n;&|]*\bconfig\s+patch\b'
       - '(?<![\w.-])openclaw\b[^\n;&|]*\bplugins\s+(?:disable|uninstall)\b[^\n;&|]*\bh-guard\b'
+      # 交互式的配置向导（openclaw configure 与不带子命令的 openclaw config，含 --section plugins）改写 openclaw.json，
+      # 能停用插件；--help 与 config 的只读子命令（get、file、schema、validate）不算
+      - '(?<![\w.-])openclaw\b(?:\s+-{1,2}\w[\w-]*(?:=\S+|\s+[^\s;&|-]\S*)?)*\s+config(?:\s+--section(?:=\S+|\s+[^\s;&|-]\S*))*\s*(?=$|[;&|)])'
+      - '(?<![\w.-])openclaw\b(?:\s+-{1,2}\w[\w-]*(?:=\S+|\s+[^\s;&|-]\S*)?)*\s+configure\b(?![^\n;&|]*\s(?:--help|-h)\b)'
       # 重置或卸载 OpenClaw 的配置与状态（openclaw reset、openclaw uninstall --state/--all、onboard、setup 与
       # gateway --dev 的 --reset）同样去掉 h-guard 的插件设置；--dry-run 的用法也请求确认
       - '(?<![\w.-])openclaw\b(?:\s+-{1,2}\w[\w-]*(?:=\S+|\s+[^\s;&|-]\S*)?)*\s+reset\b'
@@ -314,6 +318,13 @@ examples:
     - {shell: posix, command: "openclaw config unset plugins.load.paths"}
     - {shell: posix, command: "openclaw config patch --file ./x.json5"}
     - {shell: posix, command: "openclaw plugins disable h-guard"}
+    - {shell: posix, command: "openclaw config"}
+    - {shell: posix, command: "openclaw config --section plugins"}
+    - {shell: posix, command: "openclaw --profile work config --section plugins --section model"}
+    - {shell: posix, command: "openclaw configure"}
+    - {shell: posix, command: "openclaw --dev configure --section plugins"}
+    - {shell: posix, command: "cd ~ && openclaw config"}
+    - {shell: powershell, command: "openclaw configure --section plugins"}
     - {shell: powershell, command: "Set-Content ~\\.openclaw\\openclaw.json -Value '{}'"}
     - {shell: powershell, command: "Remove-Item $env:OPENCLAW_CONFIG_PATH"}
     - {action: file_write, path: "~/.openclaw/openclaw.json"}
@@ -383,6 +394,13 @@ examples:
     - {action: file_write, path: "~/.pi/agent/extensions/other.js"}
     - {shell: posix, command: "cat ~/.openclaw/openclaw.json"}
     - {shell: posix, command: "openclaw config get plugins.entries"}
+    - {shell: posix, command: "openclaw config file"}
+    - {shell: posix, command: "openclaw config validate --json"}
+    - {shell: posix, command: "openclaw config schema"}
+    - {shell: posix, command: "openclaw config --help"}
+    - {shell: posix, command: "openclaw configure --help"}
+    - {shell: posix, command: "openclaw mcp configure docs --enable"}
+    - {shell: posix, command: "openclaw --profile work config get plugins"}
     - {shell: posix, command: "openclaw config set agents.defaults.heartbeat.every 2h"}
     - {shell: posix, command: "openclaw plugins disable other-plugin"}
     - {shell: posix, command: "ls ~/.openclaw/workspace"}
