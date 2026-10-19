@@ -69,6 +69,70 @@ func ExpandHermesHome(home, d string) string {
 	return d
 }
 
+// HermesManagedDefault 是 Hermes 托管范围（managed scope）的默认目录；测试把它换成不存在的目录，不读本机的 /etc/hermes。
+var HermesManagedDefault = "/etc/hermes"
+
+// HermesManagedConfig 是托管范围的配置文件：$HERMES_MANAGED_DIR（只在目录存在时生效），默认 /etc/hermes（Windows 上
+// 没有默认位置），下的 config.yaml；没有托管范围时为空。它写下的键逐个覆盖用户的 config.yaml（列表整个替换）。
+func HermesManagedConfig(t Target) string {
+	d := strings.TrimSpace(t.Getenv("HERMES_MANAGED_DIR"))
+	if d == "" && t.GOOS != "windows" {
+		d = HermesManagedDefault
+	}
+	if d == "" {
+		return ""
+	}
+	if fi, err := os.Stat(d); err != nil || !fi.IsDir() {
+		return ""
+	}
+	return filepath.Join(d, "config.yaml")
+}
+
+// hermesManaged 读出托管范围的插件设置；没有托管范围或文件时 ok 为假。托管文件读不懂时 Hermes 忽略它（fail-open），
+// 这里同样当作没有。
+func hermesManaged(t Target) (st hermesState, path string, ok bool) {
+	path = HermesManagedConfig(t)
+	if path == "" {
+		return hermesState{}, "", false
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return hermesState{}, path, false
+	}
+	st, err = readHermesState(b)
+	return st, path, err == nil
+}
+
+// overlay 返回托管范围覆盖之后实际生效的设置：托管文件写下的键取它的值。
+func (st hermesState) overlay(m hermesState) hermesState {
+	if m.enabledSet {
+		st.enabled, st.enabledSet = m.enabled, true
+	}
+	if m.disabledSet {
+		st.disabled, st.disabledSet = m.disabled, true
+	}
+	if m.timeoutSet {
+		st.timeout, st.timeoutOK, st.timeoutSet = m.timeout, m.timeoutOK, true
+	}
+	if m.isolation != "" {
+		st.isolation = m.isolation
+	}
+	return st
+}
+
+// managedProblem 说明托管范围让 h-guard 不能加载或等不到它的地方；没有时为空。
+func managedProblem(m hermesState, path string, timeout int) string {
+	switch {
+	case m.disabledSet && m.disabled:
+		return fmt.Sprintf("%s (managed by your administrator) lists h-guard in plugins.disabled, so Hermes does not load it; ask the administrator to remove it there", path)
+	case m.enabledSet && !m.enabled:
+		return fmt.Sprintf("%s (managed by your administrator) sets plugins.enabled without h-guard, which replaces your list, so Hermes does not load it; ask the administrator to add h-guard there", path)
+	case m.timeoutSet && m.timeoutOK && m.timeout != 0 && m.timeout < float64(timeout+5):
+		return fmt.Sprintf("%s (managed by your administrator) sets plugins.hook_callback_timeout to %gs, shorter than h-guard's timeout plus 5 seconds (%ds); ask the administrator to raise it, or install with a lower --timeout", path, m.timeout, timeout+5)
+	}
+	return ""
+}
+
 // HermesConfig 是 Hermes 的配置文件 $HERMES_HOME/config.yaml。
 func HermesConfig(t Target) string { return filepath.Join(HermesHome(t), "config.yaml") }
 
@@ -131,6 +195,12 @@ func hermesSnapshot(dir string) (map[string][]byte, error) {
 func Hermes(t Target, remove bool) ([]Step, error) {
 	if !remove && t.Timeout > HermesMaxTimeout {
 		return nil, fmt.Errorf("--timeout for hermes is at most %d seconds: Hermes waits at most %d seconds for a plugin hook (plugins.hook_callback_timeout), and it has to wait longer than h-guard", HermesMaxTimeout, hermesHookTimeoutMax)
+	}
+	// 托管范围（/etc/hermes/config.yaml）的键覆盖用户的配置：改用户的 config.yaml 没有用，install 不碰托管文件
+	if m, path, ok := hermesManaged(t); ok && !remove {
+		if p := managedProblem(m, path, t.Timeout); p != "" {
+			return nil, errors.New(p)
+		}
 	}
 	dir := HermesPluginDir(t)
 	files, err := hermesFiles(t)
@@ -358,9 +428,11 @@ func deleteKey(m *yaml.Node, key string) {
 // hermesState 是 status 从 config.yaml 读出的插件设置。
 type hermesState struct {
 	enabled, disabled bool
-	timeout           float64 // plugins.hook_callback_timeout，没有时为 30
-	timeoutOK         bool
-	isolation         string
+	// 文件里写了这几个键（托管范围只覆盖它写下的键）
+	enabledSet, disabledSet, timeoutSet bool
+	timeout                             float64 // plugins.hook_callback_timeout，没有时为 30
+	timeoutOK                           bool
+	isolation                           string
 }
 
 func readHermesState(b []byte) (hermesState, error) {
@@ -380,7 +452,12 @@ func readHermesState(b []byte) (hermesState, error) {
 		n := mapValue(plugins, key)
 		return n != nil && n.Kind == yaml.SequenceNode && slices.ContainsFunc(n.Content, func(e *yaml.Node) bool { return e.Value == hermesPluginName })
 	}
+	set := func(key string) bool {
+		n := mapValue(plugins, key)
+		return n != nil && !(n.Kind == yaml.ScalarNode && n.Tag == "!!null")
+	}
 	st.enabled, st.disabled = has("enabled"), has("disabled")
+	st.enabledSet, st.disabledSet, st.timeoutSet = set("enabled"), set("disabled"), set("hook_callback_timeout")
 	st.timeout, st.timeoutOK = hookTimeout(plugins)
 	if n := mapValue(plugins, "isolation"); n != nil && n.Kind == yaml.ScalarNode {
 		st.isolation = strings.ToLower(strings.ReplaceAll(strings.TrimSpace(n.Value), "-", "_"))
@@ -403,6 +480,16 @@ func inspectHermes(t Target) []string {
 		return []string{"not installed (h-guard install hermes)"}
 	}
 	lines := []string{extInstalledLine(t, "hermes", "Hermes Agent")}
+	// 托管范围写下的键覆盖用户的配置：那几项的问题按托管文件报告，不再按用户的 config.yaml 报告
+	var m hermesState
+	if mm, path, ok := hermesManaged(t); ok {
+		m = mm
+		_, timeout, _ := installedHermes(files["__init__.py"])
+		if p := managedProblem(m, path, timeout); p != "" {
+			lines = append(lines, "problem: "+p)
+		}
+		st = st.overlay(m)
+	}
 	if len(files) == 0 {
 		return append(lines, fmt.Sprintf("problem: %s enables h-guard, but the plugin is missing from %s; run h-guard install hermes --write", config, dir))
 	}
@@ -410,6 +497,7 @@ func inspectHermes(t Target) []string {
 		return append(lines, fmt.Sprintf("problem: %s is not h-guard's plugin", dir))
 	}
 	switch {
+	case m.enabledSet && !m.enabled || m.disabledSet && m.disabled: // 已按托管文件报告
 	case st.disabled:
 		lines = append(lines, fmt.Sprintf("problem: %s lists h-guard in plugins.disabled, so Hermes does not load it; run h-guard install hermes --write", config))
 	case !st.enabled:
@@ -425,7 +513,7 @@ func inspectHermes(t Target) []string {
 	if !ok || err != nil || !sameFiles(want, files) {
 		lines = append(lines, "problem: the plugin differs from this h-guard version (edited or written by another version); run h-guard install hermes --write")
 	}
-	if ok && st.timeoutOK && st.timeout != 0 && st.timeout < float64(timeout+5) {
+	if ok && !m.timeoutSet && st.timeoutOK && st.timeout != 0 && st.timeout < float64(timeout+5) {
 		lines = append(lines, fmt.Sprintf("problem: Hermes waits %gs for a plugin hook (plugins.hook_callback_timeout) but h-guard is given %ds, so slow checks block tool calls; run h-guard install hermes --write", st.timeout, timeout))
 	}
 	if st.isolation == "host" {

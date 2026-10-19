@@ -170,4 +170,13 @@ func TestHermesHomeProtected(t *testing.T) {
 	if got := terminal("ls /opt/data/plugins/h-guard"); got != "pass" {
 		t.Errorf("reading the plugin directory: %s", got)
 	}
+	// 托管范围的配置（HERMES_MANAGED_DIR）同样受保护：命令里的实际路径与文件工具
+	e.vars["HERMES_MANAGED_DIR"] = "/srv/policy"
+	if got := terminal("sudo tee /srv/policy/config.yaml < /tmp/x"); got == "pass" {
+		t.Errorf("managed config: %s", got)
+	}
+	in := hermesReq("pre_tool_call", map[string]any{"tool_name": "write_file", "args": map[string]string{"path": "/srv/policy/config.yaml", "content": "x"}, "approval": "prompt"}, nil)
+	if got := extAction(t, mustOut(e, in, "hermes", "pre_tool_call")); got == "pass" {
+		t.Errorf("write the managed config: %s", got)
+	}
 }

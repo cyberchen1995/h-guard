@@ -331,6 +331,18 @@ func hermesHome(o Options) string {
 	return install.HermesHome(install.Target{Home: o.Home, GOOS: o.GOOS, Getenv: o.Getenv})
 }
 
+// hermesManaged 是 Hermes Agent 的托管范围目录：$HERMES_MANAGED_DIR，默认 /etc/hermes（Windows 上没有默认位置）。
+// 目录不存在时 Hermes 不读它，这里照样保护：之后建起来的托管配置同样能停用 h-guard。
+func hermesManaged(o Options) string {
+	if d := strings.TrimSpace(o.Getenv("HERMES_MANAGED_DIR")); d != "" {
+		return d
+	}
+	if o.GOOS == "windows" {
+		return ""
+	}
+	return install.HermesManagedDefault
+}
+
 // newEngine 组装 Engine：action 检查与 outbound 检查。文件动作的保护路径用主目录、h-guard 实际的配置与缓存目录，
 // 以及这次 --config 加载的文件展开。
 func (s setup) newEngine(o Options, j action.Judge, oj outbound.Judge) *engine.Engine {
@@ -339,7 +351,7 @@ func (s setup) newEngine(o Options, j action.Judge, oj outbound.Judge) *engine.E
 			Vars: map[string]string{rules.VarConfig: o.ConfigDir, rules.VarCache: o.CacheDir, rules.VarExtraConfig: s.extra,
 				rules.VarClaudeConfig: o.Getenv("CLAUDE_CONFIG_DIR"), rules.VarCodexHome: o.Getenv("CODEX_HOME"),
 				rules.VarXDGConfig: o.Getenv("XDG_CONFIG_HOME"), rules.VarPiAgentDir: piAgentDir(o), rules.VarDSHHome: install.ExpandDSHHome(o.Home, o.Getenv("DSH_HOME")), rules.VarOMPConfig: ompConfig(o),
-				rules.VarHermesHome: hermesHome(o)}}}
+				rules.VarHermesHome: hermesHome(o), rules.VarHermesManaged: hermesManaged(o)}}}
 	o2 := &outbound.Check{Rules: s.rules, Config: s.cfg, Judge: oj}
 	return &engine.Engine{
 		Checks: []guard.Check{c, o2}, Catalog: s.catalog, Locale: s.locale,

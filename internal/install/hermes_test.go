@@ -155,6 +155,53 @@ func TestHermesTimeoutLimit(t *testing.T) {
 	}
 }
 
+// TestHermesManagedScope：托管范围（$HERMES_MANAGED_DIR/config.yaml，默认 /etc/hermes）写下的键覆盖用户的配置。
+// 它的 plugins.enabled 不含 h-guard、plugins.disabled 含 h-guard，或 hook_callback_timeout 太短时，install 报错（不改托管
+// 文件，也不改用户的），status 报告问题；托管的 plugins.enabled 含 h-guard 时照常安装、没有问题。
+func TestHermesManagedScope(t *testing.T) {
+	for body, want := range map[string]string{
+		"plugins: {enabled: [disk-cleanup]}\n":   "sets plugins.enabled without h-guard",
+		"plugins: {disabled: [h-guard]}\n":       "lists h-guard in plugins.disabled",
+		"plugins: {hook_callback_timeout: 10}\n": "sets plugins.hook_callback_timeout to 10s",
+	} {
+		tg := target(t, "linux")
+		managed := filepath.Join(tg.Home, "managed")
+		os.MkdirAll(managed, 0o700)
+		os.WriteFile(filepath.Join(managed, "config.yaml"), []byte(body), 0o600)
+		tg.Getenv = env(map[string]string{"HERMES_MANAGED_DIR": managed})
+		if _, err := Hermes(tg, false); err == nil || !strings.Contains(err.Error(), want) || !strings.Contains(err.Error(), "administrator") {
+			t.Errorf("%q: install error %v", body, err)
+		}
+		// 先不经托管范围装好，再看 status
+		apply(t, hermesPlan(t, Target{Home: tg.Home, ConfigDir: tg.ConfigDir, CacheDir: tg.CacheDir, Bin: tg.Bin, Timeout: tg.Timeout, GOOS: "linux",
+			Getenv: env(map[string]string{}), Now: tg.Now}, false))
+		lines := strings.Join(Inspect(tg, "hermes"), "\n")
+		if !strings.Contains(lines, "problem: "+filepath.Join(managed, "config.yaml")) || !strings.Contains(lines, want) {
+			t.Errorf("%q: status:\n%s", body, lines)
+		}
+		if strings.Contains(lines, HermesConfig(tg)+" does not list it") {
+			t.Errorf("%q: status blames the user config:\n%s", body, lines)
+		}
+		if _, err := Hermes(tg, true); err != nil { // 移除不受托管范围影响
+			t.Errorf("%q: remove: %v", body, err)
+		}
+	}
+	tg := target(t, "linux")
+	managed := filepath.Join(tg.Home, "managed")
+	os.MkdirAll(managed, 0o700)
+	os.WriteFile(filepath.Join(managed, "config.yaml"), []byte("plugins: {enabled: [h-guard]}\n"), 0o600)
+	tg.Getenv = env(map[string]string{"HERMES_MANAGED_DIR": managed})
+	apply(t, hermesPlan(t, tg, false))
+	os.WriteFile(HermesConfig(tg), []byte("plugins: {enabled: []}\n"), 0o600) // 托管的列表替换用户的
+	if lines := strings.Join(Inspect(tg, "hermes"), "\n"); strings.Contains(lines, "plugins.enabled") || strings.Contains(lines, "administrator") {
+		t.Errorf("managed list with h-guard:\n%s", lines)
+	}
+	tg.Getenv = env(map[string]string{"HERMES_MANAGED_DIR": filepath.Join(tg.Home, "missing")}) // 目录不存在时没有托管范围
+	if HermesManagedConfig(tg) != "" {
+		t.Error("a missing managed directory counts")
+	}
+}
+
 // TestHermesConfigErrors：plugins 或 plugins.enabled 不是期望的类型时报错，不写入。
 func TestHermesConfigErrors(t *testing.T) {
 	for _, body := range []string{"- a\n", "plugins: [x]\n", "plugins: {enabled: h-guard}\n"} {

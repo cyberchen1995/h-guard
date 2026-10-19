@@ -89,7 +89,10 @@ minor releases. Every such change is recorded in this file.
   per profile, under `HERMES_HOME` and on Windows), and the `hermes plugins
   disable|remove` and `hermes config set plugins.*` commands. Path patterns, and
   `exec` patterns, can use `{hermes_home}`, so a command naming the real path of
-  a custom `HERMES_HOME` is covered as well.
+  a custom `HERMES_HOME` is covered as well; `{hermes_managed}` (Hermes's
+  managed scope, `$HERMES_MANAGED_DIR` or `/etc/hermes`) protects the managed
+  `config.yaml` the same way. `install hermes` and `status` take the managed
+  scope's `plugins` settings into account.
 
 ### Public packages
 
