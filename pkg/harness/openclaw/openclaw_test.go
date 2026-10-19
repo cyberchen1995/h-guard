@@ -174,6 +174,29 @@ func TestAsks(t *testing.T) {
 	if _, err := a.Parse(call("show_widget", map[string]any{"title": "x", "capabilities": map[string]any{"tools": []string{"prompt"}}})); !errors.As(err, &ut) {
 		t.Errorf("show_widget with capabilities: %v, want UnknownToolError", err)
 	}
+	// dashboard 放打开网址的组件：网站组件、Browser 插件的浏览器组件、props 里有 url 的组件
+	for _, in := range []map[string]any{
+		{"action": "widget_put", "name": "status", "pluginKind": "session:website", "props": map[string]any{"url": "https://status.example.com"}},
+		{"action": "widget_put", "name": "svc", "pluginKind": "browser:dashboard", "props": map[string]any{"url": "http://status.example.com"}},
+		{"action": "widget_put", "name": "svc", "pluginKind": " Browser:Session "},
+		{"action": "widget_put", "name": "x", "pluginKind": "acme:viewer", "props": map[string]any{"url": "https://x"}},
+		{"action": "widget_put", "name": "x", "pluginKind": []int{1}},
+	} {
+		if _, err := a.Parse(call("dashboard", in)); !errors.As(err, &ut) {
+			t.Errorf("dashboard %v: %v, want UnknownToolError", in, err)
+		}
+	}
+	for _, in := range []map[string]any{
+		{"action": "read"},
+		{"action": "widget_put", "name": "p", "pluginKind": "session:progress", "props": map[string]any{"title": "x"}},
+		{"action": "set_presentation", "presentation": "expanded"},
+		{"action": "focus_tab", "tab": "finance"},
+		{"action": "widget_remove", "name": "status"},
+	} {
+		if _, err := a.Parse(call("dashboard", in)); !errors.Is(err, harness.ErrNoAction) {
+			t.Errorf("dashboard %v: %v, want ErrNoAction", in, err)
+		}
+	}
 	if _, err := a.Parse(call("process", map[string]any{"action": "write", "sessionId": "p1", "data": "", "eof": true})); !errors.As(err, &ut) {
 		t.Errorf("process write eof: %v, want UnknownToolError", err)
 	}

@@ -444,6 +444,9 @@ func actions(tool string, in params, raw json.RawMessage, platform string) ([]gu
 	if tool == "show_widget" && widgetCapabilities(raw) {
 		return nil, errUnknownTool
 	}
+	if tool == "dashboard" && dashboardLoadsURL(in.Action, raw) {
+		return nil, errUnknownTool
+	}
 	if openclawReadOnly[tool] {
 		if acts := refReads(tool, raw, platform); len(acts) > 0 {
 			return acts, nil
@@ -496,6 +499,32 @@ func listsMessages(raw json.RawMessage) bool {
 
 // widgetCapabilities 报告 show_widget 是否给组件要了能力：capabilities.tools（让组件发提示词、触发定时任务）或
 // capabilities.netOrigins（让组件访问外部来源）。
+// dashboardLoadsURL 报告 dashboard 的 widget_put 是否放一个打开网址的组件（2026.10.4 的 docs/web/dashboards.md）：
+// session:website 在用户的浏览器里直接加载网站，browser:dashboard（Browser 插件的 browser:*）在 OpenClaw 管理的
+// 浏览器里打开标签页；与 browser、canvas 的导航一样请求确认。别的组件的 props 里有 url 时同样如此，参数读不懂时也是。
+// 其余子命令（读取、排列、切换标签页与展示方式等）只读。
+func dashboardLoadsURL(action string, raw json.RawMessage) bool {
+	if action != "widget_put" {
+		return false
+	}
+	var p struct {
+		PluginKind string         `json:"pluginKind"`
+		Props      map[string]any `json:"props"`
+	}
+	if extadapter.IsNull(raw) {
+		return false
+	}
+	if json.Unmarshal(raw, &p) != nil {
+		return true
+	}
+	kind := strings.ToLower(strings.TrimSpace(p.PluginKind))
+	if kind == "session:website" || strings.HasPrefix(kind, "browser:") {
+		return true
+	}
+	_, url := p.Props["url"]
+	return url
+}
+
 func widgetCapabilities(raw json.RawMessage) bool {
 	var p struct {
 		Capabilities struct {

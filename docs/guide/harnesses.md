@@ -498,7 +498,10 @@ OpenClaw differences:
   panel on a paired Mac (and `snapshot` on newer versions); `present` and
   `navigate`, which load a document or URL into the panel's WebView, and
   `eval` on newer versions ask. `show_widget` asks when it requests
-  capabilities for the widget (`capabilities.tools` or `netOrigins`). An action
+  capabilities for the widget (`capabilities.tools` or `netOrigins`).
+  `dashboard` `widget_put` asks when the widget loads a URL in a browser
+  (`session:website`, the Browser plugin's `browser:*` kinds, or a `url` in
+  its props); the other `dashboard` actions pass. An action
   h-guard does not know asks.
 - **Local files in tool parameters.** Files a tool sends off the machine or
   into another session are checked as file reads: `message` attachments
