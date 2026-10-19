@@ -399,7 +399,7 @@ func TestOpenClawStatus(t *testing.T) {
 		"OpenClaw waits 0ms for before_agent_run",
 		"note: OpenClaw 2026.10.3 is older than",
 		"note: plugins.enabled is false",
-		"note: OPENCLAW_PROFILE is work",
+		"problem: OPENCLAW_PROFILE is work but neither OPENCLAW_STATE_DIR nor OPENCLAW_CONFIG_PATH is set",
 	} {
 		if !strings.Contains(lines, want) {
 			t.Errorf("status lacks %q:\n%s", want, lines)
@@ -876,5 +876,30 @@ func TestOpenClawWindowsRootRelative(t *testing.T) {
 	lx.Getenv = env(map[string]string{"OPENCLAW_CONFIG_PATH": "/srv/oc.json"})
 	if got := OpenClawConfig(lx); got != "/srv/oc.json" {
 		t.Errorf("linux: %s", got)
+	}
+}
+
+// TestOpenClawNamedProfile：OPENCLAW_PROFILE 选了配置档、却没有 OPENCLAW_STATE_DIR 或 OPENCLAW_CONFIG_PATH 时，
+// OpenClaw 的命令行（不带 --profile）读 ~/.openclaw，带 --profile 的读 ~/.openclaw-<名字>，分不出要装到哪一个：
+// install 与 --remove 拒绝并说明怎么做；default、设置了 OPENCLAW_STATE_DIR 或 OPENCLAW_CONFIG_PATH 时照常。
+func TestOpenClawNamedProfile(t *testing.T) {
+	tg := target(t, "linux")
+	tg.Getenv = env(map[string]string{"OPENCLAW_PROFILE": " work "})
+	for _, remove := range []bool{false, true} {
+		_, err := OpenClaw(tg, remove)
+		if err == nil || !strings.Contains(err.Error(), "OPENCLAW_PROFILE is work") || !strings.Contains(err.Error(), filepath.Join(tg.Home, ".openclaw-work", "openclaw.json")) ||
+			!strings.Contains(err.Error(), "set OPENCLAW_STATE_DIR") {
+			t.Errorf("remove=%v: %v, want a refusal", remove, err)
+		}
+	}
+	for _, vars := range []map[string]string{
+		{"OPENCLAW_PROFILE": "Default"},
+		{"OPENCLAW_PROFILE": "work", "OPENCLAW_STATE_DIR": "~/.openclaw-work"},
+		{"OPENCLAW_PROFILE": "work", "OPENCLAW_CONFIG_PATH": "~/.openclaw-work/openclaw.json"},
+	} {
+		tg.Getenv = env(vars)
+		if _, err := OpenClaw(tg, false); err != nil {
+			t.Errorf("%v: %v", vars, err)
+		}
 	}
 }

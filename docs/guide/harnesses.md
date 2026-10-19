@@ -392,7 +392,10 @@ and `install --remove` refuses.
 
 A named profile (`--profile`, `OPENCLAW_PROFILE`) has its own state
 directory; set `OPENCLAW_STATE_DIR` or `OPENCLAW_CONFIG_PATH` to install
-there. On Windows, a path in these variables (or in `OPENCLAW_HOME`,
+there. With only `OPENCLAW_PROFILE` set, OpenClaw's command line still reads
+`~/.openclaw` unless it is given `--profile`, so h-guard cannot tell which
+configuration the Gateway uses: `install` and `install --remove` refuse and
+`h-guard status` reports it until one of the two is set. On Windows, a path in these variables (or in `OPENCLAW_HOME`,
 `OPENCLAW_INCLUDE_ROOTS` and `$include`) that starts at the root without a
 drive, such as `\OpenClaw\openclaw.json`, is on the current drive, as
 OpenClaw resolves it.

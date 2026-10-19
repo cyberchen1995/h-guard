@@ -86,6 +86,21 @@ func winVolume(p string) string {
 	return ""
 }
 
+// openclawProfileProblem 说明 OPENCLAW_PROFILE 选了一个配置档、却没有 OPENCLAW_STATE_DIR 或 OPENCLAW_CONFIG_PATH 时
+// h-guard 不能确定 OpenClaw 读哪个配置；没有这种情况时为空。OpenClaw 2026.10.4 只在命令行的 --profile（或 --dev）
+// 时改用 ~/.openclaw-<名字>（applyCliProfileEnv 设置 OPENCLAW_STATE_DIR 与 OPENCLAW_CONFIG_PATH），只有环境变量
+// OPENCLAW_PROFILE 时命令行仍用 ~/.openclaw；用 --profile 安装的 Gateway 服务则在它的环境里带上这个配置档的目录。
+// 只看这里的环境分不出要装到哪一个，install 与 --remove 拒绝，status 报告问题。
+func openclawProfileProblem(t Target) string {
+	p := strings.TrimSpace(t.Getenv("OPENCLAW_PROFILE"))
+	if p == "" || strings.EqualFold(p, "default") || strings.TrimSpace(t.Getenv("OPENCLAW_STATE_DIR")) != "" ||
+		strings.TrimSpace(t.Getenv("OPENCLAW_CONFIG_PATH")) != "" {
+		return ""
+	}
+	return fmt.Sprintf("OPENCLAW_PROFILE is %s but neither OPENCLAW_STATE_DIR nor OPENCLAW_CONFIG_PATH is set: OpenClaw reads %s without --profile and %s with --profile %s, so h-guard cannot tell which configuration the Gateway uses; set OPENCLAW_STATE_DIR to the profile's directory (or unset OPENCLAW_PROFILE) and run this again",
+		p, OpenClawConfig(t), filepath.Join(OpenClawHome(t), ".openclaw-"+p, "openclaw.json"), p)
+}
+
 // openclawLegacyDir 与 openclawLegacyConfig 是 OpenClaw 改名前（Clawdbot）的状态目录与配置文件名，升级来的安装还在用。
 const (
 	openclawLegacyDir    = ".clawdbot"
@@ -285,6 +300,9 @@ func isOurOpenClawPlugin(files map[string][]byte) bool {
 // 移除时，实际生效的配置里还有 h-guard 的设置（或配置读不全）就报错，要先手工去掉（否则删掉插件目录后 OpenClaw
 // 加载不到它），没有时只删插件目录。移除先去掉这些设置，再删插件目录。只计划，不写入（Apply 执行）。
 func OpenClaw(t Target, remove bool) ([]Step, error) {
+	if msg := openclawProfileProblem(t); msg != "" {
+		return nil, errors.New(msg)
+	}
 	if !remove && t.Timeout > openclawMaxTimeout {
 		return nil, fmt.Errorf("OpenClaw waits at most 600 seconds for a hook, and h-guard needs 5 seconds of that as a margin; use --timeout %d or less", openclawMaxTimeout)
 	}
@@ -650,10 +668,6 @@ func OpenClawNotes(t Target) []string {
 	for _, rt := range openclawRuntimes(eff) {
 		notes = append(notes, fmt.Sprintf("OpenClaw's configuration runs some models on the %s agent runtime, where OpenClaw does not emit before_agent_run and h-guard's tool output middleware is not registered: prompts and tool output on those turns are not checked, and only the tool calls OpenClaw relays to before_tool_call are", rt))
 	}
-	if p := strings.TrimSpace(t.Getenv("OPENCLAW_PROFILE")); p != "" && !strings.EqualFold(p, "default") &&
-		t.Getenv("OPENCLAW_STATE_DIR") == "" && t.Getenv("OPENCLAW_CONFIG_PATH") == "" {
-		notes = append(notes, fmt.Sprintf("OPENCLAW_PROFILE is %s, but install writes to %s; set OPENCLAW_STATE_DIR to that profile's directory to install there", p, OpenClawConfig(t)))
-	}
 	return notes
 }
 
@@ -667,6 +681,9 @@ func inspectOpenClaw(t Target) []string {
 		return []string{"not installed (h-guard install openclaw)"}
 	}
 	lines := []string{extInstalledLine(t, "openclaw", "OpenClaw")}
+	if msg := openclawProfileProblem(t); msg != "" {
+		lines = append(lines, "problem: "+msg)
+	}
 	fix := "; run h-guard install openclaw --write"
 	if openclawManaged(t) != "" {
 		fix = "; add it where OpenClaw's configuration is managed"
