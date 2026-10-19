@@ -287,10 +287,20 @@ func (e OpenClawEffective) decode(dst any) error {
 // envRefRe 是字符串里的 ${VAR} 与 ${VAR:-fallback}（只认大写的名字），以及转义写法 $${...}。
 var envRefRe = regexp.MustCompile(`\$?\$\{([A-Z_][A-Z0-9_]*)(?::-([^${}]*))?\}`)
 
+// openclawTruthy 报告环境变量的值在 OpenClaw 看来是否为真（src/utils/boolean.ts：去掉首尾空白、不分大小写的 true、1、
+// yes、on）。
+func openclawTruthy(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "true", "1", "yes", "on":
+		return true
+	}
+	return false
+}
+
 // substituteEnv 按 OpenClaw 的规则展开合并后配置里字符串的 ${VAR}（docs/gateway/config-secrets-env.md）：值取自进程的
 // 环境变量，没有或为空时用 :- 后的默认值，再没有时用配置里 env.vars 的值；都没有时原样保留（OpenClaw 同样保留并
-// 警告）。$${VAR} 是字面的 ${VAR}。OpenClaw 还会从当前目录与状态目录的 .env 文件、以及（env.shellEnv.enabled 时）
-// 登录 shell 补上缺少的变量，这些 h-guard 不读：有这些来源时，缺少的变量记进 Unresolved。注意这里用的是运行 h-guard
+// 警告）。$${VAR} 是字面的 ${VAR}。OpenClaw 还会从当前目录与状态目录的 .env 文件、以及（env.shellEnv.enabled 或
+// 环境变量 OPENCLAW_LOAD_SHELL_ENV 为真时）登录 shell 补上缺少的变量，这些 h-guard 不读：有这些来源时，缺少的变量记进 Unresolved。注意这里用的是运行 h-guard
 // 的进程的环境，Gateway 的环境可能不同。
 func substituteEnv(t Target, e *OpenClawEffective) {
 	envVars := map[string]string{}
@@ -307,7 +317,7 @@ func substituteEnv(t Target, e *OpenClawEffective) {
 			shellEnv, _ = sh["enabled"].(bool)
 		}
 	}
-	otherSources := shellEnv || exists(filepath.Join(OpenClawStateDir(t), ".env"))
+	otherSources := shellEnv || openclawTruthy(t.Getenv("OPENCLAW_LOAD_SHELL_ENV")) || exists(filepath.Join(OpenClawStateDir(t), ".env"))
 	if cwd, err := os.Getwd(); err == nil && exists(filepath.Join(cwd, ".env")) {
 		otherSources = true
 	}

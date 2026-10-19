@@ -622,7 +622,7 @@ func TestOpenClawConfigMerge(t *testing.T) {
 }
 
 // TestOpenClawConfigEnv：合并之后展开 ${VAR}：进程的环境变量、:- 的默认值、env.vars；$${VAR} 是字面值；缺少的变量
-// 原样保留，有 .env 文件或 shellEnv 时记为不能确定。plugins 下有不能确定的值时，配置只读的 remove 拒绝。
+// 原样保留，有 .env 文件、shellEnv 或 OPENCLAW_LOAD_SHELL_ENV 时记为不能确定。plugins 下有不能确定的值时，配置只读的 remove 拒绝。
 func TestOpenClawConfigEnv(t *testing.T) {
 	tg := target(t, "linux")
 	tg.Getenv = env(map[string]string{"BLOCKED_PLUGIN": "h-guard"})
@@ -637,6 +637,14 @@ func TestOpenClawConfigEnv(t *testing.T) {
 	if st := readOpenClawState(e, OpenClawPluginDir(tg), tg.samePath, func(p string) string { return p }); !st.denied {
 		t.Errorf("the deny entry from ${BLOCKED_PLUGIN} was not seen")
 	}
+	// OPENCLAW_LOAD_SHELL_ENV 为真（OpenClaw 的写法：true、1、yes、on，不分大小写，可带空白）时，缺少的变量可能来自登录 shell
+	for v, want := range map[string]bool{"1": true, " Yes ": true, "on": true, "TRUE": true, "0": false, "off": false, "enabled": false, "": false} {
+		tg.Getenv = env(map[string]string{"BLOCKED_PLUGIN": "h-guard", "OPENCLAW_LOAD_SHELL_ENV": v})
+		if e := LoadOpenClawConfig(tg); (len(e.Unresolved) > 0) != want {
+			t.Errorf("OPENCLAW_LOAD_SHELL_ENV=%q: unresolved %v, want %v", v, e.Unresolved, want)
+		}
+	}
+	tg.Getenv = env(map[string]string{"BLOCKED_PLUGIN": "h-guard"})
 	// 状态目录里有 .env：缺少的变量可能来自那里
 	writeFile(t, filepath.Join(OpenClawStateDir(tg), ".env"), "MISSING=h-guard\n")
 	if e := LoadOpenClawConfig(tg); !slices.Equal(e.Unresolved, []string{"plugins.deny[4]"}) || !e.unresolvedUnder("plugins") {
