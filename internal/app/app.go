@@ -325,8 +325,8 @@ func piAgentDir(o Options) string {
 // h-guard 由它启动、继承同一个目录。不能按事件里某次工具调用的目录解析，那是命令的目录，不是 harness 的。
 func absVars(vars map[string]string) map[string]string {
 	for k, v := range vars {
-		// 以 / 或 \ 开头的值在 Windows 上也原样保留（不补盘符），命令里照原样写
-		if v != "" && !filepath.IsAbs(v) && !strings.HasPrefix(v, "/") && !strings.HasPrefix(v, `\`) {
+		// Windows 上不带盘符的 \agent 相对当前盘，同样解析（补上盘符）；命令里省略盘符的写法由 exec 展开另认
+		if v != "" && !filepath.IsAbs(v) {
 			if abs, err := filepath.Abs(v); err == nil {
 				vars[k] = abs
 			}

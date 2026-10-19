@@ -40,8 +40,9 @@ func TestExecPlaceholderExpansion(t *testing.T) {
 			"rm ${HOME}/my dsh/cordis.patch.yml", `rm $env:USERPROFILE\my dsh\cordis.patch.yml`, `rm %USERPROFILE%\my dsh\cordis.patch.yml`},
 		[]string{"rm /home/u/mydsh/cordis.patch.yml", "rm ~/other/cordis.patch.yml", "rm $HOMEDIR/my dsh/cordis.patch.yml"})
 	mustMatch(t, `^rm {codex_home}[/\\]+hooks\.json$`, env,
-		[]string{`rm C:\Users\Me\codex\hooks.json`, "rm c:/users/me/codex/hooks.json"},
-		[]string{`rm D:\Users\Me\codex\hooks.json`})
+		// 省略盘符（相对当前盘）的写法也认
+		[]string{`rm C:\Users\Me\codex\hooks.json`, "rm c:/users/me/codex/hooks.json", `rm \Users\Me\codex\hooks.json`},
+		[]string{`rm D:\Users\Me\codex\hooks.json`, `rm x\Users\Me\codex\hooks.json`})
 	// 值就是主目录
 	home := paths.Env{Home: "/home/u", Vars: map[string]string{VarDSHHome: "/home/u/"}}
 	mustMatch(t, `^rm {dsh_home}[/\\]+x$`, home, []string{"rm ~/x", "rm /home/u/x"}, []string{"rm /home/x"})
@@ -133,6 +134,7 @@ func TestExecPlaceholderRoot(t *testing.T) {
 			"Remove-Item other,/cordis.patch.yml", "Remove-Item -Path:/cordis.patch.yml"},
 		[]string{"rm /tmp/cordis.patch.yml", "rm cordis.patch.yml"})
 	mustMatch(t, `rm {dsh_home}[/\\]?(?=$|\s)`, root, []string{"rm /", "rm / x"}, []string{"rm /tmp/x", "rm x"})
+	mustMatch(t, `^rm {dsh_home}$`, root, []string{"rm /", "rm //"}, []string{"rm /tmp", "rm x/"})
 }
 
 // TestExecPlaceholderOrder：展开后的模式保持规则里的顺序（含占位符的与不含的交错）。

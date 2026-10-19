@@ -22,7 +22,7 @@ import (
 //     （路径模式解析目标时会展开 ~，命令文本不会，这几种写法在这里补上）。
 //
 // 相对的值由调用方事先解析成绝对路径（harness 按自己的工作目录解析，h-guard 继承同一个目录）。值是根目录时展开为
-// 不占字符的「这里开始一个路径」，模式里紧跟的分隔符照常匹配那个 /。
+// 从参数开头起的分隔符（也可以不占字符，让模式里紧跟的分隔符匹配那个 /）；值带盘符时命令里也可以省略盘符。
 //
 // 占位符也可以写在后向断言里：regexp2 的后向断言不要求定长。
 //
@@ -69,11 +69,14 @@ func execLiteral(v, home string) string {
 	}
 	n := normDir(v)
 	if n == "/" {
-		// 根目录展开为「这里开始一个路径、后面跟着分隔符」，不占字符：模式里紧跟的 [/\\]+ 照常匹配那个 /，
-		// 不会要求两个分隔符
-		return pathStart + `(?=[/\\])`
+		// 根目录：吞掉分隔符（模式里单独用 {x} 时），或不占字符、留给模式里紧跟的 [/\\]+（不会要求两个分隔符）
+		return pathStart + `(?:[/\\]+|(?=[/\\]))`
 	}
 	lit := literalSegments(n)
+	if d := driveLetter.FindString(n); d != "" && len(n) > len(d) && n[len(d)] == '/' {
+		// Windows 的盘符路径：命令里也可能省略盘符（\agent、/agent 相对当前盘），省略时须从参数开头起
+		lit = "(?:" + regexp.QuoteMeta(d) + "|" + pathStart + ")" + literalSegments(n[len(d):])
+	}
 	if h := normDir(home); h != "" {
 		switch {
 		case strings.EqualFold(n, h):
@@ -84,6 +87,8 @@ func execLiteral(v, home string) string {
 	}
 	return "(?i:" + lit + ")"
 }
+
+var driveLetter = regexp.MustCompile(`^[A-Za-z]:`)
 
 // normDir 把 \ 换成 /，规范化并去掉末尾的 /；根目录保留为 /，不能变成空（空的字面量匹配任何位置）。
 func normDir(v string) string {

@@ -240,15 +240,16 @@ func TestPiAgentDirTilde(t *testing.T) {
 	}
 }
 
-// TestAbsVars：占位符的相对值按 h-guard 的工作目录（harness 的目录）解析；绝对的、以 / 或 \ 开头的与空值原样保留。
+// TestAbsVars：占位符的相对值按 h-guard 的工作目录（harness 的目录）解析；绝对路径与空值原样保留。
 func TestAbsVars(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
-	got := absVars(map[string]string{"a": "agent", "b": "/opt/pi", "c": `\opt\pi`, "d": ""})
+	abs := filepath.Join(dir, "x")
+	got := absVars(map[string]string{"a": "agent", "b": abs, "d": ""})
 	if want := filepath.Join(dir, "agent"); got["a"] != want {
 		t.Errorf("relative value = %q, want %q", got["a"], want)
 	}
-	if got["b"] != "/opt/pi" || got["c"] != `\opt\pi` || got["d"] != "" {
+	if got["b"] != abs || got["d"] != "" {
 		t.Errorf("absVars = %q", got)
 	}
 }
