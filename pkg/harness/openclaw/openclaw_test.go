@@ -87,6 +87,13 @@ func TestActions(t *testing.T) {
 		{"write", "linux", "write", map[string]any{"path": "a", "content": "x"}, []guard.Action{file(guard.ActionFileWrite, "a")}, "/w"},
 		{"edit", "linux", "edit", map[string]any{"path": "b", "edits": []map[string]string{{"oldText": "x", "newText": "y"}}}, []guard.Action{file(guard.ActionFileWrite, "b")}, "/w"},
 		{"edit with filePath", "linux", "edit", map[string]any{"filePath": "c"}, []guard.Action{file(guard.ActionFileWrite, "c")}, "/w"},
+		{"read with file", "linux", "read", map[string]any{"file": "/home/u/.ssh/id_rsa"}, []guard.Action{file(guard.ActionFileRead, "/home/u/.ssh/id_rsa")}, "/w"},
+		{"grep with file", "linux", "grep", map[string]any{"pattern": "x", "file": ".env"}, []guard.Action{file(guard.ActionFileRead, ".env")}, "/w"},
+		{"write with file", "linux", "write", map[string]any{"file": "~/.bashrc", "content": "x"}, []guard.Action{file(guard.ActionFileWrite, "~/.bashrc")}, "/w"},
+		{"read with every alias", "linux", "read", map[string]any{"path": "README.md", "file_path": ".env", "filePath": "README.md", "file": "/etc/shadow"},
+			[]guard.Action{file(guard.ActionFileRead, "README.md"), file(guard.ActionFileRead, ".env"), file(guard.ActionFileRead, "/etc/shadow")}, "/w"},
+		{"edit with two aliases", "linux", "edit", map[string]any{"path": "a.txt", "file": "~/.profile"},
+			[]guard.Action{file(guard.ActionFileWrite, "a.txt"), file(guard.ActionFileWrite, "~/.profile")}, "/w"},
 		{"apply_patch", "linux", "apply_patch", map[string]any{"input": patch}, []guard.Action{file(guard.ActionFileWrite, "n.txt"),
 			{Kind: guard.ActionFileRename, File: &guard.FileAction{Path: "a.go", To: "b.go"}}, file(guard.ActionFileDelete, "old")}, "/w"},
 	}

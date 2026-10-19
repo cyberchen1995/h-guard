@@ -60,6 +60,7 @@ func TestRefReads(t *testing.T) {
 		{"message", map[string]any{"action": "upload-file", "url": "https://example.com/a.pdf"}, nil},
 		{"sessions_send", map[string]any{"message": "see\nMEDIA: /home/u/.env\nand MEDIA:`notes.md`"}, []string{"/home/u/.env", "notes.md"}},
 		{"view_image", map[string]any{"path": "https://x/a.png", "paths": []string{"b.png"}}, []string{"b.png"}},
+		{"view_image", map[string]any{"file": "~/.ssh/id_rsa", "file_path": "c.png"}, []string{"c.png", "~/.ssh/id_rsa"}},
 		{"pdf", map[string]any{"pdf": 7}, nil},
 	} {
 		raw, _ := json.Marshal(tt.params)

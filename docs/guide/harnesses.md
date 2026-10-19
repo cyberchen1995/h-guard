@@ -428,7 +428,7 @@ you approve in OpenClaw's own plugin approval instead.
 
 | Plugin hook | What h-guard does |
 |---|---|
-| `before_tool_call` | checks the actions (`exec` commands; `read`, `grep`, `view_image`; `write`, `edit`; the files in an `apply_patch`; text written to a running `process`); `deny` blocks the call and the model reads h-guard's reason; `ask` becomes a plugin approval |
+| `before_tool_call` | checks the actions (`exec` commands; `read`, `grep`, `view_image`; `write`, `edit`, with every path spelling a call carries, `path`, `file_path`, `filePath` or `file`; the files in an `apply_patch`; text written to a running `process`); `deny` blocks the call and the model reads h-guard's reason; `ask` becomes a plugin approval |
 | tool result middleware | scans the output before the model sees it; `deny` replaces it with h-guard's reason |
 | `before_agent_run` | scans the prompt of each run; `deny` blocks the run, and the reply is OpenClaw's "Your message could not be sent: …" with h-guard's reason |
 | `before_dispatch` | scans each message a channel delivers before OpenClaw hands it to the agent, as the user's input; `deny` answers with h-guard's reason instead of the agent. This covers messages that arrive while a run is active: in the default `steer` queue mode OpenClaw adds them to that run at its next model call without `before_agent_run`. A message that starts a new run is checked here and again in `before_agent_run` |

@@ -36,7 +36,7 @@ type nestedRefs struct {
 //     audioRef、audioRefs；
 //   - sessions_send：message 里的 MEDIA: 指令把本地文件作为附件交给另一个会话（splitMediaFromOutput）。
 var fileRefs = map[string]refSpec{
-	"view_image": {keys: []string{"path", "paths", "filePath"}},
+	"view_image": {keys: []string{"path", "paths", "filePath", "file"}},
 	"message": {
 		keys:   []string{"media", "mediaUrl", "path", "filePath", "fileUrl", "image", "mediaUrls", "url"},
 		nested: []nestedRefs{{"attachments", []string{"media", "mediaUrl", "path", "filePath", "fileUrl", "url"}}},

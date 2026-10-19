@@ -88,7 +88,9 @@ type toolData struct {
 	ExecHost string `json:"execHost"`
 }
 
-// params 是工具参数里 h-guard 用到的字段。path、file_path、filePath 是 OpenClaw 文件工具接受的路径写法（依次取第一个）。
+// params 是工具参数里 h-guard 用到的字段。OpenClaw 2026.10.4 的 read、write、edit 只用 path（CLI 后端的原生文件工具把
+// file_path 换成 path 再交给 before_tool_call）；file_path、filePath、file 是其他版本或别的工具接受的写法。各种写法都有
+// 值时 OpenClaw 用哪一个随版本而变，所以每一个都检查（paths）。
 type params struct {
 	Command  string   `json:"command"`
 	Code     string   `json:"code"` // Code Mode 的 JavaScript
@@ -100,6 +102,7 @@ type params struct {
 	Path     string   `json:"path"`
 	FilePath string   `json:"file_path"`
 	FileCase string   `json:"filePath"`
+	File     string   `json:"file"`
 	Paths    []string `json:"paths"` // view_image
 	Input    string   `json:"input"` // apply_patch
 	Action   string   `json:"action"`
@@ -108,13 +111,26 @@ type params struct {
 	EOF      bool     `json:"eof"`  // process write：写完后关闭 stdin
 }
 
-func (p params) path() string {
-	for _, s := range []string{p.Path, p.FilePath, p.FileCase} {
-		if strings.TrimSpace(s) != "" {
-			return s
+// filePaths 返回 path、file_path、filePath、file 里不为空的值（去掉重复的）。
+func (p params) filePaths() []string {
+	var out []string
+	for _, s := range []string{p.Path, p.FilePath, p.FileCase, p.File} {
+		if strings.TrimSpace(s) != "" && !slices.Contains(out, s) {
+			out = append(out, s)
 		}
 	}
-	return ""
+	return out
+}
+
+// fileActions 返回 filePaths 里每个路径的文件动作。
+func (p params) fileActions(kind guard.ActionKind) []guard.Action {
+	var acts []guard.Action
+	for _, s := range p.filePaths() {
+		if act, ok := extadapter.File(kind, s); ok {
+			acts = append(acts, act)
+		}
+	}
+	return acts
 }
 
 type runData struct {
@@ -343,15 +359,18 @@ func actions(tool string, in params, raw json.RawMessage, platform string) ([]gu
 		}
 		return acts, nil
 	case "read", "grep":
-		return one(extadapter.File(guard.ActionFileRead, in.path()))
+		if acts := in.fileActions(guard.ActionFileRead); len(acts) > 0 {
+			return acts, nil
+		}
+		return one(extadapter.File(guard.ActionFileRead, ""))
 	case "view_image":
 		if acts := refReads(tool, raw, platform); len(acts) > 0 {
 			return acts, nil
 		}
 		return nil, ErrNoAction
 	case "write", "edit":
-		if act, ok := extadapter.File(guard.ActionFileWrite, in.path()); ok {
-			return []guard.Action{act}, nil
+		if acts := in.fileActions(guard.ActionFileWrite); len(acts) > 0 {
+			return acts, nil
 		}
 		return nil, errUnparsed
 	case "apply_patch":
