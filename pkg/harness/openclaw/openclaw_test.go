@@ -340,6 +340,8 @@ func TestPartlyReadOnly(t *testing.T) {
 		{"message", map[string]any{"action": "send", "media": "~/.ssh/id_rsa"}, []guard.Action{file(guard.ActionFileRead, "~/.ssh/id_rsa")}},
 		{"message", map[string]any{"action": "sendAttachment", "filePath": "file:///etc/shadow", "path": "/etc/shadow"}, []guard.Action{file(guard.ActionFileRead, "/etc/shadow")}},
 		{"message", map[string]any{"action": "upload-file", "file_url": "file:///home/me/.aws/credentials"}, []guard.Action{file(guard.ActionFileRead, "/home/me/.aws/credentials")}},
+		{"message", map[string]any{"action": "upload-file", "url": "file:///home/me/.aws/credentials"}, []guard.Action{file(guard.ActionFileRead, "/home/me/.aws/credentials")}},
+		{"message", map[string]any{"action": "upload-file", "url": "https://example.com/a.pdf"}, nil},
 		{"message", map[string]any{"action": "reply", "mediaUrls": []string{"a.png", "https://x/b.png"}, "attachments": []map[string]string{{"url": "C:\\x\\c.txt"}}}, []guard.Action{file(guard.ActionFileRead, "a.png"), file(guard.ActionFileRead, "C:\\x\\c.txt")}},
 		{"sessions", map[string]any{"action": "patch", "label": "x"}, nil},
 		{"transcripts", map[string]any{"action": "list"}, nil},

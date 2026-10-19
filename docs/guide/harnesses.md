@@ -499,7 +499,7 @@ OpenClaw differences:
 - **Local files in tool parameters.** Files a tool sends off the machine or
   into another session are checked as file reads: `message` attachments
   (`media`, `mediaUrl`, `path`, `filePath`, `fileUrl`, `image`, `mediaUrls`,
-  `attachments[]`), `pdf` (`pdf`, `pdfs`), reference media of
+  `url`, `attachments[]`), `pdf` (`pdf`, `pdfs`), reference media of
   `image_generate`, `music_generate` and `video_generate` (`image`, `images`,
   `video`, `videos`, `audioRef`, `audioRefs`), `view_image` (`path`, `paths`)
   and `MEDIA:` lines in a `sessions_send` message. snake_case keys and

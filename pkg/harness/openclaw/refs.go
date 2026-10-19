@@ -28,8 +28,9 @@ type nestedRefs struct {
 // fileRefs 是会读取本地文件、却不是读文件工具的 OpenClaw 工具（2026.10.4）：这些文件的内容会离开本机（发到频道、
 // 交给模型或媒体服务的提供方）或进入另一个会话，按读文件检查。
 //   - view_image：path、paths（本地图片或允许的 URL）；
-//   - message：附件 media、mediaUrl、path、filePath、fileUrl、image、mediaUrls 与 attachments[] 的 media、mediaUrl、
-//     path、filePath、fileUrl、url（src/infra/outbound/message-action-params.ts）；
+//   - message：附件 media、mediaUrl、path、filePath、fileUrl、image、mediaUrls、url 与 attachments[] 的 media、mediaUrl、
+//     path、filePath、fileUrl、url（src/infra/outbound/message-action-params.ts）；顶层的 url 是频道插件可以声明的媒体
+//     参数（describeMessageTool 的 mediaSourceParams，如上传文件），远端 URL 不算；
 //   - pdf：pdf、pdfs（本地 PDF 原生模式下整个文件发给模型提供方）；
 //   - image_generate、music_generate：参考图 image、images；video_generate 另有参考视频 video、videos 与参考音频
 //     audioRef、audioRefs；
@@ -37,7 +38,7 @@ type nestedRefs struct {
 var fileRefs = map[string]refSpec{
 	"view_image": {keys: []string{"path", "paths", "filePath"}},
 	"message": {
-		keys:   []string{"media", "mediaUrl", "path", "filePath", "fileUrl", "image", "mediaUrls"},
+		keys:   []string{"media", "mediaUrl", "path", "filePath", "fileUrl", "image", "mediaUrls", "url"},
 		nested: []nestedRefs{{"attachments", []string{"media", "mediaUrl", "path", "filePath", "fileUrl", "url"}}},
 	},
 	"pdf":            {keys: []string{"pdf", "pdfs"}},
