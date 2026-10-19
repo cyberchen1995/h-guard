@@ -309,7 +309,7 @@ func OpenClaw(t Target, remove bool) ([]Step, error) {
 		}
 		steps := []Step{plugin}
 		if eff.Err != nil || eff.unresolvedUnder("plugins") || !st.complete(ms) {
-			steps = append(steps, Step{Path: config, Summary: manual + "; add these settings yourself", Manual: openclawSnippet(dir, ms)})
+			steps = append(steps, Step{Path: config, Summary: manual + "; add these settings yourself", Manual: openclawManualSnippet(dir, ms)})
 		}
 		return steps, nil
 	}
@@ -357,6 +357,12 @@ func openclawSnippet(dir string, ms int) string {
 }
 (and "%s" in plugins.allow when plugins.allow is not empty)
 `, d, openclawID, strings.Join(timeouts, ", "), openclawID)
+}
+
+// openclawManualSnippet 是要手工加入的设置：openclawSnippet，另说明要从 plugins.deny 去掉 h-guard（能改写 openclaw.json
+// 时 install 在这种情况下拒绝，见 openclawConfigEdit；手工加入时 deny 可能在引入的文件里或来自 ${VAR}，一律说明）。
+func openclawManualSnippet(dir string, ms int) string {
+	return openclawSnippet(dir, ms) + fmt.Sprintf("(and remove %q from plugins.deny if it is listed there, or OpenClaw does not load the plugin)\n", openclawID)
 }
 
 // openclawConfigEdit 在 openclaw.json 里加入或去掉本项目的设置（见 OpenClaw）。plugins.allow 只在已有其他条目时

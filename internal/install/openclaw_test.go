@@ -204,6 +204,29 @@ func TestOpenClawRefuses(t *testing.T) {
 	}
 }
 
+// TestOpenClawManualDeny：设置齐全、只是引入的文件里 plugins.deny 列出 h-guard 时，install 照样列出要手工做的一步，
+// 并说明要从 plugins.deny 去掉 h-guard（能改写 openclaw.json 时 install 在这种情况下拒绝）。
+func TestOpenClawManualDeny(t *testing.T) {
+	tg := target(t, "linux")
+	config := OpenClawConfig(tg)
+	dir, _ := json.Marshal(OpenClawPluginDir(tg))
+	writeFile(t, config, `{"plugins": {"$include": "./plugins.json5"}}`)
+	writeFile(t, filepath.Join(filepath.Dir(config), "plugins.json5"), "{\n  deny: ['h-guard'],\n  load: {paths: ["+string(dir)+"]},\n"+
+		"  entries: {'h-guard': {enabled: true, hooks: {allowConversationAccess: true,\n"+
+		"    timeouts: {before_tool_call: 25000, before_agent_run: 25000, before_dispatch: 25000, after_tool_call: 25000}}}},\n}\n")
+	var manual string
+	for _, st := range plan(t, tg, "openclaw", false) {
+		manual += st.Manual
+	}
+	if !strings.Contains(manual, `(and remove "h-guard" from plugins.deny if it is listed there, or OpenClaw does not load the plugin)`) {
+		t.Errorf("manual step:\n%s", manual)
+	}
+	writeFile(t, config, `{"plugins": {"deny": ["h-guard"]}}`)
+	if _, err := OpenClaw(tg, false); err == nil || !strings.Contains(err.Error(), "remove it from plugins.deny first") {
+		t.Errorf("plain JSON with h-guard denied: %v", err)
+	}
+}
+
 // TestOpenClawManualConfig：openclaw.json 用 JSON5 写法或 $include 时 h-guard 不改它：install 照样写出插件目录，另有
 // 一步列出要手工加入的设置；实际生效的配置（合并引入的文件之后）已有这些设置时不再列出。status 按合并后的配置
 // 报告；remove 在设置还在时拒绝，去掉之后只删插件目录。
@@ -227,7 +250,8 @@ func TestOpenClawManualConfig(t *testing.T) {
 				manual = &steps[i]
 			}
 		}
-		if manual == nil || !strings.Contains(manual.Summary, tt.want) || !strings.Contains(manual.Manual, `"allowConversationAccess": true`) || manual.Changes() {
+		if manual == nil || !strings.Contains(manual.Summary, tt.want) || !strings.Contains(manual.Manual, `"allowConversationAccess": true`) ||
+			!strings.Contains(manual.Manual, `remove "h-guard" from plugins.deny`) || manual.Changes() {
 			t.Errorf("%s: manual step %+v, want one that says %q and lists the settings", name, manual, tt.want)
 		}
 		apply(t, steps)

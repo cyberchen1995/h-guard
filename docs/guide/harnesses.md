@@ -374,7 +374,8 @@ settings go, and when OpenClaw's configuration is read-only
 ("to do yourself: …"), unless the effective configuration already has them.
 `install --remove` then refuses while the effective configuration still
 loads the plugin or cannot be read completely, and otherwise deletes only the
-plugin. `install` refuses while `plugins.deny` lists `h-guard`.
+plugin. `install` refuses while `plugins.deny` lists `h-guard`; the settings
+it prints to add yourself say to remove `h-guard` from `plugins.deny`.
 
 Without OpenClaw running, `install`, `install --remove` and the protected-file
 rules read the configuration themselves, following OpenClaw's rules:
