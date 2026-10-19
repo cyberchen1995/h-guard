@@ -114,3 +114,47 @@ func TestParseJSON5LikeOpenClaw(t *testing.T) {
 		}
 	}
 }
+
+// TestParseJSON5IdentifiersLikeOpenClaw：不带引号的键按 ES5 的标识符规则（与 json5 包 2.2.3 一样）：字母、$、_ 开头，
+// 其后另可以是组合记号、数字、连接标点、ZWNJ 与 ZWJ；表情符号、开头的数字或组合记号、转义出的非法字符都报错。
+func TestParseJSON5IdentifiersLikeOpenClaw(t *testing.T) {
+	for _, tt := range []struct{ in, want string }{ // want 为空表示应当报错
+		{"{\U0001F600: 1}", ""},
+		{"{a\U0001F600: 1}", ""},
+		{"{\u00e9: 1}", "{\"\u00e9\":1}"},
+		{"{\u4e2d\u6587: 1}", "{\"\u4e2d\u6587\":1}"},
+		{"{a\u00e9: 1}", "{\"a\u00e9\":1}"},
+		{"{a\u200db: 1}", "{\"a\u200db\":1}"},
+		{"{\u200da: 1}", ""},
+		{"{a\u0301: 1}", "{\"a\u0301\":1}"},
+		{"{\u0301a: 1}", ""},
+		{"{a\u0661: 1}", "{\"a\u0661\":1}"},
+		{"{\u0661a: 1}", ""},
+		{"{a\u203fb: 1}", "{\"a\u203fb\":1}"},
+		{"{\u2177: 1}", "{\"\u2177\":1}"},
+		{"{\\u0031a: 1}", ""},
+		{"{a\\u0031: 1}", "{\"a1\":1}"},
+		{"{\\u0020: 1}", ""},
+		{"{\\u00e9: 1}", "{\"\u00e9\":1}"},
+		{"{a\\u200d: 1}", "{\"a\u200d\":1}"},
+		{"{\\uD83D\\uDE00: 1}", ""},
+		{"{a-b: 1}", ""},
+		{"{a\\x41: 1}", ""},
+		{"{\\u004: 1}", ""},
+	} {
+		v, err := parseJSON5([]byte(tt.in))
+		if tt.want == "" {
+			if err == nil {
+				t.Errorf("%q: accepted, the json5 package rejects it", tt.in)
+			}
+			continue
+		}
+		b, _ := toJSON(v)
+		var got, want any
+		json.Unmarshal(b, &got)
+		json.Unmarshal([]byte(tt.want), &want)
+		if err != nil || !reflect.DeepEqual(got, want) {
+			t.Errorf("%q: %s (%v), want %s", tt.in, b, err, tt.want)
+		}
+	}
+}

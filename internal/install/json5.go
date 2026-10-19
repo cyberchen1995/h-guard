@@ -7,6 +7,7 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -178,34 +179,38 @@ func (p *json5Parser) array(depth int) (any, error) {
 	}
 }
 
-// ident 读一个标识符（不带引号的键与 true、null 等字面量），可以含 \uXXXX 转义；不是标识符时返回空。
+// ident 读一个标识符（不带引号的键与 true、null 等字面量），可以含 \uXXXX 转义；不是标识符时返回空。与 json5 包一样
+// 按 ES5 的规则：第一个字符是字母（Unicode 的 L 类与 Nl）、$ 或 _，其后另可以是组合记号（Mn、Mc）、数字（Nd）、连接
+// 标点（Pc）与 ZWNJ、ZWJ；转义出的字符同样要符合。遇到不符合的字符就停下，由调用方报错。
 func (p *json5Parser) ident() string {
 	var b strings.Builder
 	for p.i < len(p.s) {
-		c := p.s[p.i]
-		if c == '_' || c == '$' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || (b.Len() > 0 && c >= '0' && c <= '9') {
-			b.WriteByte(c)
-			p.i++
-			continue
-		}
-		if c == '\\' && strings.HasPrefix(p.s[p.i:], `\u`) && p.i+6 <= len(p.s) {
-			if v, err := strconv.ParseUint(p.s[p.i+2:p.i+6], 16, 16); err == nil {
-				b.WriteRune(rune(v))
-				p.i += 6
-				continue
+		r, n := utf8.DecodeRuneInString(p.s[p.i:])
+		if r == '\\' {
+			if !strings.HasPrefix(p.s[p.i:], `\u`) || p.i+6 > len(p.s) {
+				break
 			}
-		}
-		if c >= utf8.RuneSelf {
-			r, n := utf8.DecodeRuneInString(p.s[p.i:])
-			if r != utf8.RuneError && r != '\u00a0' && r != '\ufeff' && r != '\u2028' && r != '\u2029' {
-				b.WriteRune(r)
-				p.i += n
-				continue
+			v, err := strconv.ParseUint(p.s[p.i+2:p.i+6], 16, 16)
+			if err != nil {
+				break
 			}
+			r, n = rune(v), 6
 		}
-		break
+		if !identRune(r, b.Len() == 0) {
+			break
+		}
+		b.WriteRune(r)
+		p.i += n
 	}
 	return b.String()
+}
+
+// identRune 报告 r 能不能出现在标识符里（first 为真时是第一个字符）。
+func identRune(r rune, first bool) bool {
+	if r == '$' || r == '_' || unicode.In(r, unicode.Lu, unicode.Ll, unicode.Lt, unicode.Lm, unicode.Lo, unicode.Nl) {
+		return true
+	}
+	return !first && (r == '\u200c' || r == '\u200d' || unicode.In(r, unicode.Mn, unicode.Mc, unicode.Nd, unicode.Pc))
 }
 
 func (p *json5Parser) str() (string, error) {
