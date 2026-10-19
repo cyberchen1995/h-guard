@@ -250,6 +250,38 @@ func managedProblem(m hermesState, path string, timeout int) string {
 	return ""
 }
 
+// hermesSteerNote 说明 display.busy_input_mode: steer 的缺口：网关在一轮运行时收到的消息走「忙」的分支，不经过
+// pre_gateway_dispatch；steer 把它直接加进正在运行的这一轮（接在工具结果之后），没有插件 hook 能看到它。
+const hermesSteerNote = "display.busy_input_mode is steer: a message sent on a messaging platform while a turn is running is added to that turn without passing any plugin hook, so h-guard does not check it (with interrupt, the default, or queue it becomes the next turn and gets a warning there)"
+
+// hermesBusyMode 是网关处理「一轮运行时收到的消息」的方式（gateway 的 _load_busy_input_mode）：
+// $HERMES_GATEWAY_BUSY_INPUT_MODE，否则 config.yaml 的 display.busy_input_mode（托管范围覆盖用户的配置）；认不出或
+// 没有时是默认的 interrupt。
+func hermesBusyMode(t Target) string {
+	mode := strings.TrimSpace(t.Getenv("HERMES_GATEWAY_BUSY_INPUT_MODE"))
+	for _, path := range []string{HermesManagedConfig(t), HermesConfig(t)} {
+		if mode != "" {
+			break
+		}
+		b, err := os.ReadFile(path)
+		if path == "" || err != nil {
+			continue
+		}
+		var doc yaml.Node
+		if yaml.Unmarshal(b, &doc) != nil || len(doc.Content) == 0 {
+			continue
+		}
+		if n := mapValue(mapValue(doc.Content[0], "display"), "busy_input_mode"); n != nil && n.Kind == yaml.ScalarNode {
+			mode = strings.TrimSpace(n.Value)
+		}
+	}
+	switch mode = strings.ToLower(mode); mode {
+	case "queue", "steer":
+		return mode
+	}
+	return "interrupt"
+}
+
 // HermesConfig 是 Hermes 的配置文件 $HERMES_HOME/config.yaml。
 func HermesConfig(t Target) string { return filepath.Join(HermesHome(t), "config.yaml") }
 

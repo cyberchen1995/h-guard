@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -211,6 +212,34 @@ func TestHermesTimeoutValues(t *testing.T) {
 	os.WriteFile(cfg, []byte("plugins: {enabled: [h-guard], hook_callback_timeout: nope}\n"), 0o600)
 	if lines := strings.Join(Inspect(tg, "hermes"), "\n"); !strings.Contains(lines, "not a number") {
 		t.Errorf("status:\n%s", lines)
+	}
+}
+
+// TestHermesBusySteer：display.busy_input_mode: steer 时 install 与 status 说明运行中收到的消息不经检查；
+// $HERMES_GATEWAY_BUSY_INPUT_MODE 优先，托管范围覆盖用户的配置。
+func TestHermesBusySteer(t *testing.T) {
+	tg := target(t, "linux")
+	apply(t, hermesPlan(t, tg, false))
+	steer := func() bool {
+		return strings.Contains(strings.Join(Inspect(tg, "hermes"), "\n"), "busy_input_mode is steer")
+	}
+	if steer() {
+		t.Error("note with the default interrupt")
+	}
+	os.WriteFile(HermesConfig(tg), []byte("plugins: {enabled: [h-guard]}\ndisplay: {busy_input_mode: Steer}\n"), 0o600)
+	if !steer() || !slices.Contains(ExtNotes(tg, "hermes"), hermesSteerNote) {
+		t.Errorf("no note for steer:\n%s", strings.Join(Inspect(tg, "hermes"), "\n"))
+	}
+	tg.Getenv = env(map[string]string{"HERMES_GATEWAY_BUSY_INPUT_MODE": "queue"})
+	if steer() {
+		t.Error("the environment variable does not win")
+	}
+	managed := filepath.Join(tg.Home, "managed")
+	os.MkdirAll(managed, 0o700)
+	os.WriteFile(filepath.Join(managed, "config.yaml"), []byte("display: {busy_input_mode: interrupt}\n"), 0o600)
+	tg.Getenv = env(map[string]string{"HERMES_MANAGED_DIR": managed})
+	if steer() {
+		t.Error("the managed scope does not win")
 	}
 }
 

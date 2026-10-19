@@ -54,10 +54,15 @@ var extHarnesses = map[string]struct {
 func ExtNotes(t Target, harness string) []string {
 	h := extHarnesses[harness]
 	if harness == "hermes" {
+		var notes []string
 		// 只有发布日期（YYYY.M.D）能与 HermesWritten 比较；只读到语义化的版本号时不提醒
-		if v := harnessVersion(t, h.cmd); v != "" && !calver(v) {
-			return nil
+		if v := harnessVersion(t, h.cmd); v == "" || calver(v) {
+			notes = harnessVersionNote(t, h.cmd, h.product, h.written, h.major)
 		}
+		if hermesBusyMode(t) == "steer" {
+			notes = append(notes, hermesSteerNote)
+		}
+		return notes
 	}
 	return harnessVersionNote(t, h.cmd, h.product, h.written, h.major)
 }

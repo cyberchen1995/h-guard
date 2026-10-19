@@ -468,7 +468,13 @@ Hermes differences:
 - **Not covered.** MCP tools and connectors (`mcp__…`, `connectors__…`) pass,
   as on the other harnesses. Gateway events that Hermes generates itself
   (background-process notifications) skip `pre_gateway_dispatch`; their text
-  is process output, which `transform_terminal_output` checks.
+  is process output, which `transform_terminal_output` checks. A message sent
+  while the session already has a turn running also skips it: Hermes handles
+  it on its busy path (`display.busy_input_mode`). With `interrupt`, the
+  default, or `queue` it becomes the next turn and gets a warning there
+  (`pre_llm_call`) instead of being blocked; with `steer` it is added to the
+  running turn and no plugin hook sees it, which `install` and `status` point
+  out.
 
 When h-guard cannot run, the plugin asks before a tool call (and blocks it when
 Hermes would approve it without asking), and lets tool output and prompts
