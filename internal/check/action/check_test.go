@@ -765,6 +765,30 @@ func TestFileActionsOnProtectedPaths(t *testing.T) {
 	}
 }
 
+// TestCustomDirCommandsAsk：PI_CODING_AGENT_DIR、DSH_HOME 设到自定义目录时，命令里直接写出那个目录下的 h-guard 扩展、
+// 设置文件也请求确认（exec 模式的占位符取 Check.Paths 的值），用户要求过也一样；只读的命令不打断。
+func TestCustomDirCommandsAsk(t *testing.T) {
+	for _, judgeOn := range []bool{false, true} {
+		c := newCheck(t, judgeOn, action.Judge{Backend: &fakeBackend{answers: with(low(), action.SignalRequested, 1.0)}})
+		c.Paths = paths.Env{Home: "/home/user", Lexical: true,
+			Vars: map[string]string{rules.VarPiAgentDir: "/opt/pi", rules.VarDSHHome: "/home/user/dsh"}}
+		for _, cmd := range []string{"rm /opt/pi/extensions/h-guard.js", "echo '{}' > /opt/pi/settings.json", "sed -i d ~/dsh/cordis.patch.yml"} {
+			v := run(t, c, event([]guard.Request{user("remove the h-guard extension")}, cmd))
+			if v.Decision != guard.DecisionAsk || len(v.Findings) == 0 || v.Findings[0].Rule != "guard_tampering" {
+				t.Errorf("judge %v, %q = %+v", judgeOn, cmd, v)
+			}
+		}
+		if v := run(t, c, event(nil, "cat /opt/pi/extensions/h-guard.js")); v.Decision != guard.DecisionPass {
+			t.Errorf("judge %v, reading the extension = %+v", judgeOn, v)
+		}
+	}
+	// 没有设置时同样的命令不因 guard_tampering 打断
+	c := newCheck(t, false, action.Judge{})
+	if v := run(t, c, event(nil, "rm /opt/pi/extensions/h-guard.js")); v.Decision != guard.DecisionPass {
+		t.Errorf("unset PI_CODING_AGENT_DIR = %+v", v)
+	}
+}
+
 func TestProtectedFileReasonNamesThePath(t *testing.T) {
 	c := fileCheck(t, false, nil)
 	v := run(t, c, fileEvent(guard.ActionFileWrite, "~/.claude/settings.json", ""))

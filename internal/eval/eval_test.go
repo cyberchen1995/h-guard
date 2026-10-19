@@ -766,7 +766,7 @@ func TestPowerShellCorpusLocalRules(t *testing.T) {
 			if !r.AppliesTo(guard.ActionExec) {
 				continue
 			}
-			res, err := r.MatchExec(context.Background(), e)
+			res, err := r.MatchExec(context.Background(), e, rules.ExampleEnv)
 			if err != nil {
 				t.Fatal(err)
 			}
