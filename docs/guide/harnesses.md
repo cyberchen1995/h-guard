@@ -523,8 +523,9 @@ OpenClaw differences:
   again, where it is checked. Its output is scanned as file content.
 - **Processes.** Text written or pasted into a running process (`process`
   with `write` or `paste`) is checked as a POSIX command and always asks;
-  submitting pending input (`submit`), closing a process's input (`write`
-  with `eof`), sending keys, killing or removing a process asks.
+  submitting pending input (`submit`, or writing only line breaks), closing a
+  process's input (`write` with `eof`), sending keys, killing or removing a
+  process asks.
 
 ### Channel notifications
 

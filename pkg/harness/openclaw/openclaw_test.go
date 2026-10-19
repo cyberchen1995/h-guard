@@ -169,6 +169,22 @@ func TestAsks(t *testing.T) {
 	if _, err := a.Parse(call("process", map[string]any{"action": "write", "sessionId": "p1", "data": "", "eof": true})); !errors.As(err, &ut) {
 		t.Errorf("process write eof: %v, want UnknownToolError", err)
 	}
+	// 只写入换行：与 submit 一样执行之前写入的输入
+	for _, in := range []map[string]any{
+		{"action": "write", "sessionId": "p1", "data": "\n"},
+		{"action": "write", "sessionId": "p1", "data": "\r\n"},
+		{"action": "write", "sessionId": "p1", "data": " \r"},
+		{"action": "paste", "sessionId": "p1", "text": "\n\n"},
+	} {
+		if _, err := a.Parse(call("process", in)); !errors.As(err, &ut) {
+			t.Errorf("process %v: %v, want UnknownToolError", in, err)
+		}
+	}
+	for _, in := range []map[string]any{{"action": "write", "sessionId": "p1", "data": ""}, {"action": "write", "sessionId": "p1", "data": "  "}} {
+		if _, err := a.Parse(call("process", in)); !errors.Is(err, harness.ErrNoAction) {
+			t.Errorf("process %v: %v, want ErrNoAction", in, err)
+		}
+	}
 }
 
 func must(_ guard.Event, err error) error { return err }

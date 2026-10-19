@@ -395,6 +395,9 @@ func actions(tool string, in params, raw json.RawMessage, platform string) ([]gu
 			if in.Action == "write" && in.EOF { // 关闭 stdin 会让进程执行还没换行的输入
 				return nil, errUnknownTool
 			}
+			if strings.ContainsAny(text, "\r\n") { // 只有换行（与空白）：与 submit 一样提交之前写入还没执行的输入
+				return nil, errUnknownTool
+			}
 			return nil, ErrNoAction
 		}
 		// submit（发送回车，执行之前写入还没提交的输入）、send-keys、kill、remove 与读不懂的子命令
