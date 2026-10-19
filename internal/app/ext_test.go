@@ -377,3 +377,27 @@ func TestInstallOpenClawVerifies(t *testing.T) {
 		t.Errorf("status without openclaw:\n%s", out)
 	}
 }
+
+// TestOpenClawIncludeExecProtected：配置用 $include 引入状态目录以外的文件（OPENCLAW_INCLUDE_ROOTS 允许的目录）时，
+// 命令改它同样请求确认；同一目录里别的文件不受影响。
+func TestOpenClawIncludeExecProtected(t *testing.T) {
+	e := newEnv(t)
+	root := t.TempDir()
+	e.vars["OPENCLAW_INCLUDE_ROOTS"] = root
+	frag := filepath.Join(root, "plugins.json")
+	os.WriteFile(frag, []byte(`{}`), 0o600)
+	os.MkdirAll(filepath.Join(e.home, ".openclaw"), 0o700)
+	os.WriteFile(filepath.Join(e.home, ".openclaw", "openclaw.json"), []byte(`{"plugins": {"$include": "`+frag+`"}}`), 0o600)
+	for cmd, want := range map[string]string{
+		"sed -i 's/true/false/' " + frag:                   "ask",
+		"echo '{}' > " + frag:                              "ask",
+		"sed -i 's/a/b/' " + filepath.Join(root, "x.json"): "pass",
+		"cat " + frag:                                      "pass",
+	} {
+		data := map[string]any{"toolName": "exec", "toolCallId": "c", "params": map[string]string{"command": cmd}, "platform": "linux"}
+		out, errs, code := e.run(extReq("openclaw", "before_tool_call", data), "hook", "openclaw", "--event", "before_tool_call")
+		if got := extAction(t, out); code != 0 || got != want {
+			t.Errorf("%s: %s, want %s (%s %s)", cmd, got, want, out, errs)
+		}
+	}
+}

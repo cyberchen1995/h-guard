@@ -93,13 +93,14 @@ minor releases. Every such change is recorded in this file.
   denials and warnings to chats with `openclaw message send`.
 - The locked `guard_tampering` rule also protects `openclaw.json` (including
   `OPENCLAW_CONFIG_PATH`, `OPENCLAW_STATE_DIR`, named profiles and the
-  pre-rename `clawdbot.json`, the files it pulls in with `$include` and
-  `.json5` files next to it), the `~/.openclaw` and `~/.clawdbot`
+  pre-rename `clawdbot.json`, the files it pulls in with `$include`, wherever
+  they are, for file tools and shell commands alike, and `.json5` files next
+  to it), the `~/.openclaw` and `~/.clawdbot`
   directories, and OpenClaw commands that change plugin settings or disable
   the plugin, reset or uninstall OpenClaw's configuration and state
   (`openclaw reset`, `openclaw uninstall --state`/`--all`, `--reset` on
-  `onboard`, `setup` and `gateway`). Path patterns can use `{openclaw_config}` and `{openclaw_includes}`
-  (one pattern per included file).
+  `onboard`, `setup` and `gateway`). Path and `exec` patterns can use `{openclaw_config}` and
+  `{openclaw_includes}` (matching any included file).
 
 ### Public packages
 
