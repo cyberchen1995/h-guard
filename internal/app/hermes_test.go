@@ -41,7 +41,7 @@ func TestHermesHooks(t *testing.T) {
 		{"pre_tool_call", tool("read_file", map[string]string{"path": "/w/.env"}, ""), "deny"},
 		{"pre_tool_call", tool("web_search", map[string]string{"query": "x"}, "prompt"), "pass"},
 		{"pre_tool_call", tool("execute_code", map[string]string{"code": "print(1)"}, "prompt"), "ask"},
-		{"post_gateway_admission", hermesReq("post_gateway_admission", map[string]any{"text": key, "platform": "telegram"}, nil), "deny"},
+		{"pre_gateway_dispatch", hermesReq("pre_gateway_dispatch", map[string]any{"text": key, "platform": "telegram"}, nil), "deny"},
 		{"pre_llm_call", hermesReq("pre_llm_call", map[string]any{"text": key, "platform": "cli"}, nil), "warn"},
 		{"transform_tool_result", hermesReq("transform_tool_result", map[string]any{"tool_name": "terminal", "args": map[string]string{"command": "cat .env"}},
 			map[string]any{"content": `{"output":"aws_access_key_id = AKIAIOSFODNN7EXAMPL0","exit_code":0}`}), "deny"},

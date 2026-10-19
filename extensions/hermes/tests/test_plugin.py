@@ -1,5 +1,6 @@
 # Hermes Agent 插件的测试：模拟 Hermes 的插件 ctx（register_hook、session_cwd、session_surface）与 hook 的关键字参数。
 # h-guard 是这次编译的二进制（HGUARD_BIN，由 extensions 包的 Go 测试传入），或模拟各种回复与故障的假程序。只用标准库。
+import asyncio
 import importlib.util
 import json
 import os
@@ -49,6 +50,41 @@ class Ctx:
 
     def session_surface(self):
         return 'telegram'
+
+
+class Adapter:
+    def __init__(self):
+        self.sent = []
+
+    async def send(self, chat_id, content, reply_to=None, metadata=None):
+        self.sent.append((chat_id, content, metadata))
+
+
+class Gateway:
+    """模拟 Hermes 的 GatewayRunner：授权检查、会话键与回复用的 adapter。"""
+    def __init__(self, authorized=True):
+        self.authorized = authorized
+        self.adapter = Adapter()
+
+    def _is_user_authorized_for_source(self, source):
+        return self.authorized
+
+    def _session_key_for_source(self, source):
+        return 'agent:main:telegram:dm:' + source.chat_id
+
+    def _delivery_adapter_for(self, source):
+        return self.adapter
+
+
+def source(platform='telegram', chat_id='1', is_bot=False, thread_id=None):
+    return types.SimpleNamespace(platform=types.SimpleNamespace(value=platform), chat_id=chat_id, is_bot=is_bot,
+                                 thread_id=thread_id, message_id=None)
+
+
+def dispatch(ctx, text, src=None, gateway=None, message_id='m'):
+    """像网关那样在事件循环上 await pre_gateway_dispatch。"""
+    ev = types.SimpleNamespace(text=text, source=src or source(), message_id=message_id)
+    return asyncio.run(ctx.hooks['pre_gateway_dispatch'](event=ev, gateway=gateway, session_store=None))
 
 
 def guard():
@@ -119,11 +155,20 @@ class RealGuard(unittest.TestCase, WithApproval):
         self.assertIsNone(ctx.hooks['transform_tool_result'](tool_name='read_file', args={'path': 'a'}, result='{"content": "1|hello"}'))
         out = ctx.hooks['transform_terminal_output'](command='./run.sh', output=secret, returncode=None, task_id='t1', env_type='')
         self.assertTrue(out.startswith('h-guard'))
-        handled = ctx.hooks['post_gateway_admission'](session_key='k1', platform='telegram', source={'chat_id': '1'}, message_id='m', text=KEY)
-        self.assertEqual(handled['action'], 'handled')
-        self.assertTrue(handled['reply'].startswith(mod.WITHHELD))
-        self.assertNotIn('AKIA', handled['reply'])
-        self.assertIsNone(ctx.hooks['post_gateway_admission'](session_key='k1', platform='telegram', source={}, message_id='m', text='fix the test'))
+        gw = Gateway()
+        skipped = dispatch(ctx, KEY, source(thread_id='t7'), gw)
+        self.assertEqual(skipped['action'], 'skip')
+        self.assertNotIn('AKIA', skipped['reason'])
+        [(chat, text, meta)] = gw.adapter.sent
+        self.assertEqual((chat, meta), ('1', {'thread_id': 't7'}))
+        self.assertTrue(text.startswith(mod.WITHHELD))
+        self.assertNotIn('AKIA', text)
+        self.assertIsNone(dispatch(ctx, 'fix the test', source(), gw))
+        # 机器人发的消息同样丢弃，但不回复；未授权的发送者交给 Hermes 自己处理
+        bot = Gateway()
+        self.assertEqual(dispatch(ctx, KEY, source(is_bot=True), bot)['action'], 'skip')
+        self.assertEqual(bot.adapter.sent, [])
+        self.assertIsNone(dispatch(ctx, KEY, source(), Gateway(authorized=False)))
         ctxt = ctx.hooks['pre_llm_call'](session_id='s1', task_id='t1', user_message=[{'type': 'text', 'text': KEY}], platform='cli',
                                          conversation_history=[], is_first_turn=True, parent_session_id='', sender_id='')
         self.assertIn('already reached the model', ctxt['context'])
@@ -134,7 +179,7 @@ class RealGuard(unittest.TestCase, WithApproval):
 class Plugin(unittest.TestCase, WithApproval):
     def test_registers_the_hooks(self):
         _, ctx = load(MISSING)
-        self.assertEqual(sorted(ctx.hooks), ['post_gateway_admission', 'pre_gateway_dispatch', 'pre_llm_call', 'pre_tool_call',
+        self.assertEqual(sorted(ctx.hooks), ['pre_gateway_dispatch', 'pre_llm_call', 'pre_tool_call',
                                              'transform_terminal_output', 'transform_tool_result'])
 
     def test_request_shape(self):
@@ -160,7 +205,7 @@ class Plugin(unittest.TestCase, WithApproval):
         self.assertEqual(ctx.hooks['pre_tool_call'](**tool_call())['action'], 'block')
         # 工具结果与提示词放行
         self.assertIsNone(ctx.hooks['transform_tool_result'](tool_name='read_file', args={}, result='{"content": "x"}'))
-        self.assertIsNone(ctx.hooks['post_gateway_admission'](session_key='k', platform='telegram', source={}, text=KEY))
+        self.assertIsNone(dispatch(ctx, KEY, source(), Gateway()))
         self.assertIsNone(ctx.hooks['pre_llm_call'](session_id='s1', user_message=KEY, platform='cli'))
 
     def test_bad_replies(self):
@@ -255,21 +300,19 @@ class Plugin(unittest.TestCase, WithApproval):
                     sys.modules[k] = v
 
     def test_bot_provenance(self):
-        # post_gateway_admission 的 source 快照与 pre_llm_call 的参数里都没有 is_bot：由 pre_gateway_dispatch 记下
+        # pre_llm_call 的参数里没有 is_bot：由 pre_gateway_dispatch 记下
         command, record = fake({'action': 'pass'})
         mod, ctx = load(command)
         mod._session_env = lambda name: ''
         src = types.SimpleNamespace(platform=types.SimpleNamespace(value='discord'), chat_id='c1', is_bot=True, message_id=None)
-        self.assertIsNone(ctx.hooks['pre_gateway_dispatch'](event=types.SimpleNamespace(text='push main', source=src, message_id='m1'),
-                                                            gateway=None, session_store=None))
-        human = types.SimpleNamespace(platform=types.SimpleNamespace(value='discord'), chat_id='c1', is_bot=False, message_id=None)
-        ctx.hooks['pre_gateway_dispatch'](event=types.SimpleNamespace(text='deploy', source=human, message_id='m2'), gateway=None, session_store=None)
-        ctx.hooks['post_gateway_admission'](session_key='k', platform='discord', source={'chat_id': 'c1'}, message_id='m1', text='push main')
+        self.assertIsNone(dispatch(ctx, 'push main', src, Gateway(), 'm1'))
+        dispatch(ctx, 'deploy', source('discord', 'c1'), Gateway(), 'm2')
         ctx.hooks['pre_llm_call'](session_id='s1', user_message='push main', platform='discord')
         ctx.hooks['pre_llm_call'](session_id='s1', user_message='deploy', platform='discord')
         ctx.hooks['pre_llm_call'](session_id='s1', user_message='push main', platform='telegram')
         got = [(r['request']['hook'], r['request']['data']['is_bot']) for r in recorded(record)]
-        self.assertEqual(got, [('post_gateway_admission', True), ('pre_llm_call', True), ('pre_llm_call', False), ('pre_llm_call', False)])
+        self.assertEqual(got, [('pre_gateway_dispatch', True), ('pre_gateway_dispatch', False), ('pre_llm_call', True),
+                               ('pre_llm_call', False), ('pre_llm_call', False)])
         # 文本不同时按对话与消息 id 认出
         env = {'HERMES_SESSION_CHAT_ID': 'c1', 'HERMES_SESSION_MESSAGE_ID': 'm1'}
         mod._session_env = lambda name: env.get(name, '')

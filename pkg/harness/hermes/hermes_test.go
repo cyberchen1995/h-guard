@@ -49,7 +49,7 @@ func TestConformance(t *testing.T) {
 	harnesstest.Run(t, a, []harnesstest.Case{
 		{Name: "terminal", Input: pre("terminal", map[string]string{"command": "git push"}), WantKind: guard.EventAction, Check: checkReply},
 		{Name: "result", Input: post("read_file", map[string]string{"path": "a"}, `{"content":"x"}`), WantKind: guard.EventToolOutput, Check: checkReply},
-		{Name: "admission", Input: prompt(hermes.HookAdmission, "hi", "telegram", ""), WantKind: guard.EventPrompt, Check: checkReply},
+		{Name: "dispatch", Input: prompt(hermes.HookDispatch, "hi", "telegram", ""), WantKind: guard.EventPrompt, Check: checkReply},
 		{Name: "pre_llm_call", Input: prompt(hermes.HookPreLLMCall, "hi", "cli", ""), WantKind: guard.EventPrompt, Check: checkReply},
 	})
 }
@@ -191,11 +191,11 @@ func TestApprovalCaps(t *testing.T) {
 	}
 }
 
-// TestPrompts：post_gateway_admission 能挡下提示词，pre_llm_call 不能；子 agent、定时任务、webhook 与机器人的消息是自动消息。
+// TestPrompts：pre_gateway_dispatch 能挡下提示词，pre_llm_call 不能；子 agent、定时任务、webhook 与机器人的消息是自动消息。
 func TestPrompts(t *testing.T) {
-	ev, err := a.Parse(prompt(hermes.HookAdmission, "deploy", "telegram", ""))
+	ev, err := a.Parse(prompt(hermes.HookDispatch, "deploy", "telegram", ""))
 	if err != nil || ev.Text != "deploy" || ev.Requests[0].Source != guard.SourceUser || !a.CapsFor(ev).Block {
-		t.Fatalf("admission: %+v %v", ev, err)
+		t.Fatalf("dispatch: %+v %v", ev, err)
 	}
 	ev, err = a.Parse(prompt(hermes.HookPreLLMCall, "deploy", "cli", ""))
 	if c := a.CapsFor(ev); err != nil || c.Block || !c.Warn {
@@ -204,7 +204,7 @@ func TestPrompts(t *testing.T) {
 	for _, in := range [][]byte{
 		prompt(hermes.HookPreLLMCall, "task", "subagent", "parent-1"), prompt(hermes.HookPreLLMCall, "task", "cli", "parent-1"),
 		prompt(hermes.HookPreLLMCall, "nightly", "cron", ""), prompt(hermes.HookPreLLMCall, "payload", "webhook", ""),
-		req(hermes.HookAdmission, map[string]any{"text": "hi", "platform": "discord", "is_bot": true}, nil),
+		req(hermes.HookDispatch, map[string]any{"text": "hi", "platform": "discord", "is_bot": true}, nil),
 		req(hermes.HookPreLLMCall, map[string]any{"text": "push main", "platform": "discord", "is_bot": true}, nil),
 	} {
 		if ev, err := a.Parse(in); err != nil || ev.Requests[0].Source != guard.SourceAutomated {

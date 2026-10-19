@@ -8,5 +8,4 @@ provides_hooks:
   - transform_tool_result
   - transform_terminal_output
   - pre_gateway_dispatch
-  - post_gateway_admission
   - pre_llm_call

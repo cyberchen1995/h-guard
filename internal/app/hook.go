@@ -46,7 +46,7 @@ var eventKinds = map[string]guard.EventKind{
 	"tool_call": guard.EventAction, "tool_result": guard.EventToolOutput, "input": guard.EventPrompt, // pi、omp
 	"tools/pre-execute": guard.EventAction, "tools/post-execute": guard.EventToolOutput, "agent/pre-step": guard.EventPrompt, // dsh
 	"pre_tool_call": guard.EventAction, "transform_tool_result": guard.EventToolOutput, "transform_terminal_output": guard.EventToolOutput, // hermes
-	"post_gateway_admission": guard.EventPrompt, "pre_llm_call": guard.EventPrompt,
+	"pre_gateway_dispatch": guard.EventPrompt, "pre_llm_call": guard.EventPrompt,
 }
 
 // notifier 由能把结论发到消息渠道的 adapter 实现（Hermes）：WithNotify 返回按配置 harnesses.<name>.notify 发通知的副本。

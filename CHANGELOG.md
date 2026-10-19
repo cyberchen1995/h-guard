@@ -75,7 +75,8 @@ minor releases. Every such change is recorded in this file.
   checked on `pre_tool_call` (`ask` goes to Hermes's own approval, keyed to the
   one call; it becomes `deny` when Hermes would approve without asking), tool
   results and background process output are replaced on `deny`, prompts from
-  messaging platforms are blocked after admission, and other prompts get a
+  messaging platforms are blocked when the gateway receives them
+  (`pre_gateway_dispatch`), and other prompts get a
   warning on `pre_llm_call`, since they cannot be blocked there. The plugin
   was written against Hermes 2026.9.24 and smoke-tested by driving its hooks
   through Hermes's plugin manager, not yet with a model.

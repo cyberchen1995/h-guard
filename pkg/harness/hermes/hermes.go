@@ -1,6 +1,6 @@
 // Package hermes 是 Hermes Agent 的 adapter。h-guard 以 Python 插件接入 Hermes：插件在 pre_tool_call、
-// transform_tool_result、transform_terminal_output、post_gateway_admission 与 pre_llm_call 五个 hook 里按扩展接入
-// 协议 v1 把事件交给 h-guard hook hermes，再把回复翻译成 Hermes 的指令（block、approve、替换工具结果、consume 消息、
+// transform_tool_result、transform_terminal_output、pre_gateway_dispatch 与 pre_llm_call 五个 hook 里按扩展接入
+// 协议 v1 把事件交给 h-guard hook hermes，再把回复翻译成 Hermes 的指令（block、approve、替换工具结果、skip 消息、
 // 注入上下文）。
 //
 // 请求的 data 是 hook 的参数里能序列化的部分，另加插件在 Hermes 进程里读到的状态：
@@ -11,10 +11,10 @@
 //     （通常是 JSON）；
 //   - transform_terminal_output：后台进程的输出（前台命令的输出由 transform_tool_result 检查），{command, returncode,
 //     env_type}，result 是 {content}；
-//   - post_gateway_admission：消息平台上通过授权的消息，{text, platform, is_bot}；
+//   - pre_gateway_dispatch：消息平台上的消息（只检查已授权的发送者），{text, platform, is_bot}；
 //   - pre_llm_call：每一轮交给模型之前的用户消息，{text, platform, parent_session_id, is_bot}。这一步挡不住提示词，
-//     只能给模型补一段说明。两个提示词 hook 的参数里都没有消息是否由机器人发出，is_bot 由插件在 pre_gateway_dispatch
-//     （只观察）里记下。
+//     只能给模型补一段说明。pre_llm_call 的参数里没有消息是否由机器人发出，is_bot 由插件在 pre_gateway_dispatch
+//     里记下。
 //
 // 导入本包即注册名为 hermes 的 adapter。
 package hermes
@@ -45,7 +45,7 @@ const (
 	HookPreToolCall    = "pre_tool_call"
 	HookToolResult     = "transform_tool_result"
 	HookTerminalOutput = "transform_terminal_output"
-	HookAdmission      = "post_gateway_admission"
+	HookDispatch       = "pre_gateway_dispatch"
 	HookPreLLMCall     = "pre_llm_call"
 )
 
@@ -101,7 +101,7 @@ func decisionBit(d guard.Decision) uint8 {
 }
 
 // Capabilities：pre_tool_call 返回 block 阻止工具调用（模型读到说明），返回 approve 交给 Hermes 的人工确认（CLI
-// 提示，消息平台上的确认卡片与 /approve、/deny）；post_gateway_admission 返回 handled 丢弃消息平台上的提示词，并把
+// 提示，消息平台上的确认卡片与 /approve、/deny）；pre_gateway_dispatch 返回 skip 丢弃消息平台上的提示词，插件把
 // 说明作为回复发回这个对话；pre_llm_call 挡不住提示词，只能把提示作为上下文交给模型；transform_tool_result 与
 // transform_terminal_output 返回字符串替换模型看到的结果。Hermes 没有向用户显示提示的接口，动作与工具输出的 warn
 // 不声明。approve 实际能否请人确认见 CapsFor。
@@ -133,7 +133,7 @@ func (a Adapter) CapsFor(ev guard.Event) harness.EventCaps {
 	case guard.EventAction:
 		caps.Ask = n.Approval == approvalPrompt || n.Approval == approvalBlocked
 	case guard.EventPrompt:
-		if n.Hook != HookAdmission {
+		if n.Hook != HookDispatch {
 			caps.Block = false
 		}
 	}
@@ -231,7 +231,7 @@ func (Adapter) Parse(raw []byte) (guard.Event, error) {
 		// 后台进程的输出（process_manage 的 poll、wait、log 与完成通知）：之后写进 stdin 的内容也会产生输出，
 		// 看不出读没读文件，按文件内容扫描
 		ev.Kind, ev.Tool, ev.Text, ev.FileContent = guard.EventToolOutput, "process_manage", resultText(req.Result), true
-	case HookAdmission, HookPreLLMCall:
+	case HookDispatch, HookPreLLMCall:
 		var d promptData
 		if err := json.Unmarshal(req.Data, &d); err != nil {
 			return guard.Event{}, fmt.Errorf("hermes: %s data: %w", req.Hook, err)

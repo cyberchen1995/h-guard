@@ -378,7 +378,7 @@ not use them.
 | `pre_tool_call` | checks the actions (`terminal`; `read_file`, `search_files`, `write_file`; `patch` in replace mode and the files of a V4A patch; `process_manage` input; `execute_code` asks); `deny` returns `block` and the model reads the reason; `ask` returns `approve`, which goes to Hermes's own approval: the CLI prompt, or the approval card with `/approve` and `/deny` on messaging platforms |
 | `transform_tool_result` | scans every tool result except `process_manage`; `deny` replaces it with h-guard's reason |
 | `transform_terminal_output` | scans the output of background processes (`process_manage` poll, wait and log, and completion and watch notifications); `deny` replaces it |
-| `post_gateway_admission` | scans a message from a messaging platform after Hermes has authorized it; `deny` drops it and replies to the chat with the reason |
+| `pre_gateway_dispatch` | scans a message from a messaging platform when the gateway receives it, before the turn starts (only from senders Hermes authorizes); `deny` drops it (`skip`) and replies to the chat with the reason, except to bots |
 | `pre_llm_call` | scans the user message of every turn, including the CLI, TUI and Desktop; it cannot block, so a `deny` reaches the model as a warning (see below) |
 
 Hermes differences:
@@ -397,9 +397,7 @@ Hermes differences:
   `approvals.*_mode: approve` that applies, Hermes would approve without
   asking; the plugin reads this from Hermes before each call, and h-guard then
   turns the `ask` into `deny` (`policy.when_ask_unsupported`, recorded as
-  `ask_unsupported`). When the plugin cannot tell, for example under
-  `plugins.isolation: host`, where it runs in a separate process, it does the
-  same.
+  `ask_unsupported`). When the plugin cannot tell, it does the same.
 - **Prompts in the CLI cannot be blocked.** No plugin hook can hold back a
   prompt typed into the CLI, TUI or Desktop. There h-guard turns a `deny` into
   a warning, recorded as `prompt_not_blocked`: the prompt has already reached
@@ -414,9 +412,9 @@ Hermes differences:
 - **Prompt origin.** A sub-agent's task (`delegate_task`), a cron job's prompt,
   a webhook payload and a message from another bot count as automated;
   everything else counts as yours. Hermes marks bot messages only on the
-  event that `pre_gateway_dispatch` sees, so the plugin also registers that
-  hook, only to record them; a person's message with the same text on the
-  same platform then counts as automated too. Messages that a plugin injects into a
+  event that `pre_gateway_dispatch` sees, so the plugin records them there for
+  `pre_llm_call`; a person's message with the same text on the same platform
+  then counts as automated too. Messages that a plugin injects into a
   session cannot be told apart and count as yours.
 - **Shell and paths.** `terminal` runs a bash-compatible shell everywhere (Git
   Bash on Windows), so commands are checked as POSIX. The working directory is
@@ -453,11 +451,9 @@ Hermes differences:
   wins, so a plugin that loads before h-guard and rewrites a result keeps
   h-guard's replacement from applying.
 - **Not covered.** MCP tools and connectors (`mcp__…`, `connectors__…`) pass,
-  as on the other harnesses. Slash commands and the replies Hermes intercepts
-  before admission (`/approve`, `/deny`, answers to a pending question) do not
-  go through `post_gateway_admission`. Under `plugins.isolation: host` the
-  plugin cannot see which chat a session belongs to, so notifications go to
-  `to` only.
+  as on the other harnesses. Gateway events that Hermes generates itself
+  (background-process notifications) skip `pre_gateway_dispatch`; their text
+  is process output, which `transform_terminal_output` checks.
 
 When h-guard cannot run, the plugin asks before a tool call (and blocks it when
 Hermes would approve it without asking), and lets tool output and prompts
