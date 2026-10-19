@@ -216,6 +216,11 @@ func (a Adapter) actions(tool, source string, in args) ([]guard.Action, error) {
 		}
 		return []guard.Action{act}, nil
 	}
+	// 插件标为 mcp 的工具先于自带工具的名字处理：服务 apply 的工具 patch 就叫 apply_patch，同名时 MCP 工具覆盖自带工具，
+	// 按自带工具解析参数会放行它
+	if source == "mcp" {
+		return nil, errUnknownTool
+	}
 	switch tool {
 	case "bash":
 		return one(extadapter.Exec(in.Command, a.shellOf()))
@@ -228,7 +233,7 @@ func (a Adapter) actions(tool, source string, in args) ([]guard.Action, error) {
 	case "apply_patch":
 		return applypatch.Actions(in.PatchText)
 	}
-	if builtinNoAction[tool] && source != "mcp" || source == "opencode" {
+	if builtinNoAction[tool] || source == "opencode" {
 		return nil, ErrNoAction
 	}
 	return nil, errUnknownTool

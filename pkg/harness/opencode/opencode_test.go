@@ -140,6 +140,11 @@ func TestUnknownTool(t *testing.T) {
 	if !errors.As(err, &ut) {
 		t.Errorf("plan_exit from an MCP server: %v", err)
 	}
+	// 能读出动作的自带工具名同样如此（服务 apply 的工具 patch）
+	_, err = a.Parse(beforeFrom("apply_patch", "mcp", map[string]string{"patchText": "*** Begin Patch\n*** Add File: a.txt\n+x\n*** End Patch"}))
+	if !errors.As(err, &ut) {
+		t.Errorf("apply_patch from an MCP server: %v", err)
+	}
 	if _, err := a.Parse(beforeFrom("glob", "?", map[string]string{"pattern": "*"})); !errors.Is(err, harness.ErrNoAction) {
 		t.Errorf("glob with an unknown source: %v", err)
 	}
