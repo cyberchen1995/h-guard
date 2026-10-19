@@ -124,11 +124,17 @@ func refsOf(tool string, raw json.RawMessage) []string {
 	return refs
 }
 
-// refReads 把工具参数里引用的本地文件换成读文件的动作（去掉重复的）。
+// refReads 把工具参数里引用的本地文件换成读文件的动作（去掉重复的）。view_image 先去掉开头的一个 @（提及文件的
+// 写法，@/home/u/x.png 是 /home/u/x.png；2026.10.4 的 image-tool：去掉首尾空白后去掉 @，再去掉空白）。
 func refReads(tool string, raw json.RawMessage, platform string) []guard.Action {
 	var acts []guard.Action
 	seen := map[string]bool{}
 	for _, ref := range refsOf(tool, raw) {
+		if tool == "view_image" {
+			if s := strings.TrimSpace(ref); strings.HasPrefix(s, "@") {
+				ref = strings.TrimSpace(s[1:])
+			}
+		}
 		p, ok := localRef(ref, platform)
 		if !ok || seen[p] {
 			continue

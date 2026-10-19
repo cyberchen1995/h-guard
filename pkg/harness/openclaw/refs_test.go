@@ -61,6 +61,9 @@ func TestRefReads(t *testing.T) {
 		{"sessions_send", map[string]any{"message": "see\nMEDIA: /home/u/.env\nand MEDIA:`notes.md`"}, []string{"/home/u/.env", "notes.md"}},
 		{"view_image", map[string]any{"path": "https://x/a.png", "paths": []string{"b.png"}}, []string{"b.png"}},
 		{"view_image", map[string]any{"file": "~/.ssh/id_rsa", "file_path": "c.png"}, []string{"c.png", "~/.ssh/id_rsa"}},
+		{"view_image", map[string]any{"path": " @/home/u/.ssh/x.png", "paths": []string{"@ ~/a.png", "@file:///home/u/b.png", "@https://x/c.png", "@@d.png"}},
+			[]string{"/home/u/.ssh/x.png", "~/a.png", "/home/u/b.png", "@d.png"}},
+		{"pdf", map[string]any{"pdf": "@/home/u/x.pdf"}, []string{"@/home/u/x.pdf"}},
 		{"pdf", map[string]any{"pdf": 7}, nil},
 	} {
 		raw, _ := json.Marshal(tt.params)
