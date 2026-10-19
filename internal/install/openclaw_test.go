@@ -580,3 +580,74 @@ func TestOpenClawSteerNote(t *testing.T) {
 		}
 	}
 }
+
+// TestOpenClawConfigMerge：引入的文件列表与同级键按 OpenClaw 的 mergeDeep 合并：对象逐键合并，数组接在后面。
+func TestOpenClawConfigMerge(t *testing.T) {
+	tg := target(t, "linux")
+	config := OpenClawConfig(tg)
+	dir := filepath.Dir(config)
+	writeFile(t, config, `{"plugins": {"$include": ["./a.json5", "./b.json5"], "deny": ["c"]}}`)
+	writeFile(t, filepath.Join(dir, "a.json5"), `{deny: ['a'], load: {paths: ['/x']}}`)
+	writeFile(t, filepath.Join(dir, "b.json5"), `{deny: ['b'], load: {paths: ['/y']}, enabled: true}`)
+	e := LoadOpenClawConfig(tg)
+	got, _ := json.Marshal(e.Merged)
+	if want := `{"plugins":{"deny":["a","b","c"],"enabled":true,"load":{"paths":["/x","/y"]}}}`; e.Err != nil || string(got) != want {
+		t.Errorf("merged %s (%v), want %s", got, e.Err, want)
+	}
+}
+
+// TestOpenClawConfigEnv：合并之后展开 ${VAR}：进程的环境变量、:- 的默认值、env.vars；$${VAR} 是字面值；缺少的变量
+// 原样保留，有 .env 文件或 shellEnv 时记为不能确定。plugins 下有不能确定的值时，配置只读的 remove 拒绝。
+func TestOpenClawConfigEnv(t *testing.T) {
+	tg := target(t, "linux")
+	tg.Getenv = env(map[string]string{"BLOCKED_PLUGIN": "h-guard"})
+	config := OpenClawConfig(tg)
+	writeFile(t, config, `{"plugins": {"deny": ["${BLOCKED_PLUGIN}", "${UNSET:-x}", "$${BLOCKED_PLUGIN}", "${INLINE}", "${MISSING}", "${lower}"]},
+		"env": {"vars": {"INLINE": "y"}}}`)
+	e := LoadOpenClawConfig(tg)
+	got, _ := json.Marshal(e.Merged["plugins"])
+	if want := `{"deny":["h-guard","x","${BLOCKED_PLUGIN}","y","${MISSING}","${lower}"]}`; string(got) != want || len(e.Unresolved) != 0 {
+		t.Errorf("plugins %s, unresolved %v; want %s", got, e.Unresolved, want)
+	}
+	if st := readOpenClawState(e, OpenClawPluginDir(tg), tg.samePath, func(p string) string { return p }); !st.denied {
+		t.Errorf("the deny entry from ${BLOCKED_PLUGIN} was not seen")
+	}
+	// 状态目录里有 .env：缺少的变量可能来自那里
+	writeFile(t, filepath.Join(OpenClawStateDir(tg), ".env"), "MISSING=h-guard\n")
+	if e := LoadOpenClawConfig(tg); !slices.Equal(e.Unresolved, []string{"plugins.deny[4]"}) || !e.unresolvedUnder("plugins") {
+		t.Errorf("unresolved %v, want plugins.deny[4]", e.Unresolved)
+	}
+	tg.Getenv = env(map[string]string{"BLOCKED_PLUGIN": "h-guard", "OPENCLAW_NIX_MODE": "1"})
+	writeFile(t, config, `{"plugins": {"allow": ["${MISSING}"]}}`)
+	if _, err := OpenClaw(tg, true); err == nil {
+		t.Errorf("remove with an unresolved value under plugins: want a refusal")
+	}
+}
+
+// TestOpenClawIncludeRoots：引入的文件（写法上与解析符号链接后）必须在配置所在目录或 OPENCLAW_INCLUDE_ROOTS 之内，
+// 否则与 OpenClaw 一样当作配置有错。
+func TestOpenClawIncludeRoots(t *testing.T) {
+	tg := target(t, "linux")
+	config := OpenClawConfig(tg)
+	dir := filepath.Dir(config)
+	outside := filepath.Join(tg.Home, "elsewhere")
+	writeFile(t, filepath.Join(outside, "p.json5"), `{}`)
+	for name, inc := range map[string]string{"relative": "../elsewhere/p.json5", "absolute": filepath.Join(outside, "p.json5")} {
+		writeFile(t, config, `{"plugins": {"$include": `+jsonString(inc)+`}}`)
+		if e := LoadOpenClawConfig(tg); e.Err == nil || !strings.Contains(e.Err.Error(), "escapes the config directory") {
+			t.Errorf("%s include outside the config dir: %v", name, e.Err)
+		}
+	}
+	tg.Getenv = env(map[string]string{"OPENCLAW_INCLUDE_ROOTS": "~/elsewhere"})
+	if e := LoadOpenClawConfig(tg); e.Err != nil {
+		t.Errorf("include under OPENCLAW_INCLUDE_ROOTS: %v", e.Err)
+	}
+	tg.Getenv = env(nil)
+	if err := os.Symlink(filepath.Join(outside, "p.json5"), filepath.Join(dir, "link.json5")); err != nil {
+		t.Skip("symlinks unavailable:", err)
+	}
+	writeFile(t, config, `{"plugins": {"$include": "./link.json5"}}`)
+	if e := LoadOpenClawConfig(tg); e.Err == nil || !strings.Contains(e.Err.Error(), "symlink") {
+		t.Errorf("include through a symlink out of the config dir: %v", e.Err)
+	}
+}

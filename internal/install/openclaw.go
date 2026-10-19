@@ -296,7 +296,7 @@ func OpenClaw(t Target, remove bool) ([]Step, error) {
 		eff := LoadOpenClawConfig(t)
 		st := readOpenClawState(eff, dir, t.samePath, expand)
 		if remove {
-			if eff.Err != nil || st.loaded || st.entry {
+			if eff.Err != nil || eff.unresolvedUnder("plugins") || st.loaded || st.entry {
 				return nil, fmt.Errorf("%s, so h-guard does not edit %s or the files it includes; remove %s from plugins.load.paths and plugins.entries.%s yourself, restart the Gateway, then run this again to delete the plugin", manual, config, dir, openclawID)
 			}
 			if keepDir {
@@ -305,7 +305,7 @@ func OpenClaw(t Target, remove bool) ([]Step, error) {
 			return []Step{plugin}, nil
 		}
 		steps := []Step{plugin}
-		if eff.Err != nil || !st.complete(ms) {
+		if eff.Err != nil || eff.unresolvedUnder("plugins") || !st.complete(ms) {
 			steps = append(steps, Step{Path: config, Summary: manual + "; add these settings yourself", Manual: openclawSnippet(dir, ms)})
 		}
 		return steps, nil

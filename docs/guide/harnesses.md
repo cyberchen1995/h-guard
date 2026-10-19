@@ -376,12 +376,18 @@ settings go, and when OpenClaw's configuration is read-only
 loads the plugin or cannot be read completely, and otherwise deletes only the
 plugin. `install` refuses while `plugins.deny` lists `h-guard`.
 
-`install`, `install --remove`, `h-guard status` and the protected-file rules
-all read the effective configuration the way OpenClaw does: `openclaw.json`
-merged with the files it pulls in with `$include` (a single file replaces the
-object, a list is merged in order, sibling keys override, up to 10 levels,
-relative paths from the including file), all parsed as JSON5. `h-guard
-status` notes a read-only configuration.
+Without OpenClaw running, `install`, `install --remove` and the protected-file
+rules read the configuration themselves, following OpenClaw's rules:
+`openclaw.json` merged with the files it pulls in with `$include` (a single
+file replaces the object; a list, and sibling keys after it, are merged in
+order, objects key by key and arrays appended; up to 10 levels; relative paths
+from the including file; include paths, also after following symlinks, must
+stay inside the configuration's directory or `OPENCLAW_INCLUDE_ROOTS`), all
+parsed as JSON5, then `${VAR}` references expanded from h-guard's environment
+(with `:-` defaults and `env.vars`). Where this cannot match OpenClaw for sure,
+such as a variable OpenClaw might take from a `.env` file or the login shell,
+or a configuration OpenClaw would reject, `install` prints the settings to add
+and `install --remove` refuses.
 
 A named profile (`--profile`, `OPENCLAW_PROFILE`) has its own state
 directory; set `OPENCLAW_STATE_DIR` or `OPENCLAW_CONFIG_PATH` to install
