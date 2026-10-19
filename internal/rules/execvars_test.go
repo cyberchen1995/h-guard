@@ -120,9 +120,15 @@ func TestExecPlaceholderCache(t *testing.T) {
 // TestExecPlaceholderRootAndRelative：值是根目录时展开为分隔符，不能变成匹配任何位置的空串；相对的值按 Cwd 解析。
 func TestExecPlaceholderRootAndRelative(t *testing.T) {
 	root := paths.Env{Home: "/home/u", Vars: map[string]string{VarDSHHome: "/"}}
-	mustMatch(t, `rm {dsh_home}(?=$|\s)`, root, []string{"rm /", "rm //"}, []string{"rm /tmp/x", "rm x"})
+	// 模式在占位符后面自己写分隔符：根目录不能再多要求一个
+	mustMatch(t, `{dsh_home}[/\\]+cordis\.patch\.yml`, root,
+		[]string{"rm /cordis.patch.yml", `rm "/cordis.patch.yml"`, "echo x >/cordis.patch.yml"},
+		[]string{"rm /tmp/cordis.patch.yml", "rm cordis.patch.yml"})
+	mustMatch(t, `rm {dsh_home}[/\\]?(?=$|\s)`, root, []string{"rm /", "rm / x"}, []string{"rm /tmp/x", "rm x"})
+	// 相对的值：解析后的绝对路径与原样的相对路径都认，相对路径须从参数开头起
 	rel := paths.Env{Home: "/home/u", Cwd: "/work/project", Vars: map[string]string{VarPiAgentDir: "../agent"}}
-	mustMatch(t, `^rm {pi_agent_dir}[/\\]+x$`, rel, []string{"rm /work/agent/x"}, []string{"rm ../agent/x", "rm /work/project/agent/x"})
+	mustMatch(t, `^rm {pi_agent_dir}[/\\]+x$`, rel, []string{"rm /work/agent/x", "rm ../agent/x"},
+		[]string{"rm /work/project/agent/x", "rm /tmp/../agent/x"})
 	rel.Cwd = ""
 	mustMatch(t, `^rm {pi_agent_dir}[/\\]+x$`, rel, []string{"rm ../agent/x"}, nil)
 	for _, v := range []string{"/abs", `\abs`, `C:\abs`, "c:rel"} {

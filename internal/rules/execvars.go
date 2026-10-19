@@ -21,7 +21,8 @@ import (
 //   - 值在主目录之下时，主目录的部分另可写成 ~、$HOME、${HOME}、$env:HOME、$env:USERPROFILE、%USERPROFILE%
 //     （路径模式解析目标时会展开 ~，命令文本不会，这几种写法在这里补上）。
 //
-// 值是相对路径时按 env.Cwd（事件的工作目录）解析，与路径模式一致；没有 Cwd 时按原样匹配。
+// 值是相对路径时，按 env.Cwd（事件的工作目录）解析后的绝对路径与原样的相对路径（须从参数开头起）都认；没有 Cwd 时
+// 只按原样匹配。值是根目录时展开为不占字符的「这里开始一个路径」，模式里紧跟的分隔符照常匹配那个 /。
 //
 // 占位符也可以写在后向断言里：regexp2 的后向断言不要求定长。
 //
@@ -53,9 +54,19 @@ func expandExec(p string, env paths.Env) string {
 		if len(m[1])%2 != 0 || !placeholders[m[2]] {
 			return s
 		}
-		return m[1] + execLiteral(absDir(env.Vars[m[2]], env.Cwd), env.Home)
+		v := env.Vars[m[2]]
+		abs := absDir(v, env.Cwd)
+		if abs == v {
+			return m[1] + execLiteral(v, env.Home)
+		}
+		// 相对的值：命令里既可能写解析后的绝对路径，也可能照原样写相对路径（shell 按同一个 cwd 解析）
+		return m[1] + "(?:" + execLiteral(abs, env.Home) + "|" + pathStart + execLiteral(v, env.Home) + ")"
 	})
 }
+
+// pathStart 要求路径从一个参数的开头起：前面是行首、空白、引号、= 或 shell 的分隔符。相对路径与根目录展开时用它，
+// 否则相对路径 agent 会匹配 /x/agent 的后半截，根目录会匹配任何一个 /。
+const pathStart = "(?<![^\\s'\"`=(<>|;&])"
 
 // execLiteral 是匹配目录 v 的正则（见 execPlaceholder 的说明）；v 为空时永不匹配。
 func execLiteral(v, home string) string {
@@ -63,6 +74,11 @@ func execLiteral(v, home string) string {
 		return neverMatch
 	}
 	n := normDir(v)
+	if n == "/" {
+		// 根目录展开为「这里开始一个路径、后面跟着分隔符」，不占字符：模式里紧跟的 [/\\]+ 照常匹配那个 /，
+		// 不会要求两个分隔符
+		return pathStart + `(?=[/\\])`
+	}
 	lit := literalSegments(n)
 	if h := normDir(home); h != "" {
 		switch {
