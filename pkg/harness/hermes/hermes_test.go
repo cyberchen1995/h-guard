@@ -155,6 +155,7 @@ func TestToolLists(t *testing.T) {
 		"web_search": {}, "delegate_task": {"tasks": []any{}}, "skill_view": {"name": "x"}, "browser_navigate": {"url": "https://example.com"},
 		"mcp__fs__read_file": {"path": "x"}, "connectors__gmail__search": {}, "cronjob_manage": {"action": "list"},
 		"browser_console": {}, "manage_connections": {"action": "status"}, "drive_preview": {"action": "elements"}, "todo": {},
+		"ha_list_entities": {}, "ha_get_state": {"entity_id": "light.kitchen"}, "ha_list_services": {},
 	} {
 		if _, err := a.Parse(pre(tool, args)); !errors.Is(err, harness.ErrNoAction) {
 			t.Errorf("%s: %v, want ErrNoAction", tool, err)
@@ -165,7 +166,7 @@ func TestToolLists(t *testing.T) {
 		"memory": {"action": "add"}, "skill_manage": {}, "computer_use": {}, "browser_click": {"ref": "@e1"}, "browser_cdp": {},
 		"cronjob_manage": {"action": "create", "script": "x.sh"}, "browser_console": {"expression": "document.cookie"},
 		"manage_connections": {"action": "install"}, "drive_preview": {"action": "click"}, "close_terminal": {}, "manage_catalog": {},
-		"some_plugin_tool": {},
+		"some_plugin_tool": {}, "ha_call_service": {"domain": "lock", "service": "unlock"},
 	} {
 		if _, err := a.Parse(pre(tool, args)); !errors.As(err, &ut) {
 			t.Errorf("%s %v: %v, want UnknownToolError", tool, args, err)
@@ -216,8 +217,13 @@ func TestPrompts(t *testing.T) {
 // 输出按文件内容扫描。
 func TestToolOutput(t *testing.T) {
 	ev, err := a.Parse(post("terminal", map[string]any{"command": "cat .env"}, `{"output":"A=1\nB=2","exit_code":0,"error":null}`))
-	if err != nil || ev.Text != "A=1\nB=2" || !ev.FileContent || ev.Kind != guard.EventToolOutput {
-		t.Fatalf("%+v %v", ev, err)
+	if err != nil || ev.Text != "error\nexit_code\n0\noutput\nA=1\nB=2" || !ev.FileContent || ev.Kind != guard.EventToolOutput {
+		t.Fatalf("%q %v", ev.Text, err)
+	}
+	// 键与数同样扫描（键里的邮箱、按数写出的账号）
+	ev, _ = a.Parse(post("web_extract", map[string]any{}, `{"alice@example.com":{"account":4111111111111111,"ok":true}}`))
+	if ev.Text != "alice@example.com\naccount\n4111111111111111\nok\ntrue" {
+		t.Errorf("keys and scalars: %q", ev.Text)
 	}
 	ev, err = a.Parse(post("web_extract", map[string]any{"urls": []string{"https://example.com"}}, "plain page"))
 	if err != nil || ev.FileContent || ev.Text != "plain page" {

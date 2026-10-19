@@ -351,7 +351,12 @@ or a messaging gateway. There are no recorded sessions yet.
    shorter than h-guard's timeout plus 5 seconds, it is raised, because Hermes
    blocks a tool call whose hook does not answer in time. Hermes accepts at
    most 600 seconds there, so `--timeout` is at most 595 for `hermes`.
-   Removing h-guard later leaves a raised timeout as it is.
+   Removing h-guard later leaves a raised timeout as it is. When an
+   administrator's managed scope (`/etc/hermes/config.yaml`, or
+   `$HERMES_MANAGED_DIR`) sets `plugins.enabled` without h-guard, lists it in
+   `plugins.disabled` or sets a `plugins.hook_callback_timeout` that is too
+   short, it overrides the user configuration, so `install` stops and says so
+   instead of changing a file Hermes would ignore, and `status` reports it.
 
 Hermes asks for no other consent for a plugin enabled this way. Hermes
 discovers plugins once per process, and its sessions (CLI, TUI, Desktop,
@@ -437,7 +442,9 @@ Hermes differences:
   plugins or MCP servers (`manage_catalog`, `manage_connections` except
   `status`), administer a Discord server (`discord_admin`), switch Desktop
   projects or close terminal panes, and every tool a
-  plugin adds, ask with the reason `tool_unknown`. `text_to_speech` with an
+  plugin adds, ask with the reason `tool_unknown`; the read-only Home Assistant
+  tools of the `homeassistant` catalog plugin (`ha_list_entities`,
+  `ha_get_state`, `ha_list_services`) pass, and `ha_call_service` asks. `text_to_speech` with an
   `output_path` is checked as a file write.
 - **Other plugins.** Another plugin's `block` still wins over h-guard's
   `approve`, and another plugin's `modify` can change a tool's arguments after

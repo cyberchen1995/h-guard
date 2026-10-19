@@ -298,6 +298,8 @@ var readOnly = map[string]bool{
 	"read_terminal": true, "desktop_preview": true, "annotate_preview": true, "read_window_below": true, "focus_pane": true,
 	"react_to_message": true, "gui_tour": true, "show_tip": true, "set_theme": true, "setup_beat": true,
 	"tool_search": true, "tool_describe": true,
+	// Home Assistant 的查询（Hermes 目录里的 homeassistant 插件；ha_call_service 会操作设备，按不认识的工具请求确认）
+	"ha_list_entities": true, "ha_get_state": true, "ha_list_services": true,
 }
 
 // actions 把工具映射为动作：
@@ -470,8 +472,9 @@ func fileContent(tool string, in toolArgs) bool {
 	return strings.HasPrefix(tool, "mcp__") && strings.Contains(tool, "resource") // MCP 服务提供的资源（文件、文档）
 }
 
-// resultText 取出工具结果的文本。Hermes 的工具结果是字符串，通常是 JSON：能解析时按顺序取出其中所有的字符串值，
-// 以换行连接（JSON 里转义的换行还原后，多行的私钥等才能认出），否则原样。
+// resultText 取出工具结果的文本。Hermes 的工具结果是字符串，通常是 JSON：能解析时取出其中的键与值（字符串原样，
+// 数与布尔值按 JSON 的写法），以换行连接（JSON 里转义的换行还原后，多行的私钥等才能认出；键与数里同样可能有邮箱、
+// 账号），否则原样。
 func resultText(raw json.RawMessage) string {
 	var r resultPayload
 	if extadapter.IsNull(raw) || json.Unmarshal(raw, &r) != nil {
@@ -497,11 +500,15 @@ func resultText(raw json.RawMessage) string {
 	return strings.Join(parts, "\n")
 }
 
-// walkStrings 按出现的顺序收集 JSON 值里的字符串（对象的键不收集；Go 的 map 没有顺序，所以对象按键排序）。
+// walkStrings 收集 JSON 值里的键与标量（null 不收集；Go 的 map 没有顺序，所以对象按键排序）。
 func walkStrings(v any, out *[]string) {
 	switch t := v.(type) {
 	case string:
 		*out = append(*out, t)
+	case json.Number:
+		*out = append(*out, t.String())
+	case bool:
+		*out = append(*out, fmt.Sprint(t))
 	case []any:
 		for _, e := range t {
 			walkStrings(e, out)
@@ -513,6 +520,7 @@ func walkStrings(v any, out *[]string) {
 		}
 		slices.Sort(keys)
 		for _, k := range keys {
+			*out = append(*out, k)
 			walkStrings(t[k], out)
 		}
 	}
