@@ -73,7 +73,7 @@ func runInstall(args []string, o Options) int {
 		return 1
 	}
 	t := install.Target{Home: o.Home, ConfigDir: o.ConfigDir, CacheDir: o.CacheDir, Bin: bin, Timeout: *timeout,
-		GOOS: o.GOOS, Getenv: o.Getenv, Run: o.RunHarness, Now: o.Now}
+		GOOS: o.GOOS, Getenv: o.Getenv, Run: o.RunHarness, Query: o.QueryHarness, Now: o.Now}
 	switch harness {
 	case "codex":
 		steps, err := install.Codex(t, *remove)
@@ -203,6 +203,12 @@ func installExt(o Options, t install.Target, harness string, write, remove bool)
 		case "dsh":
 			fmt.Fprintln(o.Stdout, "restart DeepSeek Harness for the change to take effect; the plugin is mounted for every profile")
 		case "openclaw":
+			if !remove { // 写完之后问 OpenClaw 自己是否加载插件
+				lines, _ := install.OpenClawVerify(t, install.OpenClawHookMS(t.Timeout))
+				for _, l := range lines {
+					fmt.Fprintln(o.Stdout, l)
+				}
+			}
 			fmt.Fprintln(o.Stdout, "restart the OpenClaw Gateway (openclaw gateway restart) for the change to take effect")
 		default:
 			fmt.Fprintf(o.Stdout, "restart %s (or run /reload) for the change to take effect\n", harness)
@@ -262,6 +268,19 @@ func applySteps(o Options, steps []install.Step, write, remove bool, done func()
 var errHarnessMissing = errors.New("not found in PATH")
 
 // runHarness 在 PATH 中查找并运行 harness 的命令行，限时 10 秒。
+// queryHarness 在 PATH 中查找并运行 harness 的只读查询命令，限时 60 秒，只取标准输出（标准错误丢弃），失败时也返回
+// 已有的输出。环境原样传下去：OpenClaw 按环境变量找配置并展开其中的 ${VAR}，换成精简的环境会得出与用户不同的结论。
+func queryHarness(name string, args ...string) ([]byte, error) {
+	path, err := exec.LookPath(name)
+	if err != nil {
+		return nil, errHarnessMissing
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, path, args...)
+	return cmd.Output()
+}
+
 func runHarness(name string, args ...string) ([]byte, error) {
 	path, err := exec.LookPath(name)
 	if err != nil {

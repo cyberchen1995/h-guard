@@ -140,7 +140,7 @@ func statusHarnesses(s setup, o Options) {
 	if o.Home == "" {
 		return
 	}
-	t := install.Target{Home: o.Home, ConfigDir: o.ConfigDir, CacheDir: o.CacheDir, GOOS: o.GOOS, Getenv: o.Getenv, Run: o.RunHarness, Now: o.Now}
+	t := install.Target{Home: o.Home, ConfigDir: o.ConfigDir, CacheDir: o.CacheDir, GOOS: o.GOOS, Getenv: o.Getenv, Run: o.RunHarness, Query: o.QueryHarness, Now: o.Now}
 	for _, h := range installable {
 		for _, line := range install.Inspect(t, h) {
 			fmt.Fprintf(o.Stdout, "%s: %s\n", h, line)

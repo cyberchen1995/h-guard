@@ -398,9 +398,25 @@ The plugin runs in the Gateway process and starts h-guard through OpenClaw's
 installed with `openclaw plugins install`, the Gateway logs at startup that it
 "can't verify where this plugin came from"; the plugin loads anyway.
 
+Whether OpenClaw loads the plugin is OpenClaw's call, so `install openclaw
+--write` and `h-guard status` ask it: they run `openclaw plugins inspect
+h-guard --runtime --json` (read-only; it loads the plugin in that process to
+list its hooks, and does not touch the Gateway; no shell, 60 seconds at most)
+and report what it says: loaded with the `before_tool_call`,
+`before_agent_run` and `before_dispatch` hooks, the tool result middleware,
+conversation access and long enough hook timeouts, or why not (denied,
+disabled, not found, an invalid configuration with OpenClaw's own message).
+OpenClaw reads the configuration with h-guard's environment, which can differ
+from the Gateway's (a `${VAR}` set only for the Gateway service). When
+`openclaw` is not on `PATH`, fails or prints something h-guard cannot read,
+the report says "could not verify with OpenClaw that it loads h-guard's
+plugin" and falls back to h-guard's own reading of the configuration; it never
+reports success it could not check.
+
 `h-guard status` lists OpenClaw in its protection summary with the
 configuration layer only: as for the other extension harnesses, whether the
-plugin really runs is not tracked, and `h-guard selftest` does not cover it.
+plugin really runs in the Gateway is not tracked, and `h-guard selftest` does
+not cover it.
 OpenClaw can ask, so `h-guard allow` one-time approvals are not offered there;
 you approve in OpenClaw's own plugin approval instead.
 

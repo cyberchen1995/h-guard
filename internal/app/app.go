@@ -93,6 +93,9 @@ type Options struct {
 	Executable func() (string, error)
 	// RunHarness 运行 harness 的命令行（取版本、校验插件），默认在 PATH 中查找并限时 10 秒；找不到时返回错误。
 	RunHarness func(name string, args ...string) ([]byte, error)
+	// QueryHarness 运行 harness 的只读查询命令（如 openclaw plugins inspect），只取标准输出，命令失败时也返回已有的
+	// 输出；默认在 PATH 中查找并限时 60 秒，不经 shell、没有标准输入。
+	QueryHarness func(name string, args ...string) ([]byte, error)
 	// RunEntry 运行 harness 的一个 h-guard 入口（selftest）：argv 不经 shell，env 追加到本进程的环境，stdin 是输入；
 	// 默认限时 30 秒。
 	RunEntry func(argv, env []string, stdin []byte) ([]byte, error)
@@ -135,6 +138,9 @@ func (o *Options) fill() {
 	}
 	if o.RunHarness == nil {
 		o.RunHarness = runHarness
+	}
+	if o.QueryHarness == nil {
+		o.QueryHarness = queryHarness
 	}
 	if o.RunEntry == nil {
 		o.RunEntry = runEntry

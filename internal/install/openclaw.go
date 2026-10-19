@@ -207,6 +207,9 @@ func OpenClawPluginDir(t Target) string { return filepath.Join(t.ConfigDir, "ext
 // 拦下工具调用（工具结果被换成「输出不可用」），不会放行；留出余量是为了让插件先等到 h-guard 的回复或自己的兜底。
 func openclawHookMS(timeout int) int { return (timeout + 5) * 1000 }
 
+// OpenClawHookMS 是 install 为 --timeout 写进 openclaw.json 的 hook 超时（毫秒）。
+func OpenClawHookMS(timeout int) int { return openclawHookMS(timeout) }
+
 // openclawMaxTimeout 是 install openclaw 接受的最长 --timeout（秒）：OpenClaw 的 hook 超时最多 600000 毫秒，要留 5 秒余量。
 const openclawMaxTimeout = 595
 
@@ -617,14 +620,8 @@ func inspectOpenClaw(t Target) []string {
 	dir, config := OpenClawPluginDir(t), OpenClawConfig(t)
 	files, _ := snapshot(dir)
 	eff := LoadOpenClawConfig(t)
-	if eff.Err != nil {
-		return []string{fmt.Sprintf("problem: OpenClaw's configuration cannot be read: %v", eff.Err)}
-	}
 	st := readOpenClawState(eff, dir, t.samePath, func(p string) string { return openclawPath(t, p) })
-	if eff.Include { // 设置可能在引入的文件里：说的是合并之后的配置
-		config += " (with the files it includes)"
-	}
-	if len(files) == 0 && !st.loaded && !st.entry {
+	if len(files) == 0 && eff.Err == nil && !st.loaded && !st.entry {
 		return []string{"not installed (h-guard install openclaw)"}
 	}
 	lines := []string{extInstalledLine(t, "openclaw", "OpenClaw")}
@@ -637,6 +634,44 @@ func inspectOpenClaw(t Target) []string {
 			fix = "; add it yourself (" + string(me) + ")"
 		}
 	}
+	// h-guard 自己写出的文件：插件目录与其中的 h-guard 路径
+	switch {
+	case len(files) == 0:
+		lines = append(lines, fmt.Sprintf("problem: the plugin is missing from %s%s", dir, fix))
+	case !isOurOpenClawPlugin(files):
+		lines = append(lines, fmt.Sprintf("problem: %s is not h-guard's plugin", dir))
+	default:
+		lines = append(lines, extProblems(t, "openclaw", files["index.mjs"])...)
+		want, err := openclawFiles(Target{Bin: "h-guard", Timeout: 20})
+		if err != nil || len(files) != len(want) || !bytes.Equal(files["openclaw.plugin.json"], want["openclaw.plugin.json"]) || !bytes.Equal(files["package.json"], want["package.json"]) {
+			lines = append(lines, "problem: the plugin files differ from this h-guard version (missing, edited or written by another version)"+fix)
+		}
+	}
+	ms := 0
+	if _, timeout, ok := installedExt(files["index.mjs"], "openclaw"); ok {
+		ms = openclawHookMS(timeout)
+	}
+	// OpenClaw 是否加载插件：问 OpenClaw 自己。问到了就以它为准；问不到时退回 h-guard 自己读配置的结论，并注明没能确认
+	verify, verified := OpenClawVerify(t, ms)
+	if !verified {
+		lines = append(lines, openclawConfigProblems(eff, st, config, dir, fix, ms)...)
+	}
+	lines = append(lines, verify...)
+	for _, n := range OpenClawNotes(t) {
+		lines = append(lines, "note: "+n)
+	}
+	return lines
+}
+
+// openclawConfigProblems 是 h-guard 自己读配置（LoadOpenClawConfig）得出的问题，只在问不到 OpenClaw 时报告。
+func openclawConfigProblems(eff OpenClawEffective, st openclawState, config, dir, fix string, ms int) []string {
+	if eff.Err != nil {
+		return []string{fmt.Sprintf("problem: OpenClaw's configuration cannot be read: %v", eff.Err)}
+	}
+	if eff.Include { // 设置可能在引入的文件里：说的是合并之后的配置
+		config += " (with the files it includes)"
+	}
+	var lines []string
 	switch {
 	case !st.loaded:
 		lines = append(lines, fmt.Sprintf("problem: %s does not list %s in plugins.load.paths%s", config, dir, fix))
@@ -652,27 +687,15 @@ func inspectOpenClaw(t Target) []string {
 	if st.notAllowed {
 		lines = append(lines, fmt.Sprintf("problem: plugins.allow in %s does not list %s, so OpenClaw does not load it%s", config, openclawID, fix))
 	}
-	if len(files) == 0 {
-		return append(lines, fmt.Sprintf("problem: %s loads %s, but the plugin is missing%s", config, dir, fix))
-	}
-	if !isOurOpenClawPlugin(files) {
-		return append(lines, fmt.Sprintf("problem: %s is not h-guard's plugin", dir))
-	}
-	lines = append(lines, extProblems(t, "openclaw", files["index.mjs"])...)
-	want, err := openclawFiles(Target{Bin: "h-guard", Timeout: 20})
-	if err != nil || len(files) != len(want) || !bytes.Equal(files["openclaw.plugin.json"], want["openclaw.plugin.json"]) || !bytes.Equal(files["package.json"], want["package.json"]) {
-		lines = append(lines, "problem: the plugin files differ from this h-guard version (missing, edited or written by another version)"+fix)
-	}
-	if _, timeout, ok := installedExt(files["index.mjs"], "openclaw"); ok && st.entry {
-		ms := openclawHookMS(timeout)
+	if st.entry && ms > 0 {
 		for _, h := range openclawHooks {
 			if st.timeouts[h] < ms {
-				lines = append(lines, fmt.Sprintf("problem: OpenClaw waits %dms for %s but h-guard is given %ds%s", st.timeouts[h], h, timeout, fix))
+				lines = append(lines, fmt.Sprintf("problem: OpenClaw waits %dms for %s but h-guard needs %dms%s", st.timeouts[h], h, ms, fix))
 			}
 		}
 	}
-	for _, n := range OpenClawNotes(t) {
-		lines = append(lines, "note: "+n)
+	if len(eff.Unresolved) > 0 {
+		lines = append(lines, fmt.Sprintf("note: h-guard cannot tell how OpenClaw expands %s (a ${VAR} that may come from a .env file or the login shell)", strings.Join(eff.Unresolved, ", ")))
 	}
 	return lines
 }

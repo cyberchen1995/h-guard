@@ -352,3 +352,28 @@ func TestInstallOpenClawJSON5(t *testing.T) {
 		t.Errorf("the plugin was not written: %v", err)
 	}
 }
+
+// TestInstallOpenClawVerifies：install openclaw --write 之后问 OpenClaw 是否加载插件，照实打印；status 同样。openclaw
+// 不在 PATH 里时说明没能确认。
+func TestInstallOpenClawVerifies(t *testing.T) {
+	e := hostInstallEnv(t)
+	var asked []string
+	e.harnessQuery = func(name string, args ...string) ([]byte, error) {
+		asked = append(asked, name+" "+strings.Join(args, " "))
+		return []byte(`{"plugin": {"status": "disabled", "enabled": false, "activated": false, "error": "blocked by denylist"}}`), nil
+	}
+	out, errs, code := e.run(nil, "install", "openclaw", "--write")
+	if code != 0 || !strings.Contains(out, "problem: OpenClaw reports h-guard's plugin as disabled (blocked by denylist)") {
+		t.Errorf("install: %d\n%s%s", code, out, errs)
+	}
+	if len(asked) != 1 || asked[0] != "openclaw plugins inspect h-guard --runtime --json" {
+		t.Errorf("asked %v", asked)
+	}
+	if out, _, _ := e.run(nil, "status"); !strings.Contains(out, "blocked by denylist") {
+		t.Errorf("status:\n%s", out)
+	}
+	e.harnessQuery = nil
+	if out, _, _ := e.run(nil, "status"); !strings.Contains(out, "could not verify with OpenClaw that it loads h-guard's plugin") {
+		t.Errorf("status without openclaw:\n%s", out)
+	}
+}

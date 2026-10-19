@@ -22,7 +22,9 @@ type Target struct {
 	GOOS      string
 	Getenv    func(string) string
 	Run       func(name string, args ...string) ([]byte, error)
-	Now       func() time.Time
+	// Query 运行 harness 的只读查询命令，只取标准输出（命令失败时也返回已有的输出），nil 表示不可用
+	Query func(name string, args ...string) ([]byte, error)
+	Now   func() time.Time
 }
 
 func (t Target) editor() Editor {

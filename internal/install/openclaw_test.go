@@ -3,6 +3,7 @@ package install
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -649,5 +650,86 @@ func TestOpenClawIncludeRoots(t *testing.T) {
 	writeFile(t, config, `{"plugins": {"$include": "./link.json5"}}`)
 	if e := LoadOpenClawConfig(tg); e.Err == nil || !strings.Contains(e.Err.Error(), "symlink") {
 		t.Errorf("include through a symlink out of the config dir: %v", e.Err)
+	}
+}
+
+// inspectOK 是 openclaw plugins inspect h-guard --runtime --json 在插件正常加载时的输出（2026.10.4，只留用到的字段）。
+func inspectOK(source string, timeout int) string {
+	return fmt.Sprintf(`{"plugin": {"id": "h-guard", "status": "loaded", "enabled": true, "activated": true, "activationReason": "enabled in config",
+		"source": %q, "contracts": {"agentToolResultMiddleware": ["openclaw"]}},
+		"typedHooks": [{"name": "before_agent_run"}, {"name": "before_dispatch"}, {"name": "before_tool_call"}],
+		"policy": {"allowConversationAccess": true, "hookTimeouts": {"before_tool_call": %[2]d, "before_agent_run": %[2]d, "before_dispatch": %[2]d, "after_tool_call": %[2]d}}}`, source, timeout)
+}
+
+// TestOpenClawVerify：OpenClaw 自己的结论（openclaw plugins inspect）为准：正常加载、被 deny、配置无效、找不到插件、
+// 少了 hook 或超时不够都照实报告；命令不可用、失败或输出读不懂时说明没能确认，不说成没问题。
+func TestOpenClawVerify(t *testing.T) {
+	tg := target(t, "linux")
+	src := filepath.Join(OpenClawPluginDir(tg), "index.mjs")
+	for name, tt := range map[string]struct {
+		out      string
+		err      error
+		verified bool
+		want     string
+	}{
+		"loaded":    {inspectOK(src, 25000), nil, true, "verified with OpenClaw"},
+		"short":     {inspectOK(src, 15000), nil, true, "OpenClaw waits 15000ms for before_tool_call but h-guard needs 25000ms"},
+		"elsewhere": {inspectOK("/other/index.mjs", 25000), nil, true, "loads h-guard's plugin from /other/index.mjs"},
+		"denied": {`{"plugin": {"status": "disabled", "enabled": false, "activated": false, "activationReason": "blocked by denylist", "error": "blocked by denylist"}}`,
+			errors.New("exit status 0"), true, "OpenClaw reports h-guard's plugin as disabled (blocked by denylist)"},
+		"invalid": {`{"ok": false, "error": {"message": "OpenClaw config is invalid: ~/.openclaw/openclaw.json"}, "issues": [{"path": "<root>", "message": "Include path escapes config directory: ../x.json5"}]}`,
+			errors.New("exit status 1"), true, "does not load h-guard's plugin: OpenClaw config is invalid: ~/.openclaw/openclaw.json (<root>: Include path escapes config directory: ../x.json5)"},
+		"not found": {`{"ok": false, "error": {"message": "Plugin not found: h-guard."}}`, errors.New("exit status 1"), true, "Plugin not found: h-guard."},
+		"no hooks": {`{"plugin": {"status": "loaded", "enabled": true, "activated": true, "contracts": {}}, "typedHooks": [], "policy": {}}`, nil, true,
+			"did not register the plugin's before_dispatch hook"},
+		"missing": {"", errors.New("not found in PATH"), false, "could not verify with OpenClaw that it loads h-guard's plugin (openclaw plugins inspect: not found in PATH)"},
+		"garbled": {"Error: boom", nil, false, "could not verify"},
+	} {
+		tg.Query = func(name string, args ...string) ([]byte, error) {
+			if name != "openclaw" || strings.Join(args, " ") != "plugins inspect h-guard --runtime --json" {
+				t.Fatalf("%s: ran %s %v", name, name, args)
+			}
+			return []byte(tt.out), tt.err
+		}
+		lines, verified := OpenClawVerify(tg, 25000)
+		if verified != tt.verified || !strings.Contains(strings.Join(lines, "\n"), tt.want) {
+			t.Errorf("%s: %v %v, want %v and %q", name, lines, verified, tt.verified, tt.want)
+		}
+	}
+	tg.Query = nil
+	if lines, verified := OpenClawVerify(tg, 0); verified || !strings.Contains(lines[0], "could not verify") {
+		t.Errorf("no query: %v %v", lines, verified)
+	}
+}
+
+// TestOpenClawStatusTrustsOpenClaw：status 以 OpenClaw 的结论为准：h-guard 自己读配置得不出（如 deny 里的 ${VAR} 只在
+// Gateway 的环境里有值）时，照 OpenClaw 报告；问不到 OpenClaw 时退回自己读配置的结论并注明没能确认。
+func TestOpenClawStatusTrustsOpenClaw(t *testing.T) {
+	tg := target(t, "linux")
+	tg.Bin = filepath.Join(tg.Home, "bin", "h-guard")
+	writeFile(t, tg.Bin, "")
+	apply(t, plan(t, tg, "openclaw", false))
+	config := OpenClawConfig(tg)
+	m := readJSON(t, config)
+	m["plugins"].(map[string]any)["deny"] = []string{"${BLOCKED_PLUGIN}"}
+	b, _ := json.Marshal(m)
+	writeFile(t, config, string(b))
+	tg.Query = func(string, ...string) ([]byte, error) {
+		return []byte(`{"plugin": {"status": "disabled", "enabled": false, "activated": false, "error": "blocked by denylist"}}`), nil
+	}
+	lines := strings.Join(Inspect(tg, "openclaw"), "\n")
+	if !strings.Contains(lines, "problem: OpenClaw reports h-guard's plugin as disabled (blocked by denylist)") || strings.Contains(lines, "plugins.deny in") {
+		t.Errorf("status with OpenClaw's verdict:\n%s", lines)
+	}
+	tg.Query = func(string, ...string) ([]byte, error) {
+		return []byte(inspectOK(filepath.Join(OpenClawPluginDir(tg), "index.mjs"), 25000)), nil
+	}
+	if lines := strings.Join(Inspect(tg, "openclaw"), "\n"); strings.Contains(lines, "problem:") || !strings.Contains(lines, "verified with OpenClaw") {
+		t.Errorf("status when OpenClaw loads the plugin:\n%s", lines)
+	}
+	tg.Query = nil
+	writeFile(t, config, `{"plugins": {"deny": ["h-guard"]}}`)
+	if lines := strings.Join(Inspect(tg, "openclaw"), "\n"); !strings.Contains(lines, "plugins.deny in") || !strings.Contains(lines, "could not verify with OpenClaw") {
+		t.Errorf("status without OpenClaw:\n%s", lines)
 	}
 }
