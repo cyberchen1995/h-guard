@@ -290,8 +290,15 @@ class Plugin(unittest.TestCase, WithApproval):
             self.assertEqual(mod._origin(), 'telegram:-1001:9')
             env.update({'HERMES_SESSION_PLATFORM': 'cli', 'HERMES_CRON_AUTO_DELIVER_PLATFORM': 'slack', 'HERMES_CRON_AUTO_DELIVER_CHAT_ID': 'C1'})
             self.assertEqual(mod._origin(), 'slack:C1')
-            env.update({'HERMES_CRON_AUTO_DELIVER_PLATFORM': 'matrix', 'HERMES_CRON_AUTO_DELIVER_CHAT_ID': '!room:server'})
-            self.assertEqual(mod._origin(), '')  # 带冒号的 id 写不进 hermes send 的目标
+            # Matrix 的对话 id 带冒号；话题是 $事件 id
+            env.update({'HERMES_CRON_AUTO_DELIVER_PLATFORM': 'matrix', 'HERMES_CRON_AUTO_DELIVER_CHAT_ID': '!room:example.org'})
+            self.assertEqual(mod._origin(), 'matrix:!room:example.org')
+            env['HERMES_CRON_AUTO_DELIVER_THREAD_ID'] = '$ev1'
+            self.assertEqual(mod._origin(), 'matrix:!room:example.org:$ev1')
+            env['HERMES_CRON_AUTO_DELIVER_THREAD_ID'] = 'not-an-event'
+            self.assertEqual(mod._origin(), 'matrix:!room:example.org')
+            env.update({'HERMES_CRON_AUTO_DELIVER_PLATFORM': 'slack', 'HERMES_CRON_AUTO_DELIVER_CHAT_ID': 'C1', 'HERMES_CRON_AUTO_DELIVER_THREAD_ID': 'a:b'})
+            self.assertEqual(mod._origin(), 'slack:C1')  # 带冒号的话题分不开，不写
         finally:
             for k, v in old.items():
                 if v is None:

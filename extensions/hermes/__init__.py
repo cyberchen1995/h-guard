@@ -399,10 +399,14 @@ def _origin():
             thread = get_session_env(prefix + 'THREAD_ID', '') or ''
         except Exception:
             continue
-        platform = str(platform).lower()
-        if platform in LOCAL_SURFACES or not chat or ':' in str(chat) or ':' in str(thread):
+        platform, chat, thread = str(platform).lower(), str(chat), str(thread)
+        if platform in LOCAL_SURFACES or not chat:
             continue
-        return platform + ':' + str(chat) + (':' + str(thread) if thread else '')
+        # hermes send 只按第一个冒号分出平台，其余交给平台自己解析：对话 id 可以带冒号（Matrix 的 !room:server）。
+        # 话题接在最后一个冒号之后，带冒号的话题分不开，不写；Matrix 的话题是 $事件 id（写作 <room>:$<event>）
+        if ':' in thread or platform == 'matrix' and not thread.startswith('$'):
+            thread = ''
+        return platform + ':' + chat + (':' + thread if thread else '')
     return ''
 
 
