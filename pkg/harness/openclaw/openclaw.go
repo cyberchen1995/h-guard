@@ -122,15 +122,47 @@ func (p params) filePaths() []string {
 	return out
 }
 
-// fileActions 返回 filePaths 里每个路径的文件动作。
-func (p params) fileActions(kind guard.ActionKind) []guard.Action {
+// fileActions 返回 filePaths 里每个路径（按 openclawFilePaths 解析）的文件动作。
+func (p params) fileActions(kind guard.ActionKind, platform string) []guard.Action {
 	var acts []guard.Action
+	var seen []string
 	for _, s := range p.filePaths() {
-		if act, ok := extadapter.File(kind, s); ok {
-			acts = append(acts, act)
+		for _, f := range openclawFilePaths(s, platform) {
+			if slices.Contains(seen, f) {
+				continue
+			}
+			seen = append(seen, f)
+			if act, ok := extadapter.File(kind, f); ok {
+				acts = append(acts, act)
+			}
 		}
 	}
 	return acts
+}
+
+// openclawFilePaths 返回 OpenClaw 的文件工具对一个路径实际可能用的文件（2026.10.4 的 sessions/tools/path-utils 的
+// expandPath 与 path-policy 的 preserveAtPrefixedRelativePath）：
+//   - 开头的一个 @ 是提及文件的写法：@/abs、@~/x、@file://… 去掉 @；相对路径的 @x 在 ./@x 存在时按字面读，否则读 x，
+//     这里看不到对方的文件系统，两个都检查（@@x 同样是 @@x 或 @x）；
+//   - 以 file:// 开头的按 file: URL 解码（OpenClaw 解码不了时按字面）。
+func openclawFilePaths(p, platform string) []string {
+	out := []string{p}
+	if r, ok := strings.CutPrefix(p, "@"); ok && r != "" {
+		if r == "~" || strings.HasPrefix(r, "~/") || strings.HasPrefix(r, `~\`) || (len(r) >= 7 && strings.EqualFold(r[:7], "file://")) ||
+			strings.HasPrefix(r, "/") || strings.HasPrefix(r, `\`) || driveRe.MatchString(r) {
+			out = []string{r}
+		} else {
+			out = []string{p, r}
+		}
+	}
+	for i, s := range out {
+		if strings.HasPrefix(s, "file://") {
+			if d, ok := fileURLPath(s, platform); ok {
+				out[i] = d
+			}
+		}
+	}
+	return out
 }
 
 type runData struct {
@@ -359,7 +391,7 @@ func actions(tool string, in params, raw json.RawMessage, platform string) ([]gu
 		}
 		return acts, nil
 	case "read", "grep":
-		if acts := in.fileActions(guard.ActionFileRead); len(acts) > 0 {
+		if acts := in.fileActions(guard.ActionFileRead, platform); len(acts) > 0 {
 			return acts, nil
 		}
 		return one(extadapter.File(guard.ActionFileRead, ""))
@@ -369,7 +401,7 @@ func actions(tool string, in params, raw json.RawMessage, platform string) ([]gu
 		}
 		return nil, ErrNoAction
 	case "write", "edit":
-		if acts := in.fileActions(guard.ActionFileWrite); len(acts) > 0 {
+		if acts := in.fileActions(guard.ActionFileWrite, platform); len(acts) > 0 {
 			return acts, nil
 		}
 		return nil, errUnparsed

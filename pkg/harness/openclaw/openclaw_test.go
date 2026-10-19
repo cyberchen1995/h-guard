@@ -94,6 +94,14 @@ func TestActions(t *testing.T) {
 			[]guard.Action{file(guard.ActionFileRead, "README.md"), file(guard.ActionFileRead, ".env"), file(guard.ActionFileRead, "/etc/shadow")}, "/w"},
 		{"edit with two aliases", "linux", "edit", map[string]any{"path": "a.txt", "file": "~/.profile"},
 			[]guard.Action{file(guard.ActionFileWrite, "a.txt"), file(guard.ActionFileWrite, "~/.profile")}, "/w"},
+		// 提及文件的 @ 与 file:// 路径按 OpenClaw 的 expandPath 解析
+		{"read an @ absolute path", "linux", "read", map[string]any{"path": "@/home/u/.ssh/id_rsa"}, []guard.Action{file(guard.ActionFileRead, "/home/u/.ssh/id_rsa")}, "/w"},
+		{"read an @ home path", "linux", "read", map[string]any{"path": "@~/.aws/credentials"}, []guard.Action{file(guard.ActionFileRead, "~/.aws/credentials")}, "/w"},
+		{"read an @ file URL", "linux", "read", map[string]any{"path": "@file:///home/u/.env"}, []guard.Action{file(guard.ActionFileRead, "/home/u/.env")}, "/w"},
+		{"read a file URL", "linux", "read", map[string]any{"path": "file:///home/u/%2Eenv"}, []guard.Action{file(guard.ActionFileRead, "/home/u/.env")}, "/w"},
+		{"read an @ relative path", "linux", "read", map[string]any{"path": "@.env"}, []guard.Action{file(guard.ActionFileRead, "@.env"), file(guard.ActionFileRead, ".env")}, "/w"},
+		{"write an @ absolute path", "linux", "write", map[string]any{"path": "@/home/u/.bashrc", "content": "x"}, []guard.Action{file(guard.ActionFileWrite, "/home/u/.bashrc")}, "/w"},
+		{"edit an @ Windows path", "win32", "edit", map[string]any{"path": `@C:\Users\u\.ssh\config`}, []guard.Action{file(guard.ActionFileWrite, `C:\Users\u\.ssh\config`)}, "/w"},
 		{"apply_patch", "linux", "apply_patch", map[string]any{"input": patch}, []guard.Action{file(guard.ActionFileWrite, "n.txt"),
 			{Kind: guard.ActionFileRename, File: &guard.FileAction{Path: "a.go", To: "b.go"}}, file(guard.ActionFileDelete, "old")}, "/w"},
 	}
