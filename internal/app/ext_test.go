@@ -421,3 +421,19 @@ func TestOpenClawIncludeExecProtected(t *testing.T) {
 		}
 	}
 }
+
+// TestOpenClawPlaceholdersUseTargetPlatform：{openclaw_config} 与 {openclaw_includes} 按目标平台解析 OpenClaw 的路径：
+// Windows 上 C:\OpenClaw\openclaw.json 是绝对路径，不能当作相对路径接到当前目录后面。
+func TestOpenClawPlaceholdersUseTargetPlatform(t *testing.T) {
+	home := t.TempDir()
+	vars := map[string]string{"OPENCLAW_CONFIG_PATH": `C:\OpenClaw\openclaw.json`}
+	o := Options{Home: home, GOOS: "windows", Getenv: func(k string) string { return vars[k] }}
+	if got := openclawConfig(o); got != `C:\OpenClaw\openclaw.json` {
+		t.Errorf("windows: %s", got)
+	}
+	vars = map[string]string{"OPENCLAW_CONFIG_PATH": "/srv/openclaw.json"}
+	o.GOOS = "linux"
+	if got := openclawConfig(o); got != "/srv/openclaw.json" {
+		t.Errorf("linux: %s", got)
+	}
+}

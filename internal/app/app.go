@@ -333,7 +333,7 @@ func openclawConfig(o Options) string {
 	if o.Home == "" {
 		return ""
 	}
-	return install.OpenClawConfig(install.Target{Home: o.Home, Getenv: o.Getenv})
+	return install.OpenClawConfig(install.Target{Home: o.Home, Getenv: o.Getenv, GOOS: o.GOOS})
 }
 
 // openclawIncludes 是 OpenClaw 的配置用 $include 引入的文件。
@@ -341,7 +341,7 @@ func openclawIncludes(o Options) []string {
 	if o.Home == "" {
 		return nil
 	}
-	files, _ := install.OpenClawIncludes(install.Target{Home: o.Home, Getenv: o.Getenv})
+	files, _ := install.OpenClawIncludes(install.Target{Home: o.Home, Getenv: o.Getenv, GOOS: o.GOOS})
 	return files
 }
 
