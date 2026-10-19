@@ -343,15 +343,29 @@ func hermesManaged(o Options) string {
 	return install.HermesManagedDefault
 }
 
+// absVars 把占位符的相对值按 h-guard 的工作目录解析成绝对路径：harness 按它自己的工作目录解析这些环境变量，
+// h-guard 由它启动、继承同一个目录。不能按事件里某次工具调用的目录解析，那是命令的目录，不是 harness 的。
+func absVars(vars map[string]string) map[string]string {
+	for k, v := range vars {
+		// Windows 上不带盘符的 \agent 相对当前盘，同样解析（补上盘符）；命令里省略盘符的写法由 exec 展开另认
+		if v != "" && !filepath.IsAbs(v) {
+			if abs, err := filepath.Abs(v); err == nil {
+				vars[k] = abs
+			}
+		}
+	}
+	return vars
+}
+
 // newEngine 组装 Engine：action 检查与 outbound 检查。文件动作的保护路径用主目录、h-guard 实际的配置与缓存目录，
 // 以及这次 --config 加载的文件展开。
 func (s setup) newEngine(o Options, j action.Judge, oj outbound.Judge) *engine.Engine {
 	c := &action.Check{Rules: s.rules, Config: s.cfg, Catalog: s.catalog, Locale: s.locale, Judge: j,
 		Paths: paths.Env{Home: o.Home, FoldCase: paths.FoldCaseDefault, Windows: paths.WindowsDefault,
-			Vars: map[string]string{rules.VarConfig: o.ConfigDir, rules.VarCache: o.CacheDir, rules.VarExtraConfig: s.extra,
+			Vars: absVars(map[string]string{rules.VarConfig: o.ConfigDir, rules.VarCache: o.CacheDir, rules.VarExtraConfig: s.extra,
 				rules.VarClaudeConfig: o.Getenv("CLAUDE_CONFIG_DIR"), rules.VarCodexHome: o.Getenv("CODEX_HOME"),
 				rules.VarXDGConfig: o.Getenv("XDG_CONFIG_HOME"), rules.VarPiAgentDir: piAgentDir(o), rules.VarDSHHome: install.ExpandDSHHome(o.Home, o.Getenv("DSH_HOME")), rules.VarOMPConfig: ompConfig(o),
-				rules.VarHermesHome: hermesHome(o), rules.VarHermesManaged: hermesManaged(o)}}}
+				rules.VarHermesHome: hermesHome(o), rules.VarHermesManaged: hermesManaged(o)})}}
 	o2 := &outbound.Check{Rules: s.rules, Config: s.cfg, Judge: oj}
 	return &engine.Engine{
 		Checks: []guard.Check{c, o2}, Catalog: s.catalog, Locale: s.locale,

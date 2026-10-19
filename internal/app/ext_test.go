@@ -213,6 +213,16 @@ func TestUnknownTools(t *testing.T) {
 	if got := extAction(t, mustOut(e, omp("github", map[string]string{}), "omp", "tool_call")); got != "ask" {
 		t.Errorf("unlisted tool: %s", got)
 	}
+	oc := func(tool string) []byte {
+		return extReq("opencode", "tool.execute.before", map[string]any{"tool": tool, "sessionID": "s", "callID": "c", "args": map[string]string{}, "source": "mcp"})
+	}
+	if got := extAction(t, mustOut(e, oc("docs_search"), "opencode", "tool.execute.before")); got != "deny" {
+		t.Errorf("opencode MCP tool (cannot ask): %s", got)
+	}
+	e.config("version: 1\nharnesses:\n  opencode: {read_only_tools: [docs_*]}\n  dsh: {read_only_tools: [plugin_market]}\n")
+	if got := extAction(t, mustOut(e, oc("docs_search"), "opencode", "tool.execute.before")); got != "pass" {
+		t.Errorf("opencode listed MCP tool: %s", got)
+	}
 	dsh := extReq("dsh", "tools/pre-execute", map[string]any{"name": "plugin_market", "callId": "c", "arguments": map[string]string{}})
 	if got := extAction(t, mustOut(e, dsh, "dsh", "tools/pre-execute")); got != "pass" {
 		t.Errorf("dsh listed tool: %s", got)
@@ -237,6 +247,20 @@ func TestPiAgentDirTilde(t *testing.T) {
 		"hook", "pi", "--event", "tool_call")
 	if code != 0 || extAction(t, out) == "pass" {
 		t.Errorf("overwrite the pi extension: %s (exit %d, %s)", out, code, errs)
+	}
+}
+
+// TestAbsVars：占位符的相对值按 h-guard 的工作目录（harness 的目录）解析；绝对路径与空值原样保留。
+func TestAbsVars(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	abs := filepath.Join(dir, "x")
+	got := absVars(map[string]string{"a": "agent", "b": abs, "d": ""})
+	if want := filepath.Join(dir, "agent"); got["a"] != want {
+		t.Errorf("relative value = %q, want %q", got["a"], want)
+	}
+	if got["b"] != abs || got["d"] != "" {
+		t.Errorf("absVars = %q", got)
 	}
 }
 

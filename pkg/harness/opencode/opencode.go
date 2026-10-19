@@ -3,7 +3,8 @@
 // 翻译成 opencode 的行为（抛出错误阻止、改写工具输出、显示 toast）。
 //
 // 请求的 data 是 hook 的参数：
-//   - tool.execute.before：{tool, sessionID, callID, args}；
+//   - tool.execute.before：{tool, sessionID, callID, args, source}，source 是插件查得的工具来源：mcp（MCP 服务提供的工具）、
+//     opencode（内置工具、.opencode/tool/ 里的自定义工具与插件提供的工具），查不到时为 "?"；
 //   - tool.execute.after：同上，result 是工具结果 {output, content}（内置工具的 output 是字符串，MCP 工具的结果在 content）；
 //   - chat.message：{sessionID, agent, parts, parentID}，parts 是消息的各部分，parentID 由插件查得（子 agent 的会话不为空，
 //     查不到时为 "?"，同样按自动消息处理）。
@@ -30,8 +31,11 @@ const Name = "opencode"
 // MinVersion 是插件按其源码编写的 opencode 版本（1.x 的插件 API；2.x 的插件 API 不同，不支持）。
 const MinVersion = "1.19.3"
 
-// ErrNoAction 表示这次工具调用不产生动作（MCP、子 agent 等其他工具，或输入里没有可检查的内容），插件照常放行。
+// ErrNoAction 表示这次工具调用不产生动作（glob、子 agent、自定义工具等其他工具，或输入里没有可检查的内容），插件照常放行。
 var ErrNoAction = fmt.Errorf("opencode: %w", harness.ErrNoAction)
+
+// errUnknownTool 表示 MCP 工具，或看不出来源的工具（Parse 返回 *harness.UnknownToolError）。
+var errUnknownTool = errors.New("opencode: the tool is not known")
 
 func init() {
 	if err := harness.Register(Adapter{}); err != nil {
@@ -72,6 +76,7 @@ type toolData struct {
 	SessionID string          `json:"sessionID"`
 	CallID    string          `json:"callID"`
 	Args      json.RawMessage `json:"args"`
+	Source    string          `json:"source"` // 只在 tool.execute.before 里有
 }
 
 type args struct {
@@ -138,9 +143,12 @@ func (a Adapter) Parse(raw []byte) (guard.Event, error) {
 		if d.Tool == "bash" {
 			ev.Cwd = extadapter.Workdir(ev.Cwd, in.Workdir)
 		}
-		acts, err := a.actions(d.Tool, in)
+		acts, err := a.actions(d.Tool, d.Source, in)
 		if errors.Is(err, applypatch.ErrUnparsed) {
 			return guard.Event{}, &harness.TargetUnparsedError{Event: ev}
+		}
+		if errors.Is(err, errUnknownTool) {
+			return guard.Event{}, &harness.UnknownToolError{Event: ev}
 		}
 		if err != nil {
 			return guard.Event{}, err
@@ -187,14 +195,31 @@ func (a Adapter) shellOf() guard.Shell {
 	return a.shell
 }
 
+// builtinNoAction 是 opencode 自带的、不执行命令也不改动用户文件的工具（1.19.3）：查找、网页、待办、提问、技能、
+// 子 agent（子 agent 的工具调用各自经过检查）、退出计划、lsp（实验性）、代码模式的 execute（其中调用的 MCP 工具各自经过
+// 检查）、MCP 资源的列出与读取，以及 opencode 用来回复无效调用的 invalid。插件标为 mcp 时不放行：MCP 工具在自带工具之后
+// 注册、同名时覆盖它们，服务 plan 的工具 exit 就叫 plan_exit。
+var builtinNoAction = map[string]bool{
+	"glob": true, "webfetch": true, "websearch": true, "todowrite": true, "question": true, "skill": true, "task": true,
+	"plan_exit": true, "lsp": true, "execute": true, "invalid": true,
+	"list_mcp_resources": true, "list_mcp_resource_templates": true, "read_mcp_resource": true,
+}
+
 // actions 把工具映射为动作：bash 执行命令；read、grep 读文件；write、edit 写文件；apply_patch 的补丁逐个文件转成
-// 文件动作，读不懂时返回 applypatch.ErrUnparsed（调用方请求确认）。其余工具（glob、webfetch、task、MCP 等）不产生动作。
-func (a Adapter) actions(tool string, in args) ([]guard.Action, error) {
+// 文件动作，读不懂时返回 applypatch.ErrUnparsed（调用方请求确认）。其余自带的工具与自定义工具、插件提供的工具不产生动作。
+// MCP 工具（名字是 <服务>_<工具>，与自定义工具的 <文件>_<导出> 分不开，由插件按 MCP 服务的名字标出 source）与看不出来源
+// 的工具返回 errUnknownTool（调用方请求确认，opencode 上阻止，harnesses.opencode.read_only_tools 列出的放行）。
+func (a Adapter) actions(tool, source string, in args) ([]guard.Action, error) {
 	one := func(act guard.Action, ok bool) ([]guard.Action, error) {
 		if !ok {
 			return nil, ErrNoAction
 		}
 		return []guard.Action{act}, nil
+	}
+	// 插件标为 mcp 的工具先于自带工具的名字处理：服务 apply 的工具 patch 就叫 apply_patch，同名时 MCP 工具覆盖自带工具，
+	// 按自带工具解析参数会放行它
+	if source == "mcp" {
+		return nil, errUnknownTool
 	}
 	switch tool {
 	case "bash":
@@ -208,7 +233,10 @@ func (a Adapter) actions(tool string, in args) ([]guard.Action, error) {
 	case "apply_patch":
 		return applypatch.Actions(in.PatchText)
 	}
-	return nil, ErrNoAction
+	if builtinNoAction[tool] || source == "opencode" {
+		return nil, ErrNoAction
+	}
+	return nil, errUnknownTool
 }
 
 // fileContent 报告工具结果是不是文件内容：读文件的工具，或读文件的命令。

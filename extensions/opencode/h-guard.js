@@ -10,6 +10,7 @@ const HARNESS = 'opencode'
 const ACTIONS = ['pass', 'deny', 'ask', 'warn']
 const CONFIG = null // h-guard install
 const DEFAULT_TIMEOUT_MS = 20000
+const MCP_STATUS_TIMEOUT_MS = 5000
 const FAILED = 'h-guard could not finish its check'
 const NO_REASON = 'h-guard stopped this without giving a reason'
 const UNCHECKED = 'h-guard could not run its check, so this tool call was blocked; ask the user to run h-guard status'
@@ -28,8 +29,9 @@ export const HGuard = async ({ client, directory }) => {
     // 动作：工具执行之前检查；deny（及 opencode 做不到的 ask）抛出错误，工具不执行，模型读到说明。
     // h-guard 无法运行时同样阻止：动作不能因为检查失败而放行
     'tool.execute.before': async (input, output) => {
+      const source = await sourceOf(client, input.tool)
       const reply = await callGuard('tool.execute.before', input.sessionID, directory, {
-        data: { tool: input.tool, sessionID: input.sessionID, callID: input.callID, args: output.args },
+        data: { tool: input.tool, sessionID: input.sessionID, callID: input.callID, args: output.args, source },
       })
       if (reply.action === 'error') throw new Error(UNCHECKED + ' (' + reply.message + ')')
       if (reply.action === 'deny' || reply.action === 'ask') throw new Error(textOf(reply))
@@ -98,6 +100,30 @@ async function parentOf(client, id) {
     return typeof s.parentID === 'string' ? s.parentID : ''
   } catch (err) {
     return '?'
+  }
+}
+
+// sourceOf 返回工具的来源：'mcp' 是 MCP 服务提供的工具，'opencode' 是内置工具、自定义工具与插件提供的工具。opencode 把
+// MCP 工具命名为 <服务>_<工具>（两段各自把字母、数字、_、- 以外的字符换成 _），与自定义工具的 <文件>_<导出> 同形，只能按
+// 已配置的 MCP 服务的名字认出；同名时 MCP 工具覆盖自定义工具，所以前缀相符就按 MCP 工具处理。查询失败时返回 '?'：
+// 看不出是不是 MCP 工具，由 h-guard 按不认识的工具处理，不能让 MCP 工具因为查询失败而放行。查询限时 MCP_STATUS_TIMEOUT_MS
+// （h-guard 的超时更短时取它），超时同样返回 '?'：卡住的查询不能让每次工具调用都等下去
+async function sourceOf(client, tool) {
+  let timer
+  try {
+    const timeout = new Promise((resolve) => {
+      timer = setTimeout(() => resolve({ error: 'timeout' }), Math.min(MCP_STATUS_TIMEOUT_MS, (CONFIG && CONFIG.timeout_ms) || DEFAULT_TIMEOUT_MS))
+    })
+    const res = await Promise.race([client.mcp.status(), timeout])
+    if (!res || res.error) return '?'
+    const servers = res.data !== undefined ? res.data : res
+    if (!servers || typeof servers !== 'object' || Array.isArray(servers)) return '?'
+    const sanitize = (s) => s.replace(/[^a-zA-Z0-9_-]/g, '_')
+    return Object.keys(servers).some((name) => String(tool).startsWith(sanitize(name) + '_')) ? 'mcp' : 'opencode'
+  } catch (err) {
+    return '?'
+  } finally {
+    clearTimeout(timer)
   }
 }
 

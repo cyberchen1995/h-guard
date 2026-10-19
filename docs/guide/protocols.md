@@ -261,7 +261,7 @@ The built-in extensions send these hooks:
 | Harness | `hook` | `data` | `result` |
 |---|---|---|---|
 | `claudecode` | `tool.result`, `prompt.submit` | the mod's event | the tool result (`tool.result`) |
-| `opencode` | `tool.execute.before`, `tool.execute.after` | `{tool, sessionID, callID, args}` | `{output, content}` (`tool.execute.after`) |
+| `opencode` | `tool.execute.before`, `tool.execute.after` | `{tool, sessionID, callID, args}`; `tool.execute.before` adds `source`: `mcp`, `opencode` (built-in, custom and plugin tools) or `?` (lookup failed) | `{output, content}` (`tool.execute.after`) |
 | `opencode` | `chat.message` | `{sessionID, agent, parts, parentID}` | |
 | `pi`, `omp` | `tool_call`, `tool_result` | `{toolCallId, toolName, input}` | `{content}` (`tool_result`) |
 | `pi`, `omp` | `input` | `{text, source}`; oh-my-pi also sends prompts found on its `context` event, with `source: "context"` | |
@@ -279,8 +279,8 @@ reply other than `pass` carries a non-empty `message`; a reply without one is
 not valid. There is no `allow`. Replies to `hermes` may also carry
 `"notify": {"to": "..."}` when `harnesses.hermes.notify` asks for a channel
 notification; other extensions ignore unknown fields. Every request that h-guard understands gets a
-reply, `pass` included; a tool call that has nothing to check (such as an MCP
-tool) gets `pass`. A request h-guard does not understand gets no output, which
+reply, `pass` included; a tool call that has nothing to check (such as a `glob`
+search) gets `pass`. A request h-guard does not understand gets no output, which
 the extension treats as a failure.
 
 ```console
