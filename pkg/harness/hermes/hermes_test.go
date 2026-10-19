@@ -191,7 +191,8 @@ func TestApprovalCaps(t *testing.T) {
 	}
 }
 
-// TestPrompts：pre_gateway_dispatch 能挡下提示词，pre_llm_call 不能；子 agent、定时任务、webhook 与机器人的消息是自动消息。
+// TestPrompts：pre_gateway_dispatch 能挡下提示词，pre_llm_call 不能；子 agent、定时任务、webhook、机器人的消息与
+// Kanban worker 读到的任务说明是自动消息。
 func TestPrompts(t *testing.T) {
 	ev, err := a.Parse(prompt(hermes.HookDispatch, "deploy", "telegram", ""))
 	if err != nil || ev.Text != "deploy" || ev.Requests[0].Source != guard.SourceUser || !a.CapsFor(ev).Block {
@@ -206,6 +207,7 @@ func TestPrompts(t *testing.T) {
 		prompt(hermes.HookPreLLMCall, "nightly", "cron", ""), prompt(hermes.HookPreLLMCall, "payload", "webhook", ""),
 		req(hermes.HookDispatch, map[string]any{"text": "hi", "platform": "discord", "is_bot": true}, nil),
 		req(hermes.HookPreLLMCall, map[string]any{"text": "push main", "platform": "discord", "is_bot": true}, nil),
+		req(hermes.HookPreLLMCall, map[string]any{"text": "fix the build", "platform": "cli", "kanban_task": "t_42"}, nil),
 	} {
 		if ev, err := a.Parse(in); err != nil || ev.Requests[0].Source != guard.SourceAutomated {
 			t.Errorf("automated: %+v %v", ev, err)

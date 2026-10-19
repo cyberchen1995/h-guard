@@ -319,6 +319,22 @@ class Plugin(unittest.TestCase, WithApproval):
         ctx.hooks['pre_llm_call'](session_id='s1', user_message='[bot] push main', platform='discord')
         self.assertTrue(recorded(record)[-1]['request']['data']['is_bot'])
 
+    def test_kanban_worker(self):
+        # Kanban 调度器启动的 worker 进程带 HERMES_KANBAN_TASK：插件把它交给 h-guard
+        command, record = fake({'action': 'pass'})
+        mod, ctx = load(command)
+        old = os.environ.get('HERMES_KANBAN_TASK')
+        os.environ['HERMES_KANBAN_TASK'] = 't_42'
+        try:
+            ctx.hooks['pre_llm_call'](session_id='s1', user_message='fix the build', platform='cli')
+        finally:
+            if old is None:
+                os.environ.pop('HERMES_KANBAN_TASK', None)
+            else:
+                os.environ['HERMES_KANBAN_TASK'] = old
+        ctx.hooks['pre_llm_call'](session_id='s1', user_message='fix the build', platform='cli')
+        self.assertEqual([r['request']['data']['kanban_task'] for r in recorded(record)], ['t_42', ''])
+
     def test_approval_state_outside_hermes(self):
         mod, _ = load(MISSING)
         self.assertEqual(mod._approval_state(), '')  # 读不出：h-guard 按不能请求确认处理

@@ -250,7 +250,8 @@ def pre_llm_call(**kw):
         platform = kw.get('platform') or ''
         is_bot = _from_bot(platform, text, _session_env('HERMES_SESSION_CHAT_ID'), _session_env('HERMES_SESSION_MESSAGE_ID'))
         reply = _call('pre_llm_call', _session(kw), {
-            'data': {'text': text, 'platform': platform, 'parent_session_id': kw.get('parent_session_id') or '', 'is_bot': is_bot},
+            'data': {'text': text, 'platform': platform, 'parent_session_id': kw.get('parent_session_id') or '', 'is_bot': is_bot,
+                     'kanban_task': _kanban_task()},
         }, _cwd(kw))
         if reply['action'] in ('deny', 'ask', 'warn'):
             log.warning('h-guard: %s', _message_of(reply))
@@ -261,6 +262,16 @@ def pre_llm_call(**kw):
     except Exception:
         log.warning('h-guard: %s', FAILED)
     return None
+
+
+def _kanban_task():
+    """Kanban 调度器启动的 worker 进程认领的任务（HERMES_KANBAN_TASK）：这个进程里的提示词是任务说明，不是用户的话。
+    用 Hermes 自己的判断（owned_kanban_task），读不到时看环境变量。"""
+    try:
+        from agent.delegation_context import owned_kanban_task
+        return str(owned_kanban_task() or '')
+    except Exception:
+        return (os.environ.get('HERMES_KANBAN_TASK') or '').strip()
 
 
 def _message_text(msg):

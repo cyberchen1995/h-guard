@@ -269,7 +269,7 @@ The built-in extensions send these hooks:
 | `dsh` | `agent/pre-step` | `{messages: [{source: {kind}, content}], session: {origin, delegationDepth}}` | |
 | `hermes` | `pre_tool_call` | `{tool_name, args, tool_call_id, approval, backend}`; `approval` is how Hermes would handle an approval request (`prompt`, `blocked`, `auto`, or empty when unknown) | |
 | `hermes` | `transform_tool_result`, `transform_terminal_output` | `{tool_name, args, tool_call_id, status}`, or `{command, returncode, env_type}` for background process output | `{content}`: the result string |
-| `hermes` | `pre_gateway_dispatch`, `pre_llm_call` | `{text, platform, is_bot}`, or `{text, platform, parent_session_id, is_bot}`; for `pre_llm_call` the plugin takes `is_bot` from what it recorded on `pre_gateway_dispatch` | |
+| `hermes` | `pre_gateway_dispatch`, `pre_llm_call` | `{text, platform, is_bot}`, or `{text, platform, parent_session_id, is_bot, kanban_task}`; for `pre_llm_call` the plugin takes `is_bot` from what it recorded on `pre_gateway_dispatch`, and `kanban_task` is the task of a Kanban worker process (empty otherwise) | |
 
 Only text content blocks are passed on; images are left out.
 

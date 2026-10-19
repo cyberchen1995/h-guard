@@ -12,7 +12,7 @@
 //   - transform_terminal_output：后台进程的输出（前台命令的输出由 transform_tool_result 检查），{command, returncode,
 //     env_type}，result 是 {content}；
 //   - pre_gateway_dispatch：消息平台上的消息（只检查已授权的发送者），{text, platform, is_bot}；
-//   - pre_llm_call：每一轮交给模型之前的用户消息，{text, platform, parent_session_id, is_bot}。这一步挡不住提示词，
+//   - pre_llm_call：每一轮交给模型之前的用户消息，{text, platform, parent_session_id, is_bot, kanban_task}。这一步挡不住提示词，
 //     只能给模型补一段说明。pre_llm_call 的参数里没有消息是否由机器人发出，is_bot 由插件在 pre_gateway_dispatch
 //     里记下。
 //
@@ -168,6 +168,7 @@ type promptData struct {
 	Platform        string `json:"platform"`
 	ParentSessionID string `json:"parent_session_id"`
 	IsBot           bool   `json:"is_bot"`
+	KanbanTask      string `json:"kanban_task"`
 }
 
 type resultPayload struct {
@@ -237,7 +238,7 @@ func (Adapter) Parse(raw []byte) (guard.Event, error) {
 			return guard.Event{}, fmt.Errorf("hermes: %s data: %w", req.Hook, err)
 		}
 		ev.Kind, ev.Text = guard.EventPrompt, d.Text
-		ev.Requests = []guard.Request{{Text: d.Text, Source: SourceOf(d.Platform, d.ParentSessionID, d.IsBot)}}
+		ev.Requests = []guard.Request{{Text: d.Text, Source: SourceOf(d.Platform, d.ParentSessionID, d.IsBot, d.KanbanTask)}}
 		ev.Native, _ = json.Marshal(nat)
 	default:
 		return guard.Event{}, fmt.Errorf("hermes: unsupported hook %q", req.Hook)
@@ -249,11 +250,12 @@ func (Adapter) Parse(raw []byte) (guard.Event, error) {
 }
 
 // SourceOf 判定提示词的来源：子 agent（delegate_task，会话有 parent_session_id，平台为 subagent）的任务由父 agent
-// 写出，定时任务（cron）的提示词在建任务时写下，webhook 的载荷来自第三方，消息平台上其他机器人发的消息，都是自动
-// 消息；其余（CLI、TUI、Desktop、消息平台上的用户、API）与认不出的取值按用户本人。
-func SourceOf(platform, parentSessionID string, isBot bool) guard.Source {
+// 写出，定时任务（cron）的提示词在建任务时写下，webhook 的载荷来自第三方，消息平台上其他机器人发的消息，Kanban 调度器
+// 启动的 worker（kanbanTask 是它认领的任务）读到的任务说明，都是自动消息；其余（CLI、TUI、Desktop、消息平台上的用户、
+// API）与认不出的取值按用户本人。
+func SourceOf(platform, parentSessionID string, isBot bool, kanbanTask string) guard.Source {
 	switch {
-	case parentSessionID != "", isBot:
+	case parentSessionID != "", isBot, kanbanTask != "":
 		return guard.SourceAutomated
 	}
 	switch strings.ToLower(platform) {

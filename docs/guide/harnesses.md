@@ -425,7 +425,8 @@ Hermes differences:
   (recorded as `warn_undelivered`) and the judge's outbound findings are not
   requested for tool output; prompt warnings reach the model as context.
 - **Prompt origin.** A sub-agent's task (`delegate_task`), a cron job's prompt,
-  a webhook payload and a message from another bot count as automated;
+  a webhook payload, a message from another bot and the task a Kanban worker
+  (started by the dispatcher, `HERMES_KANBAN_TASK`) works on count as automated;
   everything else counts as yours. Hermes marks bot messages only on the
   event that `pre_gateway_dispatch` sees, so the plugin records them there for
   `pre_llm_call`; a person's message with the same text on the same platform
