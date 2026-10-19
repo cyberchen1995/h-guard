@@ -17,6 +17,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/cyberchen1995/h-guard/internal/i18n"
@@ -70,7 +71,7 @@ type Match struct {
 	File *FileMatch `yaml:"file"`
 }
 
-// FileMatch 是文件动作的路径模式，写法见 pkg/detect/paths。模式开头的占位符：{config}、{cache} 是 h-guard
+// FileMatch 是文件动作的路径模式，写法见 pkg/detect/paths。模式开头的占位符（exec 模式里同样可用，见 execPlaceholder）：{config}、{cache} 是 h-guard
 // 实际使用的配置目录与缓存目录（含 XDG_CONFIG_HOME 等自定义位置）；{extra_config} 是这次 --config 加载的
 // 配置文件的绝对路径（没有时该模式不匹配）。Exclude 是不算命中的写法（如 .env.example），逐个候选路径判断：
 // 只按字面匹配，不展开文件系统上的别名，所以指向受保护文件的符号链接不会因为自己的名字被排除。
@@ -97,7 +98,7 @@ const (
 	VarOMPConfig = "omp_config"
 )
 
-// placeholders 是路径模式可以用的占位符。
+// placeholders 是路径模式与 exec 模式可以用的占位符。
 var placeholders = map[string]bool{VarConfig: true, VarCache: true, VarExtraConfig: true, VarClaudeConfig: true, VarCodexHome: true,
 	VarXDGConfig: true, VarPiAgentDir: true, VarDSHHome: true, VarOMPConfig: true}
 
@@ -143,16 +144,22 @@ type Example struct {
 	Path    string           `yaml:"path"`
 }
 
-// ExampleEnv 是文件样例的环境：主目录 /home/user，工作目录 /home/user/project，
-// {config} 为 /xdg/config/h-guard，{cache} 为 /xdg/cache/h-guard，{extra_config} 为 /etc/guard/extra.yaml，区分大小写。
+// ExampleEnv 是样例的环境：主目录 /home/user，工作目录 /home/user/project，
+// {config} 为 /xdg/config/h-guard，{cache} 为 /xdg/cache/h-guard，{extra_config} 为 /etc/guard/extra.yaml，
+// {pi_agent_dir} 为 /opt/pi/agent，{dsh_home} 为 /home/user/my dsh（在主目录之下、含空格），区分大小写；
+// 其余占位符没有值。命令样例也用它展开 exec 模式里的占位符。
 var ExampleEnv = paths.Env{
 	Home: "/home/user", Cwd: "/home/user/project", Lexical: true,
-	Vars: map[string]string{VarConfig: "/xdg/config/h-guard", VarCache: "/xdg/cache/h-guard", VarExtraConfig: "/etc/guard/extra.yaml"},
+	Vars: map[string]string{VarConfig: "/xdg/config/h-guard", VarCache: "/xdg/cache/h-guard", VarExtraConfig: "/etc/guard/extra.yaml",
+		VarPiAgentDir: "/opt/pi/agent", VarDSHHome: "/home/user/my dsh"},
 }
 
 type compiledExec struct {
-	any, posix, powershell []*regexp2.Regexp
-	redirects              []*regexp2.Regexp
+	any, posix, powershell execGroup
+	redirects              execGroup
+	vars                   []string     // 各模式用到的占位符；为空时 base 就是全部模式
+	base                   resolvedExec // 不含占位符时加载时编译的全部模式
+	cache                  atomic.Pointer[resolvedExec]
 	commandPosition        bool
 	stripQuotes            bool
 	encoded                bool
@@ -390,27 +397,45 @@ func compileExec(m *ExecMatch) (*compiledExec, error) {
 	groups := []struct {
 		name string
 		src  []string
-		dst  *[]*regexp2.Regexp
+		dst  *execGroup
 	}{{"any", m.Any, &c.any}, {"posix", m.POSIX, &c.posix}, {"powershell", m.PowerShell, &c.powershell},
 		{"redirects", m.Redirects, &c.redirects}}
 	total := 0
 	for _, g := range groups {
 		for i, p := range g.src {
+			total++
+			if vars := execVars(p); len(vars) > 0 {
+				// 含占位符的模式匹配时才展开；这里用一个含空格与元字符的值试编译，写错的正则在加载时报错
+				for _, v := range vars {
+					if !slices.Contains(c.vars, v) {
+						c.vars = append(c.vars, v)
+					}
+				}
+				if _, err := compileTemplate(p, probeEnv); err != nil {
+					return nil, execPatternErr(g.name, i, err)
+				}
+				g.dst.templates = append(g.dst.templates, p)
+				continue
+			}
 			re, err := regexp2.Compile(p, regexp2.IgnoreCase)
 			if err != nil {
-				// regexp2 的错误里带着整条正则；只留错误类型，原文不回显
-				msg := quotedSpan.ReplaceAllString(err.Error(), "…")
-				return nil, &Error{Path: fmt.Sprintf("match.exec.%s[%d]", g.name, i), Err: errors.New(msg)}
+				return nil, execPatternErr(g.name, i, err)
 			}
 			re.MatchTimeout = MatchTimeout
-			*g.dst = append(*g.dst, re)
-			total++
+			g.dst.static = append(g.dst.static, re)
 		}
 	}
 	if total == 0 && !m.Encoded {
 		return nil, fieldErr("match.exec", "no patterns")
 	}
+	c.base = resolvedExec{any: c.any.static, posix: c.posix.static, powershell: c.powershell.static, redirect: c.redirects.static}
 	return c, nil
+}
+
+// execPatternErr 是 exec 模式编译失败的错误。regexp2 的错误里带着整条正则；只留错误类型，原文不回显。
+func execPatternErr(group string, i int, err error) error {
+	msg := quotedSpan.ReplaceAllString(err.Error(), "…")
+	return &Error{Path: fmt.Sprintf("match.exec.%s[%d]", group, i), Err: errors.New(msg)}
 }
 
 // Result 是一条规则对一条命令的匹配结果。
@@ -424,10 +449,16 @@ type Result struct {
 // 只收紧），strip_quotes 时匹配去引号后的文本，否则匹配全文。
 // 每次正则匹配之前都检查 ctx：预算耗尽时不再开始新的匹配，返回已得出的结果与 ctx 的错误
 // （计时粒度为一次匹配，单次匹配受 MatchTimeout 约束）。
-func (r *Rule) MatchExec(ctx context.Context, e command.Expansion) (Result, error) {
+// env 提供模式里占位符的值（Vars）与主目录（见 execPlaceholder）；含占位符的模式展开后编译失败时按命中处理
+// （带超时标记，只收紧）。
+func (r *Rule) MatchExec(ctx context.Context, e command.Expansion, env paths.Env) (Result, error) {
 	var res Result
 	if r.exec == nil {
 		return res, nil
+	}
+	rx := r.exec.resolve(env)
+	if rx.broken {
+		res = Result{Hit: true, TimedOut: true}
 	}
 	for _, u := range e.Units {
 		if err := ctx.Err(); err != nil {
@@ -436,12 +467,12 @@ func (r *Rule) MatchExec(ctx context.Context, e command.Expansion) (Result, erro
 		if r.exec.encoded && (u.Encoded || slices.ContainsFunc(u.FullTexts(), func(t string) bool { return encoded.Find(t, u.Shell) })) {
 			return Result{Hit: true}, nil
 		}
-		patterns := r.exec.any
+		patterns := rx.any
 		switch u.Shell {
 		case guard.ShellPOSIX:
-			patterns = append(slices.Clip(patterns), r.exec.posix...)
+			patterns = append(slices.Clip(patterns), rx.posix...)
 		case guard.ShellPowerShell:
-			patterns = append(slices.Clip(patterns), r.exec.powershell...)
+			patterns = append(slices.Clip(patterns), rx.powershell...)
 		}
 		var hay []string
 		switch {
@@ -459,11 +490,11 @@ func (r *Rule) MatchExec(ctx context.Context, e command.Expansion) (Result, erro
 			patterns []*regexp2.Regexp
 			hay      []string
 		}{{patterns, hay}}
-		if len(r.exec.redirects) > 0 {
+		if len(rx.redirect) > 0 {
 			groups = append(groups, struct {
 				patterns []*regexp2.Regexp
 				hay      []string
-			}{r.exec.redirects, u.Redirections()})
+			}{rx.redirect, u.Redirections()})
 		}
 		for _, g := range groups {
 			for _, re := range g.patterns {
@@ -537,7 +568,7 @@ func (r *Rule) CheckExamples(ctx context.Context) error {
 			if err != nil {
 				return err
 			}
-			res, err := r.MatchExec(ctx, e)
+			res, err := r.MatchExec(ctx, e, ExampleEnv)
 			if err != nil {
 				return err
 			}

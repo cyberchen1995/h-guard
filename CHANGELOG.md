@@ -61,6 +61,14 @@ minor releases. Every such change is recorded in this file.
   `PI_CODING_AGENT_DIR`, `PI_CONFIG_DIR` and `DSH_HOME` and in PowerShell's
   `$env:` form. Path patterns can use `{xdg_config}`, `{pi_agent_dir}`,
   `{omp_config}` and `{dsh_home}`.
+- `match.exec` patterns can use the same placeholders (`{pi_agent_dir}`,
+  `{dsh_home}`, `{config}` and the others). Each becomes the directory h-guard
+  sees, escaped, with `/` and `\` as separators and the `~` and `$HOME` forms
+  under the home directory; an unset one never matches. `guard_tampering` uses
+  them, so a command that names the actual path under a custom
+  `PI_CODING_AGENT_DIR`, `DSH_HOME`, `PI_CONFIG_DIR`, `XDG_CONFIG_HOME`,
+  `CLAUDE_CONFIG_DIR` or `CODEX_HOME`, or under h-guard's own directories,
+  asks as well.
 
 ### Public packages
 
