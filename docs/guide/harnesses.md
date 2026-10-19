@@ -198,6 +198,18 @@ opencode differences:
 - **Prompt origin.** A message in a sub-agent's session (the `task` tool) is
   the parent agent's task and counts as automated; the plugin looks up each
   session's parent for this. Other messages count as yours.
+- **MCP tools.** opencode names an MCP tool `<server>_<tool>`, the same shape
+  as a custom tool in `.opencode/tool/` (`<file>_<export>`). Before each tool
+  call the plugin asks opencode for its MCP servers (`client.mcp.status`) and
+  marks a tool whose name starts with a server's name as an MCP tool. MCP tools
+  are treated as tools h-guard does not know (see
+  [below](#tools-h-guard-does-not-know)): since opencode cannot ask, they are
+  blocked unless listed in `harnesses.opencode.read_only_tools`, even when the
+  name matches one of opencode's own tools (an MCP tool replaces a built-in of
+  the same name). If the lookup fails or takes longer than 5 seconds, any tool
+  that is not one of opencode's own is treated the same way.
+  Custom tools and tools added by plugins pass, as before; one whose name
+  starts with an MCP server's name counts as an MCP tool.
 - **Not covered.** Commands you type with `!` and terminal sessions do not go
   through tool hooks.
 
@@ -336,7 +348,7 @@ For pi, oh-my-pi and DeepSeek Harness, h-guard knows every tool the harness ship
 
 - tools that run commands or change files are checked as actions;
 - tools that only read, search, plan or coordinate pass;
-- MCP tools (`mcp__…`) pass, as on the other harnesses;
+- MCP tools (`mcp__…`) pass, as on Claude Code and Codex;
 - anything else asks, with the reason `tool_unknown`. That covers the
   harness's remaining tools, which can run code, install plugins, schedule
   runs or change remote repositories, and tools added by extensions or
@@ -353,9 +365,17 @@ harnesses:
 ```
 
 The list only applies to tools h-guard does not know: a shell or file tool
-named there is still checked. For opencode, h-guard cannot tell the
-harness's own tools from MCP and plugin tools, so tools it does not know pass
-there.
+named there is still checked.
+
+For opencode, h-guard knows opencode's own tools; custom tools and tools added
+by plugins pass, and MCP tools count as tools it does not know. opencode
+cannot ask, so an MCP tool is blocked (`policy.when_ask_unsupported`) until
+you list it:
+
+```yaml
+harnesses:
+  opencode: {read_only_tools: [docs_search, context7_*]}
+```
 
 ## What each harness can do
 

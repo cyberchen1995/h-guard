@@ -244,6 +244,7 @@ harness 版本未经验证时，`install` 与 `status` 会说明，但不拒绝�
 - **DeepSeek Harness 显示不了提示。** 提示只写进它的日志；被拦下的提示词直接丢弃，对话里没有说明。
 - **oh-my-pi 的 `eval` 工具一律请求确认。** h-guard 读不懂 Python 与 JavaScript 代码，所以每次 `eval` 调用都需要你确认。
 - **pi、oh-my-pi 与 DeepSeek Harness 上不认识的工具请求确认。** 不在 h-guard 对这几个 harness 自带工具的名单里的工具（比如扩展添加的）需要你确认，直到你把它列进 `harnesses.<name>.read_only_tools`。
+- **opencode 上的 MCP 工具被阻止。** opencode 不支持请求确认，所以 MCP 工具在你把它列进 `harnesses.opencode.read_only_tools` 之前一律阻止；自定义工具与插件提供的工具照常放行。
 - **提示词的来源靠推断。** Claude Code 会标出自动消息（定时任务、子 agent 回报）；Codex 不标，h-guard 按已知格式识别它的自动消息。识别不出的自动消息算作你本人的话，模型开启时可能被当作你对某个操作的要求。
 - **Windows 没有经过实机验证。** Windows 上的路径处理、PowerShell 的 hook 外包脚本与 Codex 的命令形式只在 CI 与交叉编译中测试过。
 - **路径规则只看文件工具。** `sensitive_read` 等文件规则检查的是 harness 的文件工具（Claude Code 的 Read、Codex 的补丁、generic 的文件动作）。在 shell 里读同一个文件的命令（如 `cat ~/.ssh/id_rsa`）不会被它们拦下。`outbound.tier: 2`（默认是 1）时，被识别为读文件的 shell 命令的输出会在读取之后扫描其中的凭据与私钥。
