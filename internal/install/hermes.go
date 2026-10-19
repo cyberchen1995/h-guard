@@ -84,8 +84,8 @@ func expandVars(t Target, s string) string {
 	var b strings.Builder
 	for i := 0; i < len(s); {
 		c := s[i]
-		switch {
-		case c == '\'':
+		switch c {
+		case '\'':
 			j := strings.IndexByte(s[i+1:], '\'')
 			if j < 0 {
 				b.WriteString(s[i:])
@@ -93,7 +93,7 @@ func expandVars(t Target, s string) string {
 			}
 			b.WriteString(s[i : i+j+2])
 			i += j + 2
-		case c == '%':
+		case '%':
 			if i+1 < len(s) && s[i+1] == '%' {
 				b.WriteByte('%')
 				i += 2
@@ -111,7 +111,7 @@ func expandVars(t Target, s string) string {
 				b.WriteString("%" + name + "%")
 			}
 			i += j + 2
-		case c == '$':
+		case '$':
 			switch {
 			case i+1 < len(s) && s[i+1] == '$':
 				b.WriteByte('$')
