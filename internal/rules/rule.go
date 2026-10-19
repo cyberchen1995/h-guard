@@ -414,7 +414,7 @@ func compileExec(m *ExecMatch) (*compiledExec, error) {
 				if _, err := compileTemplate(p, probeEnv); err != nil {
 					return nil, execPatternErr(g.name, i, err)
 				}
-				g.dst.templates = append(g.dst.templates, p)
+				*g.dst = append(*g.dst, execPattern{tpl: p})
 				continue
 			}
 			re, err := regexp2.Compile(p, regexp2.IgnoreCase)
@@ -422,13 +422,13 @@ func compileExec(m *ExecMatch) (*compiledExec, error) {
 				return nil, execPatternErr(g.name, i, err)
 			}
 			re.MatchTimeout = MatchTimeout
-			g.dst.static = append(g.dst.static, re)
+			*g.dst = append(*g.dst, execPattern{re: re})
 		}
 	}
 	if total == 0 && !m.Encoded {
 		return nil, fieldErr("match.exec", "no patterns")
 	}
-	c.base = resolvedExec{any: c.any.static, posix: c.posix.static, powershell: c.powershell.static, redirect: c.redirects.static}
+	c.base = resolvedExec{any: c.any.static(), posix: c.posix.static(), powershell: c.powershell.static(), redirect: c.redirects.static()}
 	return c, nil
 }
 

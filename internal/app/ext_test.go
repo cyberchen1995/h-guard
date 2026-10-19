@@ -250,6 +250,20 @@ func TestPiAgentDirTilde(t *testing.T) {
 	}
 }
 
+// TestAbsVars：占位符的相对值按 h-guard 的工作目录（harness 的目录）解析；绝对路径与空值原样保留。
+func TestAbsVars(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	abs := filepath.Join(dir, "x")
+	got := absVars(map[string]string{"a": "agent", "b": abs, "d": ""})
+	if want := filepath.Join(dir, "agent"); got["a"] != want {
+		t.Errorf("relative value = %q, want %q", got["a"], want)
+	}
+	if got["b"] != abs || got["d"] != "" {
+		t.Errorf("absVars = %q", got)
+	}
+}
+
 // TestRememberRedactsEachRequest：一个事件有几条指令（dsh 一步里的几条消息）时，用户正则认出的区间按每条指令在
 // ev.Text 里的位置遮蔽后再写入指令缓存。
 func TestRememberRedactsEachRequest(t *testing.T) {
