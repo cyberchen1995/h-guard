@@ -194,7 +194,9 @@ func TestHermesHomeProtected(t *testing.T) {
 	if got := terminal("sudo tee /srv/policy/config.yaml < /tmp/x"); got == "pass" {
 		t.Errorf("managed config: %s", got)
 	}
-	in := hermesReq("pre_tool_call", map[string]any{"tool_name": "write_file", "args": map[string]string{"path": "/srv/policy/config.yaml", "content": "x"}, "approval": "prompt"}, nil)
+	// 文件工具的路径用本机写法（Windows 上 /srv/... 没有盘符，会话 cwd 也不是绝对路径）
+	e.vars["HERMES_MANAGED_DIR"] = filepath.Join(e.home, "policy")
+	in := hermesReq("pre_tool_call", map[string]any{"tool_name": "write_file", "args": map[string]string{"path": filepath.Join(e.home, "policy", "config.yaml"), "content": "x"}, "approval": "prompt"}, nil)
 	if got := extAction(t, mustOut(e, in, "hermes", "pre_tool_call")); got == "pass" {
 		t.Errorf("write the managed config: %s", got)
 	}

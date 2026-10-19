@@ -73,7 +73,10 @@ func execLiteral(v, home string) string {
 		return pathStart + `(?:[/\\]+|(?=[/\\]))`
 	}
 	lit := literalSegments(n)
-	if d := driveLetter.FindString(n); d != "" && len(n) > len(d) && n[len(d)] == '/' {
+	if d := driveLetter.FindString(n); d != "" && len(n) == len(d) {
+		// 盘的根目录（C:\ 规范化成 C:；Windows 上 / 经 absVars 也成了它）：与根目录相同，盘符可省略
+		return "(?i:(?:" + regexp.QuoteMeta(d) + "|" + pathStart + "))" + `(?:[/\\]+|(?=[/\\]))`
+	} else if d != "" && n[len(d)] == '/' {
 		// Windows 的盘符路径：命令里也可能省略盘符（\agent、/agent 相对当前盘），省略时须从参数开头起
 		lit = "(?:" + regexp.QuoteMeta(d) + "|" + pathStart + ")" + literalSegments(n[len(d):])
 	}

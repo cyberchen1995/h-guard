@@ -135,6 +135,13 @@ func TestExecPlaceholderRoot(t *testing.T) {
 		[]string{"rm /tmp/cordis.patch.yml", "rm cordis.patch.yml"})
 	mustMatch(t, `rm {dsh_home}[/\\]?(?=$|\s)`, root, []string{"rm /", "rm / x"}, []string{"rm /tmp/x", "rm x"})
 	mustMatch(t, `^rm {dsh_home}$`, root, []string{"rm /", "rm //"}, []string{"rm /tmp", "rm x/"})
+	// 盘的根目录同样：盘符可写可省略，不能变成只匹配「C:」
+	for _, v := range []string{`C:\`, "c:/"} {
+		drive := paths.Env{Home: "/home/u", Vars: map[string]string{VarDSHHome: v}}
+		mustMatch(t, `{dsh_home}[/\\]+cordis\.patch\.yml`, drive,
+			[]string{`rm C:\cordis.patch.yml`, "rm c:/cordis.patch.yml", `rm \cordis.patch.yml`, "rm /cordis.patch.yml"},
+			[]string{`rm C:\tmp\cordis.patch.yml`, "rm cordis.patch.yml", "rm C:cordis.patch.yml"})
+	}
 }
 
 // TestExecPlaceholderOrder：展开后的模式保持规则里的顺序（含占位符的与不含的交错）。
