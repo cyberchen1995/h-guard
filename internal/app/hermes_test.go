@@ -170,6 +170,11 @@ func TestHermesHomeProtected(t *testing.T) {
 	if got := terminal("ls /opt/data/plugins/h-guard"); got != "pass" {
 		t.Errorf("reading the plugin directory: %s", got)
 	}
+	// HERMES_HOME 里的环境变量与 Hermes 一样展开
+	e.vars["HERMES_HOME"], e.vars["DATA_ROOT"] = "${DATA_ROOT}/hermes", "/srv/agents"
+	if got := terminal("rm -rf /srv/agents/hermes/plugins/h-guard"); got == "pass" {
+		t.Errorf("HERMES_HOME with a variable: %s", got)
+	}
 	// 托管范围的配置（HERMES_MANAGED_DIR）同样受保护：命令里的实际路径与文件工具
 	e.vars["HERMES_MANAGED_DIR"] = "/srv/policy"
 	if got := terminal("sudo tee /srv/policy/config.yaml < /tmp/x"); got == "pass" {

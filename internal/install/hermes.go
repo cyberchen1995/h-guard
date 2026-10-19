@@ -39,34 +39,151 @@ const HermesMaxTimeout = hermesHookTimeoutMax - 5
 // hermesConfigLine 是内嵌插件里由 install 填写的一行（Python 的写法）。
 var hermesConfigLine = regexp.MustCompile(`(?m)^CONFIG = (.*)  # h-guard install$`)
 
-// HermesHome 是 Hermes Agent 的主目录：$HERMES_HOME（开头的 ~ 展开到主目录），默认 ~/.hermes（Windows 上是
-// %LOCALAPPDATA%\hermes），两者都带上 $HERMES_DATA_DIR_SUFFIX。用 hermes -p <名字> 选择的其他配置档在
-// <主目录>/profiles/<名字>，不在这里。
+// HermesHome 是 Hermes Agent 的主目录：$HERMES_HOME（与 Hermes 一样展开其中的环境变量与开头的 ~），默认 ~/.hermes
+// （Windows 上是 %LOCALAPPDATA%\hermes）。用 hermes -p <名字> 选择的其他配置档在 <主目录>/profiles/<名字>，不在这里。
 func HermesHome(t Target) string {
 	if d := strings.TrimSpace(t.Getenv("HERMES_HOME")); d != "" {
-		return ExpandHermesHome(t.Home, d)
+		return filepath.Clean(expandUser(t, expandVars(t, d)))
 	}
-	suffix := t.Getenv("HERMES_DATA_DIR_SUFFIX")
 	if t.GOOS == "windows" {
 		base := strings.TrimSpace(t.Getenv("LOCALAPPDATA"))
 		if base == "" {
 			base = filepath.Join(t.Home, "AppData", "Local")
 		}
-		return filepath.Join(base, "hermes"+suffix)
+		return filepath.Join(base, "hermes")
 	}
-	return filepath.Join(t.Home, ".hermes"+suffix)
+	return filepath.Join(t.Home, ".hermes")
 }
 
-// ExpandHermesHome 与 Hermes 一样展开 $HERMES_HOME 开头的 ~（~、~/…、~\…）；只有空白时返回空。
-func ExpandHermesHome(home, d string) string {
-	d = strings.TrimSpace(d)
-	switch {
-	case d == "~":
-		return home
-	case strings.HasPrefix(d, "~/"), strings.HasPrefix(d, `~\`):
-		return filepath.Join(home, d[2:])
+// posixVar 是 Python 的 posixpath.expandvars 认的写法：$名字（ASCII 的字母、数字与 _）或 ${…}。
+var posixVar = regexp.MustCompile(`\$([A-Za-z0-9_]+|\{[^}]*\})`)
+
+// expandVars 与 Hermes 的 os.path.expandvars 一样展开环境变量：POSIX 上是 $VAR 与 ${VAR}；Windows 上另有 %VAR%，
+// 单引号里的不展开，%% 与 $$ 是字面的 % 与 $。没有设置的变量原样保留。
+func expandVars(t Target, s string) string {
+	lookup := func(name string) (string, bool) {
+		if name == "" {
+			return "", false
+		}
+		v := t.Getenv(name)
+		return v, v != ""
 	}
-	return d
+	if t.GOOS != "windows" {
+		return posixVar.ReplaceAllStringFunc(s, func(m string) string {
+			name := strings.TrimSuffix(strings.TrimPrefix(m[1:], "{"), "}")
+			if v, ok := lookup(name); ok {
+				return v
+			}
+			return m
+		})
+	}
+	// ntpath.expandvars
+	isVarChar := func(c byte) bool {
+		return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_' || c == '-'
+	}
+	var b strings.Builder
+	for i := 0; i < len(s); {
+		c := s[i]
+		switch {
+		case c == '\'':
+			j := strings.IndexByte(s[i+1:], '\'')
+			if j < 0 {
+				b.WriteString(s[i:])
+				return b.String()
+			}
+			b.WriteString(s[i : i+j+2])
+			i += j + 2
+		case c == '%':
+			if i+1 < len(s) && s[i+1] == '%' {
+				b.WriteByte('%')
+				i += 2
+				continue
+			}
+			j := strings.IndexByte(s[i+1:], '%')
+			if j < 0 {
+				b.WriteString(s[i:])
+				return b.String()
+			}
+			name := s[i+1 : i+1+j]
+			if v, ok := lookup(name); ok {
+				b.WriteString(v)
+			} else {
+				b.WriteString("%" + name + "%")
+			}
+			i += j + 2
+		case c == '$':
+			switch {
+			case i+1 < len(s) && s[i+1] == '$':
+				b.WriteByte('$')
+				i += 2
+			case i+1 < len(s) && s[i+1] == '{':
+				j := strings.IndexByte(s[i+2:], '}')
+				if j < 0 {
+					b.WriteString(s[i:])
+					return b.String()
+				}
+				name := s[i+2 : i+2+j]
+				if v, ok := lookup(name); ok {
+					b.WriteString(v)
+				} else {
+					b.WriteString("${" + name + "}")
+				}
+				i += j + 3
+			default:
+				j := i + 1
+				for j < len(s) && isVarChar(s[j]) {
+					j++
+				}
+				name := s[i+1 : j]
+				if v, ok := lookup(name); ok {
+					b.WriteString(v)
+				} else {
+					b.WriteString("$" + name)
+				}
+				i = j
+			}
+		default:
+			b.WriteByte(c)
+			i++
+		}
+	}
+	return b.String()
+}
+
+// expandUser 与 os.path.expanduser 一样展开开头的 ~：~ 与 ~/…（Windows 上另有 ~\…）是主目录（Windows 上是
+// %USERPROFILE%）；~名字 在 Windows 上是主目录旁边的同名目录，在 POSIX 上要查用户数据库，这里原样保留。
+func expandUser(t Target, s string) string {
+	if !strings.HasPrefix(s, "~") {
+		return s
+	}
+	seps := "/"
+	if t.GOOS == "windows" {
+		seps = `/\`
+	}
+	i := strings.IndexAny(s[1:], seps) + 1
+	if i == 0 {
+		i = len(s)
+	}
+	home := t.Home
+	if t.GOOS == "windows" {
+		if p := t.Getenv("USERPROFILE"); p != "" {
+			home = p
+		}
+		if i != 1 {
+			// ntpath 的 join(dirname(home), 名字)：按 / 与 \ 分开（在别的系统上测试时 filepath 只认 /）
+			k := strings.LastIndexAny(home, `/\`)
+			if user := s[1:i]; !strings.EqualFold(user, home[k+1:]) {
+				if k < 0 {
+					home = user
+				} else {
+					home = home[:k] + `\` + user
+				}
+			}
+		}
+	} else if i != 1 {
+		return s
+	}
+	return home + s[i:]
 }
 
 // HermesManagedDefault 是 Hermes 托管范围（managed scope）的默认目录；测试把它换成不存在的目录，不读本机的 /etc/hermes。

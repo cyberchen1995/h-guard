@@ -341,7 +341,8 @@ or a messaging gateway. There are no recorded sessions yet.
 `install hermes --write`:
 
 1. writes h-guard's Python plugin (`plugin.yaml` and `__init__.py`, standard
-   library only) to `plugins/h-guard/` in Hermes's home: `$HERMES_HOME`,
+   library only) to `plugins/h-guard/` in Hermes's home: `$HERMES_HOME`
+   (environment variables and a leading `~` in it expanded as Hermes does),
    default `~/.hermes` (`%LOCALAPPDATA%\hermes` on Windows), with the h-guard
    path and timeout in it;
 2. adds `h-guard` to `plugins.enabled` in `config.yaml` there (Hermes loads no

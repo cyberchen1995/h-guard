@@ -19,7 +19,7 @@ func hermesPlan(t *testing.T, tg Target, remove bool) []Step {
 	return steps
 }
 
-// TestHermesPaths：$HERMES_HOME（开头的 ~ 展开）、$HERMES_DATA_DIR_SUFFIX 与 Windows 的 %LOCALAPPDATA%\hermes。
+// TestHermesPaths：$HERMES_HOME（与 Hermes 一样先展开环境变量，再展开开头的 ~）与 Windows 的 %LOCALAPPDATA%\hermes。
 func TestHermesPaths(t *testing.T) {
 	tg := target(t, "linux")
 	if got, want := HermesPluginDir(tg), filepath.Join(tg.Home, ".hermes", "plugins", "h-guard"); got != want {
@@ -29,14 +29,46 @@ func TestHermesPaths(t *testing.T) {
 	if got := HermesConfig(tg); got != filepath.Join(tg.Home, "hh", "config.yaml") {
 		t.Errorf("HERMES_HOME with ~: %s", got)
 	}
-	tg.Getenv = env(map[string]string{"HERMES_HOME": "  ", "HERMES_DATA_DIR_SUFFIX": "-dev"})
-	if got := HermesHome(tg); got != filepath.Join(tg.Home, ".hermes-dev") {
-		t.Errorf("suffix: %s", got)
+	tg.Getenv = env(map[string]string{"HERMES_HOME": "  "})
+	if got := HermesHome(tg); got != filepath.Join(tg.Home, ".hermes") {
+		t.Errorf("blank HERMES_HOME: %s", got)
+	}
+	for in, want := range map[string]string{
+		"$DATA/hermes":   "/srv/data/hermes",
+		"${DATA}/hermes": "/srv/data/hermes",
+		"$NOPE/hermes":   "$NOPE/hermes",                         // 没有设置的变量原样保留
+		"%DATA%/hermes":  "%DATA%/hermes",                        // POSIX 上 %…% 不是变量
+		"$TILDE/hermes":  filepath.Join(tg.Home, "hh", "hermes"), // 先展开变量，再展开 ~
+		"~other/hermes":  "~other/hermes",
+		"/opt/$DATA_X/x": "/opt/$DATA_X/x",
+	} {
+		tg.Getenv = env(map[string]string{"HERMES_HOME": in, "DATA": "/srv/data", "TILDE": "~/hh"})
+		if got := HermesHome(tg); got != filepath.Clean(want) {
+			t.Errorf("HERMES_HOME=%s: %s, want %s", in, got, want)
+		}
 	}
 	win := target(t, "windows")
 	win.Getenv = env(map[string]string{"LOCALAPPDATA": filepath.Join(win.Home, "LAD")})
 	if got := HermesHome(win); got != filepath.Join(win.Home, "LAD", "hermes") {
 		t.Errorf("windows: %s", got)
+	}
+	// ntpath.expandvars 与 expanduser
+	wenv := map[string]string{"DATA": `D:\data`, "USERPROFILE": `C:\Users\me`}
+	for in, want := range map[string]string{
+		`%DATA%\hermes`:   `D:\data\hermes`,
+		`$DATA\hermes`:    `D:\data\hermes`,
+		`${DATA}\hermes`:  `D:\data\hermes`,
+		`%NOPE%\hermes`:   `%NOPE%\hermes`,
+		`'%DATA%'\hermes`: `'%DATA%'\hermes`,
+		`100%%\hermes`:    `100%\hermes`,
+		`~\hermes`:        `C:\Users\me\hermes`,
+		`~bob\hermes`:     `C:\Users\bob\hermes`,
+	} {
+		win.Getenv = env(map[string]string{"HERMES_HOME": in, "DATA": wenv["DATA"], "USERPROFILE": wenv["USERPROFILE"]})
+		got := expandUser(win, expandVars(win, in))
+		if got != want {
+			t.Errorf("windows HERMES_HOME=%s: %s, want %s", in, got, want)
+		}
 	}
 }
 

@@ -200,7 +200,7 @@ write patterns with `**/` or `~/` (not a drive letter). Placeholders:
 | `{omp_config}` | `$PI_CONFIG_DIR` under the home directory (no match when unset) |
 | `{dsh_home}` | `$DSH_HOME`, with a leading `~` expanded (no match when unset) |
 | `{hermes_managed}` | Hermes Agent's managed-scope directory: `$HERMES_MANAGED_DIR`, otherwise `/etc/hermes` (unset on Windows) |
-| `{hermes_home}` | Hermes Agent's home: `$HERMES_HOME` with a leading `~` expanded, otherwise the default `~/.hermes` (`%LOCALAPPDATA%\hermes` on Windows); always set |
+| `{hermes_home}` | Hermes Agent's home: `$HERMES_HOME` with environment variables and a leading `~` expanded as Hermes does, otherwise the default `~/.hermes` (`%LOCALAPPDATA%\hermes` on Windows); always set |
 
 Relative targets are resolved against the working directory and symbolic links
 are resolved, so a link to a protected file matches too. `exclude` patterns are
