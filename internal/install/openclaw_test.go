@@ -835,3 +835,46 @@ func TestOpenClawStatusTrustsOpenClaw(t *testing.T) {
 		t.Errorf("status without OpenClaw:\n%s", lines)
 	}
 }
+
+// TestOpenClawWindowsRootRelative：Windows 上没有盘符、从根目录开始的路径（\OpenClaw\openclaw.json 或 /OpenClaw/...）
+// 与 OpenClaw（path.resolve）一样补上当前目录的盘符（或 UNC 共享），这样 {openclaw_config} 匹配带盘符的写法；
+// OPENCLAW_CONFIG_PATH、OPENCLAW_STATE_DIR、OPENCLAW_HOME、OPENCLAW_INCLUDE_ROOTS 都一样。UNC 路径与带盘符的路径不变。
+func TestOpenClawWindowsRootRelative(t *testing.T) {
+	cwd := `D:\work`
+	old := openclawGetwd
+	openclawGetwd = func() (string, error) { return cwd, nil }
+	t.Cleanup(func() { openclawGetwd = old })
+	tg := target(t, "windows")
+	for _, tt := range []struct{ cwd, in, want string }{
+		{`D:\work`, `\OpenClaw\openclaw.json`, `D:\OpenClaw\openclaw.json`},
+		{`D:\work`, `/OpenClaw/openclaw.json`, `D:\OpenClaw\openclaw.json`},
+		{`\\srv\share\work`, `\OpenClaw\openclaw.json`, `\\srv\share\OpenClaw\openclaw.json`},
+		{`D:\work`, `C:\OpenClaw\openclaw.json`, `C:\OpenClaw\openclaw.json`},
+		{`D:\work`, `\\srv\share\openclaw.json`, `\\srv\share\openclaw.json`},
+	} {
+		cwd = tt.cwd
+		tg.Getenv = env(map[string]string{"OPENCLAW_CONFIG_PATH": tt.in})
+		if got := OpenClawConfig(tg); got != tt.want {
+			t.Errorf("OPENCLAW_CONFIG_PATH=%s in %s: %s, want %s", tt.in, tt.cwd, got, tt.want)
+		}
+	}
+	cwd = `D:\work`
+	tg.Getenv = env(map[string]string{"OPENCLAW_STATE_DIR": `\state`})
+	if got := OpenClawStateDir(tg); got != `D:\state` {
+		t.Errorf("OPENCLAW_STATE_DIR: %s", got)
+	}
+	tg.Getenv = env(map[string]string{"OPENCLAW_HOME": `\oc`})
+	if got := OpenClawHome(tg); got != `D:\oc` {
+		t.Errorf("OPENCLAW_HOME: %s", got)
+	}
+	tg.Getenv = env(map[string]string{"OPENCLAW_INCLUDE_ROOTS": `\etc\openclaw`})
+	if roots := includeRoots(tg, `D:\OpenClaw\openclaw.json`); len(roots) != 2 || roots[1].dir != `D:\etc\openclaw` {
+		t.Errorf("OPENCLAW_INCLUDE_ROOTS: %+v", roots)
+	}
+	// 其他平台上 /x 本来就是绝对路径，不变
+	lx := target(t, "linux")
+	lx.Getenv = env(map[string]string{"OPENCLAW_CONFIG_PATH": "/srv/oc.json"})
+	if got := OpenClawConfig(lx); got != "/srv/oc.json" {
+		t.Errorf("linux: %s", got)
+	}
+}

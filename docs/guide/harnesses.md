@@ -392,7 +392,10 @@ and `install --remove` refuses.
 
 A named profile (`--profile`, `OPENCLAW_PROFILE`) has its own state
 directory; set `OPENCLAW_STATE_DIR` or `OPENCLAW_CONFIG_PATH` to install
-there.
+there. On Windows, a path in these variables (or in `OPENCLAW_HOME`,
+`OPENCLAW_INCLUDE_ROOTS` and `$include`) that starts at the root without a
+drive, such as `\OpenClaw\openclaw.json`, is on the current drive, as
+OpenClaw resolves it.
 
 The plugin runs in the Gateway process and starts h-guard through OpenClaw's
 `runtime.system.runCommandWithTimeout`, without a shell. Because it was not

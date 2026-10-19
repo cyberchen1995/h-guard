@@ -25,22 +25,36 @@ var openclawHooks = []string{"before_tool_call", "before_agent_run", "before_dis
 // 只有空白或是字面的 undefined、null 时当作没有设置。
 func OpenClawHome(t Target) string {
 	if d := strings.TrimSpace(t.Getenv("OPENCLAW_HOME")); d != "" && d != "undefined" && d != "null" {
-		return openclawAbs(t.Home, d)
+		return openclawAbs(t.GOOS, t.Home, d)
 	}
 	return t.Home
 }
 
 // openclawPath 按 OpenClaw 的规则解析用户给的路径：开头的 ~、~/、~\ 展开到 OpenClaw 的主目录，相对路径换成绝对路径。
 func openclawPath(t Target, p string) string {
-	return openclawAbs(OpenClawHome(t), strings.TrimSpace(p))
+	return openclawAbs(t.GOOS, OpenClawHome(t), strings.TrimSpace(p))
 }
 
-func openclawAbs(home, p string) string {
+// openclawGetwd 是当前目录（测试里替换）。
+var openclawGetwd = os.Getwd
+
+func openclawAbs(goos, home, p string) string {
 	switch {
 	case p == "~":
 		p = home
 	case strings.HasPrefix(p, "~/"), strings.HasPrefix(p, `~\`):
 		p = filepath.Join(home, p[2:])
+	}
+	if goos == "windows" && len(p) > 2 && winVolume(p) != "" && (p[1] != ':' || p[2] == '\\' || p[2] == '/') { // C:\x、\\server\share\x
+		return p
+	}
+	if goos == "windows" && winRootRelative(p) { // \OpenClaw\openclaw.json：OpenClaw（path.resolve）补上当前目录的盘符
+		if cwd, err := openclawGetwd(); err == nil {
+			if v := winVolume(cwd); v != "" {
+				return v + strings.ReplaceAll(p, "/", `\`)
+			}
+		}
+		return p
 	}
 	if !filepath.IsAbs(p) && !strings.HasPrefix(p, "/") && !strings.HasPrefix(p, `\`) {
 		if abs, err := filepath.Abs(p); err == nil {
@@ -48,6 +62,28 @@ func openclawAbs(home, p string) string {
 		}
 	}
 	return p
+}
+
+// winRootRelative 报告 Windows 路径是否从根目录开始却没有盘符（\x 或 /x；\\server\share 这样的 UNC 路径不算）。
+func winRootRelative(p string) bool {
+	if len(p) == 0 || (p[0] != '\\' && p[0] != '/') {
+		return false
+	}
+	return len(p) == 1 || (p[1] != '\\' && p[1] != '/')
+}
+
+// winVolume 返回 Windows 路径的盘符（C:）或 UNC 共享（\\server\share）；没有时为空。
+func winVolume(p string) string {
+	if len(p) >= 2 && p[1] == ':' {
+		return p[:2]
+	}
+	if len(p) > 2 && (p[0] == '\\' || p[0] == '/') && (p[1] == '\\' || p[1] == '/') {
+		parts := strings.FieldsFunc(p[2:], func(r rune) bool { return r == '\\' || r == '/' })
+		if len(parts) >= 2 {
+			return `\\` + parts[0] + `\` + parts[1]
+		}
+	}
+	return ""
 }
 
 // openclawLegacyDir 与 openclawLegacyConfig 是 OpenClaw 改名前（Clawdbot）的状态目录与配置文件名，升级来的安装还在用。

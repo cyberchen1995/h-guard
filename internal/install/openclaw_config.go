@@ -64,7 +64,7 @@ func LoadOpenClawConfig(t Target) OpenClawEffective {
 		e.Err = fmt.Errorf("%s: %w", e.Path, err)
 		return e
 	}
-	l := &includeLoader{e: &e, roots: includeRoots(t, e.Path)}
+	l := &includeLoader{e: &e, roots: includeRoots(t, e.Path), goos: t.GOOS}
 	merged, err := l.resolve(root, e.Path, 0, []string{e.Path})
 	if err != nil {
 		e.Err = err
@@ -81,6 +81,7 @@ func LoadOpenClawConfig(t Target) OpenClawEffective {
 type includeLoader struct {
 	e     *OpenClawEffective
 	roots []includeRoot
+	goos  string
 }
 
 // includeRoot 是允许引入文件的目录：写法上的路径与解析符号链接后的路径。
@@ -207,6 +208,11 @@ func (l *includeLoader) load(ref, from string, depth int, chain []string) (any, 
 		return map[string]any{}, fmt.Errorf("%s: $include is nested more than %d levels deep", from, openclawIncludeDepth)
 	}
 	p := ref
+	if l.goos == "windows" && winRootRelative(p) { // 没有盘符的 \x 用引入它的文件所在的盘
+		if v := winVolume(from); v != "" {
+			p = v + p
+		}
+	}
 	if !filepath.IsAbs(p) {
 		p = filepath.Join(filepath.Dir(from), p)
 	}
