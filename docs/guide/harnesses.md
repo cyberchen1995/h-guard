@@ -350,7 +350,9 @@ or a messaging gateway. There are no recorded sessions yet.
    keeping the rest of the file (comments are kept, the layout may be
    normalized). When `plugins.hook_callback_timeout` (default 30 seconds) is
    shorter than h-guard's timeout plus 5 seconds, it is raised, because Hermes
-   blocks a tool call whose hook does not answer in time. Hermes accepts at
+   blocks a tool call whose hook does not answer in time; a value that is not
+   a number, which Hermes replaces with the default, is replaced the same way,
+   and `status` reports it. Hermes accepts at
    most 600 seconds there, so `--timeout` is at most 595 for `hermes`.
    Removing h-guard later leaves a raised timeout as it is. When an
    administrator's managed scope (`/etc/hermes/config.yaml`, or

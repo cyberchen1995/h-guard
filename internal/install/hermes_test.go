@@ -187,6 +187,33 @@ func TestHermesTimeoutLimit(t *testing.T) {
 	}
 }
 
+// TestHermesTimeoutValues：plugins.hook_callback_timeout 按 Hermes 的读法取值；不是数的值 status 报告，install 换成数。
+func TestHermesTimeoutValues(t *testing.T) {
+	for body, want := range map[string]float64{
+		"{}": 30, "{hook_callback_timeout: null}": 30, "{hook_callback_timeout: 45}": 45, `{hook_callback_timeout: "45"}`: 45,
+		"{hook_callback_timeout: 0}": 0, "{hook_callback_timeout: -5}": 30, "{hook_callback_timeout: 900}": 600,
+		"{hook_callback_timeout: true}": 1, "{hook_callback_timeout: nope}": 30, "{hook_callback_timeout: [1]}": 30,
+	} {
+		st, err := readHermesState([]byte("plugins: " + body + "\n"))
+		if err != nil || st.timeout != want {
+			t.Errorf("%s: %v %v, want %v", body, st.timeout, err, want)
+		}
+	}
+	tg := target(t, "linux")
+	cfg := HermesConfig(tg)
+	os.MkdirAll(filepath.Dir(cfg), 0o700)
+	os.WriteFile(cfg, []byte("plugins: {enabled: [h-guard], hook_callback_timeout: nope}\n"), 0o600)
+	apply(t, hermesPlan(t, tg, false))
+	b, _ := os.ReadFile(cfg)
+	if st, _ := readHermesState(b); !st.timeoutOK || st.timeout < float64(max(tg.Timeout+5, 30)) {
+		t.Errorf("install left the timeout:\n%s", b)
+	}
+	os.WriteFile(cfg, []byte("plugins: {enabled: [h-guard], hook_callback_timeout: nope}\n"), 0o600)
+	if lines := strings.Join(Inspect(tg, "hermes"), "\n"); !strings.Contains(lines, "not a number") {
+		t.Errorf("status:\n%s", lines)
+	}
+}
+
 // TestHermesManagedScope：托管范围（$HERMES_MANAGED_DIR/config.yaml，默认 /etc/hermes）写下的键覆盖用户的配置。
 // 它的 plugins.enabled 不含 h-guard、plugins.disabled 含 h-guard，或 hook_callback_timeout 太短时，install 报错（不改托管
 // 文件，也不改用户的），status 报告问题；托管的 plugins.enabled 含 h-guard 时照常安装、没有问题。

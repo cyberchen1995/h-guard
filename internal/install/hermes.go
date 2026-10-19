@@ -244,7 +244,7 @@ func managedProblem(m hermesState, path string, timeout int) string {
 		return fmt.Sprintf("%s (managed by your administrator) lists h-guard in plugins.disabled, so Hermes does not load it; ask the administrator to remove it there", path)
 	case m.enabledSet && !m.enabled:
 		return fmt.Sprintf("%s (managed by your administrator) sets plugins.enabled without h-guard, which replaces your list, so Hermes does not load it; ask the administrator to add h-guard there", path)
-	case m.timeoutSet && m.timeoutOK && m.timeout != 0 && m.timeout < float64(timeout+5):
+	case m.timeoutSet && m.timeout != 0 && m.timeout < float64(timeout+5):
 		return fmt.Sprintf("%s (managed by your administrator) sets plugins.hook_callback_timeout to %gs, shorter than h-guard's timeout plus 5 seconds (%ds); ask the administrator to raise it, or install with a lower --timeout", path, m.timeout, timeout+5)
 	}
 	return ""
@@ -497,8 +497,12 @@ func hermesConfigEdit(old []byte, exists bool, timeout int, remove bool) ([]byte
 			enabled.Content = append(enabled.Content, &yaml.Node{Kind: yaml.ScalarNode, Value: hermesPluginName})
 			changed = true
 		}
+		// 不是数的值 Hermes 按默认的 30 秒处理（每次都记一行警告），同样换成数
 		need := timeout + 5
-		if cur, ok := hookTimeout(plugins); ok && cur != 0 && cur < float64(need) {
+		if cur, valid := hookTimeout(plugins); !valid || cur != 0 && cur < float64(need) {
+			if !valid {
+				need = max(need, hermesHookTimeout) // 不比 Hermes 实际用的默认值短
+			}
 			n := setKey(plugins, "hook_callback_timeout")
 			*n = yaml.Node{Kind: yaml.ScalarNode, Tag: "!!int", Value: strconv.Itoa(need)}
 			changed = true
@@ -518,18 +522,34 @@ func hermesConfigEdit(old []byte, exists bool, timeout int, remove bool) ([]byte
 	return b.Bytes(), nil
 }
 
-// hookTimeout 返回 plugins.hook_callback_timeout 的秒数：没有时是默认的 30；不是数时 ok 为假（Hermes 用默认值，
-// 但 install 不改用户写的值）。
-func hookTimeout(plugins *yaml.Node) (float64, bool) {
+// hookTimeout 返回 Hermes 实际等待插件回调的秒数（plugins.hook_callback_timeout，与 Hermes 的
+// _resolve_hook_callback_timeout 相同）：没有时是默认的 30；0 表示不限时；负数按默认值，超过 600 按 600。不是数
+// （float() 读不出，例如 nope）时 Hermes 同样用默认值，valid 为假。
+func hookTimeout(plugins *yaml.Node) (secs float64, valid bool) {
 	n := mapValue(plugins, "hook_callback_timeout")
 	if n == nil || (n.Kind == yaml.ScalarNode && n.Tag == "!!null") {
 		return hermesHookTimeout, true
 	}
 	if n.Kind != yaml.ScalarNode {
-		return 0, false
+		return hermesHookTimeout, false
 	}
-	v, err := strconv.ParseFloat(n.Value, 64)
-	return v, err == nil
+	var v float64
+	var err error
+	if n.Tag == "!!bool" { // float(True) 是 1
+		v = 0
+		if strings.EqualFold(n.Value, "true") {
+			v = 1
+		}
+	} else if v, err = strconv.ParseFloat(strings.TrimSpace(n.Value), 64); err != nil || v != v {
+		return hermesHookTimeout, false
+	}
+	switch {
+	case v < 0:
+		return hermesHookTimeout, true
+	case v > hermesHookTimeoutMax:
+		return hermesHookTimeoutMax, true
+	}
+	return v, true
 }
 
 // deleteKey 删掉映射 m 中的 key。
@@ -630,8 +650,16 @@ func inspectHermes(t Target) []string {
 	if !ok || err != nil || !sameFiles(want, files) {
 		lines = append(lines, "problem: the plugin differs from this h-guard version (edited or written by another version); run h-guard install hermes --write")
 	}
-	if ok && !m.timeoutSet && st.timeoutOK && st.timeout != 0 && st.timeout < float64(timeout+5) {
-		lines = append(lines, fmt.Sprintf("problem: Hermes waits %gs for a plugin hook (plugins.hook_callback_timeout) but h-guard is given %ds, so slow checks block tool calls; run h-guard install hermes --write", st.timeout, timeout))
+	switch {
+	case !ok || m.timeoutSet:
+	case st.timeout != 0 && st.timeout < float64(timeout+5):
+		invalid := ""
+		if !st.timeoutOK {
+			invalid = " (its value is not a number, so Hermes uses the default)"
+		}
+		lines = append(lines, fmt.Sprintf("problem: Hermes waits %gs for a plugin hook (plugins.hook_callback_timeout%s) but h-guard is given %ds, so slow checks block tool calls; run h-guard install hermes --write", st.timeout, invalid, timeout))
+	case !st.timeoutOK:
+		lines = append(lines, fmt.Sprintf("problem: plugins.hook_callback_timeout is not a number, so Hermes uses the default %ds and logs a warning on every hook; run h-guard install hermes --write", hermesHookTimeout))
 	}
 	if st.isolation == "host" {
 		lines = append(lines, "note: plugins.isolation is host: the plugin cannot see how Hermes would handle an approval, so h-guard's confirmations become denials (policy.when_ask_unsupported)")
