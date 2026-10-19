@@ -115,42 +115,24 @@ func TestExecPlaceholderCache(t *testing.T) {
 	if static.resolve(a) != &static.base {
 		t.Error("patterns without placeholders are not the precompiled ones")
 	}
-	// 值都是绝对路径时换工作目录不重新编译；有相对的值时重新编译
+	// 工作目录不影响展开（相对的值由调用方事先解析），换目录不重新编译
 	a.Cwd = "/w1"
 	r4 := c.resolve(a)
 	a.Cwd = "/w2"
 	if c.resolve(a) != r4 {
-		t.Error("a new working directory recompiled absolute placeholders")
-	}
-	rel := paths.Env{Cwd: "/w1", Vars: map[string]string{VarPiAgentDir: "agent"}}
-	r5 := c.resolve(rel)
-	rel.Cwd = "/w2"
-	if c.resolve(rel) == r5 {
-		t.Error("a new working directory reused relative placeholders")
+		t.Error("a new working directory recompiled the placeholders")
 	}
 }
 
-// TestExecPlaceholderRootAndRelative：值是根目录时展开为分隔符，不能变成匹配任何位置的空串；相对的值按 Cwd 解析。
-func TestExecPlaceholderRootAndRelative(t *testing.T) {
+// TestExecPlaceholderRoot：值是根目录时展开为不占字符的「这里开始一个路径」：不能变成匹配任何位置的空串，
+// 也不能让模式里紧跟的分隔符变成要求两个。
+func TestExecPlaceholderRoot(t *testing.T) {
 	root := paths.Env{Home: "/home/u", Vars: map[string]string{VarDSHHome: "/"}}
-	// 模式在占位符后面自己写分隔符：根目录不能再多要求一个
 	mustMatch(t, `{dsh_home}[/\\]+cordis\.patch\.yml`, root,
-		[]string{"rm /cordis.patch.yml", `rm "/cordis.patch.yml"`, "echo x >/cordis.patch.yml"},
+		[]string{"rm /cordis.patch.yml", `rm "/cordis.patch.yml"`, "echo x >/cordis.patch.yml",
+			"Remove-Item other,/cordis.patch.yml", "Remove-Item -Path:/cordis.patch.yml"},
 		[]string{"rm /tmp/cordis.patch.yml", "rm cordis.patch.yml"})
 	mustMatch(t, `rm {dsh_home}[/\\]?(?=$|\s)`, root, []string{"rm /", "rm / x"}, []string{"rm /tmp/x", "rm x"})
-	// 相对的值：解析后的绝对路径与原样的相对路径都认，相对路径须从参数开头起
-	rel := paths.Env{Home: "/home/u", Cwd: "/work/project", Vars: map[string]string{VarPiAgentDir: "../agent"}}
-	mustMatch(t, `^rm {pi_agent_dir}[/\\]+x$`, rel, []string{"rm /work/agent/x", "rm ../agent/x"},
-		[]string{"rm /work/project/agent/x", "rm /tmp/../agent/x", "rm /tmp/work/agent/x"})
-	// PowerShell 数组里逗号后面的路径
-	mustMatch(t, `{pi_agent_dir}[/\\]+x`, rel, []string{"Remove-Item other,../agent/x"}, nil)
-	rel.Cwd = ""
-	mustMatch(t, `^rm {pi_agent_dir}[/\\]+x$`, rel, []string{"rm ../agent/x"}, nil)
-	for _, v := range []string{"/abs", `\abs`, `C:\abs`, "c:rel"} {
-		if got := absDir(v, "/work"); got != v {
-			t.Errorf("absDir(%q) = %q", v, got)
-		}
-	}
 }
 
 // TestExecPlaceholderOrder：展开后的模式保持规则里的顺序（含占位符的与不含的交错）。

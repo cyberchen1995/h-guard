@@ -21,8 +21,8 @@ import (
 //   - 值在主目录之下时，主目录的部分另可写成 ~、$HOME、${HOME}、$env:HOME、$env:USERPROFILE、%USERPROFILE%
 //     （路径模式解析目标时会展开 ~，命令文本不会，这几种写法在这里补上）。
 //
-// 值是相对路径时，按 env.Cwd（事件的工作目录）解析后的绝对路径与原样的相对路径（须从参数开头起）都认；没有 Cwd 时
-// 只按原样匹配。值是根目录时展开为不占字符的「这里开始一个路径」，模式里紧跟的分隔符照常匹配那个 /。
+// 相对的值由调用方事先解析成绝对路径（harness 按自己的工作目录解析，h-guard 继承同一个目录）。值是根目录时展开为
+// 不占字符的「这里开始一个路径」，模式里紧跟的分隔符照常匹配那个 /。
 //
 // 占位符也可以写在后向断言里：regexp2 的后向断言不要求定长。
 //
@@ -54,20 +54,13 @@ func expandExec(p string, env paths.Env) string {
 		if len(m[1])%2 != 0 || !placeholders[m[2]] {
 			return s
 		}
-		v := env.Vars[m[2]]
-		abs := absDir(v, env.Cwd)
-		if abs == v {
-			return m[1] + execLiteral(v, env.Home)
-		}
-		// 相对的值：命令里既可能写解析后的绝对路径，也可能照原样写相对路径（shell 按同一个 cwd 解析）
-		// 两种写法都须从参数开头起：解析出的 /work/agent 不能匹配 /tmp/work/agent 的后半截
-		return m[1] + pathStart + "(?:" + execLiteral(abs, env.Home) + "|" + execLiteral(v, env.Home) + ")"
+		return m[1] + execLiteral(env.Vars[m[2]], env.Home)
 	})
 }
 
-// pathStart 要求路径从一个参数的开头起：前面是行首、空白、引号、=、shell 的分隔符或 PowerShell 数组的逗号。相对路径与根目录展开时用它，
-// 否则相对路径 agent 会匹配 /x/agent 的后半截，根目录会匹配任何一个 /。
-const pathStart = "(?<![^\\s'\"`=(<>|;&,])"
+// pathStart 要求路径从一个参数的开头起：前面是行首、空白、引号、=、shell 的分隔符，或 PowerShell 数组的逗号与
+// -Path:x 的冒号。根目录展开时用它，否则会匹配任何一个 /。
+const pathStart = "(?<![^\\s'\"`=(<>|;&,:])"
 
 // execLiteral 是匹配目录 v 的正则（见 execPlaceholder 的说明）；v 为空时永不匹配。
 func execLiteral(v, home string) string {
@@ -91,16 +84,6 @@ func execLiteral(v, home string) string {
 	}
 	return "(?i:" + lit + ")"
 }
-
-// absDir 把相对路径 v 接到 cwd 下（cwd 为空时原样返回）。以 / 或 \ 开头、带盘符的路径不是相对路径。
-func absDir(v, cwd string) string {
-	if v == "" || cwd == "" || strings.HasPrefix(v, "/") || strings.HasPrefix(v, `\`) || driveLetter.MatchString(v) {
-		return v
-	}
-	return strings.ReplaceAll(cwd, `\`, "/") + "/" + v
-}
-
-var driveLetter = regexp.MustCompile(`^[A-Za-z]:`)
 
 // normDir 把 \ 换成 /，规范化并去掉末尾的 /；根目录保留为 /，不能变成空（空的字面量匹配任何位置）。
 func normDir(v string) string {
@@ -148,19 +131,12 @@ type resolvedExec struct {
 	broken                           bool // 有模式展开后编译失败：按命中处理（只收紧）
 }
 
-// templateKey 是缓存的键：主目录与各占位符的值；有相对的值时再加上工作目录（按它解析）。值都是绝对路径时
-// 工作目录不影响展开，换目录不该让缓存失效、重新编译。
+// templateKey 是缓存的键：主目录与各占位符的值。
 func templateKey(env paths.Env, names []string) string {
 	var b strings.Builder
 	b.WriteString(env.Home)
-	relative := false
 	for _, n := range names {
-		v := env.Vars[n]
-		b.WriteString("\x00" + v)
-		relative = relative || absDir(v, env.Cwd) != v
-	}
-	if relative {
-		b.WriteString("\x01" + env.Cwd)
+		b.WriteString("\x00" + env.Vars[n])
 	}
 	return b.String()
 }

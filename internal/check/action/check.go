@@ -296,9 +296,6 @@ func (c *Check) evalExec(ctx context.Context, ev guard.Event, ex *guard.ExecActi
 		c.explain(&v, nil, ex.Command, ev.Cwd)
 		return v
 	}
-	// 模式里占位符的相对值按事件的工作目录解析，与文件动作一致
-	env := c.Paths
-	env.Cwd = ev.Cwd
 	policyRules := map[string]Rule{}
 	var hits []RegexHit
 	judgeOn := c.Config.Judge.Enabled
@@ -318,7 +315,7 @@ func (c *Check) evalExec(ctx context.Context, ev guard.Event, ex *guard.ExecActi
 			ID: r.ID, Action: r.Action, Bypassable: r.Bypassable(), Vetoable: r.Vetoable(), RadiusFloor: r.RadiusFloor,
 			RequiresJudge: r.RequiresJudge, Asked: judgeOn && hasQ,
 		}
-		res, err := r.MatchExec(ctx, exp, env)
+		res, err := r.MatchExec(ctx, exp, c.Paths)
 		if res.Hit {
 			hits = append(hits, RegexHit{Rule: r.ID, TimedOut: res.TimedOut})
 		}
