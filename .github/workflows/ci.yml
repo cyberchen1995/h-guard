@@ -4,9 +4,17 @@ on:
   push:
     branches: [main]
   pull_request:
+    # edited：标题或描述改了要重查（squash 合并时它们就是进 main 的提交说明）；这时只跑 commits。
+    types: [opened, synchronize, reopened, edited]
 
 permissions:
   contents: read
+
+# 同一个 PR 再推送时取消还在跑的上一轮。main 上的推送各自一组：同组只保留一个排队的 run，
+# 连续推送会把中间的提交挤掉，而每个提交都要有完整结果。
+concurrency:
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 defaults:
   run:
@@ -14,6 +22,7 @@ defaults:
 
 jobs:
   lint:
+    if: github.event.action != 'edited'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -46,11 +55,16 @@ jobs:
       - name: release notes script
         run: bash .github/scripts/release-notes_test.sh
 
+  # -race 只在 ubuntu 上开：它让 CPU 密集的测试慢一个数量级，而平台差异在路径与文件系统，不在数据竞争。
   test:
+    if: github.event.action != 'edited'
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
+        include:
+          - os: ubuntu-latest
+            race: -race
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     steps:
@@ -64,16 +78,15 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-      # -race 需要 cgo；Windows runner 自带 MinGW。
-      - name: go test -race
-        env:
-          CGO_ENABLED: "1"
-        run: go test -race -count=1 -timeout 30m ./...
+      - name: go test
+        run: go test ${{ matrix.race }} -count=1 -timeout 30m ./...
       - name: golden
         env:
           HG_GOLDEN_REQUIRED: "1"
         run: go test -count=1 -timeout 30m -run '^TestGolden$' ./internal/check/action/
+      # fuzz 的种子语料在普通测试里就会跑；随机探索只在 main 上做，PR 不等它。
       - name: fuzz (10s per target)
+        if: github.event_name == 'push'
         run: |
           while read -r name pkg; do
             echo "== $name $pkg"
@@ -89,10 +102,12 @@ jobs:
           FuzzEmbeddedPatches ./pkg/harness/codex/
           TARGETS
 
+  # PR 是 squash 合并的：进 main 的说明来自 PR 的标题与描述，这里检查它们没有私有引用；
+  # 分支上的每个提交只要能构建、gofmt 与 vet 通过、说明干净，测试由 test 对 head 跑。
   commits:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
-    timeout-minutes: 180
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -101,6 +116,13 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
+      - name: check pull request title and description
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          printf '%s\n\n%s\n' "$PR_TITLE" "$PR_BODY" > "$RUNNER_TEMP/pr.txt"
+          HG_PR_TEXT_FILE="$RUNNER_TEMP/pr.txt" go test -count=1 -run '^TestPullRequestMetadata$' ./internal/repocheck/
       - name: check each commit
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}

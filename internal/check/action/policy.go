@@ -40,6 +40,7 @@ type Rule struct {
 type RegexHit struct {
 	Rule     string
 	TimedOut bool // 正则匹配超时，按命中处理
+	Local    bool // 命中规则的 local 组：模型关闭时照样打断
 }
 
 // JudgeStatus 是这次判断层的状态。
@@ -136,10 +137,15 @@ func Decide(in Input) Result {
 
 	switch in.Judge {
 	case JudgeOff:
-		// 2. 模型关闭：缺少「是否要求过」「影响范围」两个信号，requires_judge 规则的命中不打断。
+		// 2. 模型关闭：缺少「是否要求过」「影响范围」两个信号，requires_judge 规则的命中不打断，
+		// 除非命中的是它的 local 组（后果大、几乎不会误报的形态）。
 		res.Hits = regex
+		local := map[string]bool{}
+		for _, rh := range in.Regex {
+			local[rh.Rule] = local[rh.Rule] || rh.Local
+		}
 		for _, h := range regex {
-			if in.Rules[h.Rule].RequiresJudge {
+			if in.Rules[h.Rule].RequiresJudge && !local[h.Rule] {
 				res.Silenced = append(res.Silenced, h.Rule)
 			} else {
 				res.Dangerous = append(res.Dangerous, h)

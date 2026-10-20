@@ -136,6 +136,7 @@ func (g execGroup) static() []*regexp2.Regexp {
 type resolvedExec struct {
 	key                              string
 	any, posix, powershell, redirect []*regexp2.Regexp
+	local                            []*regexp2.Regexp
 	broken                           bool // 有模式展开后编译失败：按命中处理（只收紧）
 }
 
@@ -173,7 +174,7 @@ func (c *compiledExec) resolve(env paths.Env) *resolvedExec {
 	for _, g := range []struct {
 		src *execGroup
 		dst *[]*regexp2.Regexp
-	}{{&c.any, &r.any}, {&c.posix, &r.posix}, {&c.powershell, &r.powershell}, {&c.redirects, &r.redirect}} {
+	}{{&c.any, &r.any}, {&c.posix, &r.posix}, {&c.powershell, &r.powershell}, {&c.redirects, &r.redirect}, {&c.local, &r.local}} {
 		for _, p := range *g.src {
 			if p.tpl == "" {
 				*g.dst = append(*g.dst, p.re)

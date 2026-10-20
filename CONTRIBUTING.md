@@ -45,8 +45,8 @@ part of CI:
 claude plugin test extensions/claudecode
 ```
 
-To check every commit of a branch the way CI does (gofmt, vet, Windows vet,
-race tests, golden):
+To check every commit of a branch the way CI does (commit message, gofmt, vet,
+Windows vet; tests run only on the branch head):
 
 ```sh
 .github/scripts/each-commit.sh <base> <head>
@@ -73,8 +73,11 @@ configuration (`~/.claude`, `~/.codex`). Use a temporary `HOME` and
 ## Commits and pull requests
 
 - Use conventional commits: `feat:`, `fix:`, `docs:`, `test:`, `perf:`,
-  `chore:`. Keep each commit buildable and passing, since CI checks every
-  commit in a pull request.
+  `chore:`. Keep each commit buildable, since CI vets every commit in a pull
+  request; the full test suite runs on the branch head.
+- Pull requests are squash-merged. The commit that lands on `main` takes its
+  message from the pull request title and description, so write them the way
+  you would write a commit message; CI checks them the same way.
 - Do not put review ids, internal planning terms or private paths in commit
   messages, code or docs. A repository test rejects them.
 - Do not commit real credentials or personal data. Fixtures use made-up values.

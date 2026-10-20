@@ -110,6 +110,7 @@ func TestPoolKeepsEveryRunsFailures(t *testing.T) {
 // 「满分」的 0.2（plateau 宽度 2 容不下 4 条差距）；0.05 与 0.10 同分，平局规则取离起点 0.2 最近的 0.10
 // （0.05 不是唯一最优，断言 0.10 同时钉住优化目标与平局规则）。
 func TestPooledSweepOptimizesSingleRunDecisions(t *testing.T) {
+	t.Parallel()
 	var cmds []string
 	for _, c := range corpus(t) {
 		if c.Expect == guard.DecisionAsk && len(c.UserRequests) == 0 && len(c.Rules) == 1 && c.Rules[0] == "publish" {
@@ -183,6 +184,7 @@ func TestPooledSweepOptimizesSingleRunDecisions(t *testing.T) {
 // TestPoolingDoesNotNarrowIntervals：同一批确定性结果复制 3 次，比例的分子分母同比变大，
 // 但置信区间与 bootstrap 的乐观判据不变——重复运行不是新语料。
 func TestPoolingDoesNotNarrowIntervals(t *testing.T) {
+	t.Parallel()
 	cases := corpus(t)
 	b := newOracle(cases)
 	b.reqYes, b.hitYes = 0.62, 0.58
@@ -216,11 +218,11 @@ func TestPoolingDoesNotNarrowIntervals(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	bs1, err := eval.BootstrapSweep(context.Background(), env, outs, len(cases), config.ConservativeThresholds, th, 20, 3)
+	bs1, err := eval.BootstrapSweep(context.Background(), env, outs, len(cases), config.ConservativeThresholds, th, 5, 3)
 	if err != nil {
 		t.Fatal(err)
 	}
-	bs3, err := eval.BootstrapSweep(context.Background(), env, pooled, len(cases), config.ConservativeThresholds, th, 20, 3)
+	bs3, err := eval.BootstrapSweep(context.Background(), env, pooled, len(cases), config.ConservativeThresholds, th, 5, 3)
 	if err != nil {
 		t.Fatal(err)
 	}

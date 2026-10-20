@@ -16,6 +16,7 @@ import (
 // TestMarginsFindTheFlippingThreshold：oracle 把标注规则答成 0.55、hit 为 0.5 时，只命中一条规则的 ask 语料把 hit
 // 抬到 0.56 就翻转，margin 为 0.06 (hit)；不可校准的结论没有 margin；没有在合法范围内翻转的报 >0.50；不调用后端。
 func TestMarginsFindTheFlippingThreshold(t *testing.T) {
+	t.Parallel()
 	cases := corpus(t)
 	b := newOracle(cases)
 	b.hitYes = 0.55
@@ -85,6 +86,7 @@ func TestMarginsFindTheFlippingThreshold(t *testing.T) {
 // TestMarginsStayWithinLegalThresholds：授权概率为 1、requested 为 0.9 时，翻转需要 requested = 1.01，
 // 不是合法配置；margin 不能报成 0.11 (requested)。同理 hit 不能被扰动到负数、radius_floor 不能越过 3。
 func TestMarginsStayWithinLegalThresholds(t *testing.T) {
+	t.Parallel()
 	cases := corpus(t)
 	var picked []eval.Case
 	for _, c := range cases {
@@ -126,6 +128,7 @@ func TestMarginsStayWithinLegalThresholds(t *testing.T) {
 // requested 0.305、授权概率 0.807、hit 1（排除别的翻转）：+0.50 只到 0.805，授权仍成立，不得报 "0.50 (requested)"；
 // 授权概率 0.50 时，0.305+0.20 = 0.505 > 0.50 才翻转，Delta 恰为 0.20。
 func TestMarginsMeasureTheActualMove(t *testing.T) {
+	t.Parallel()
 	cases := corpus(t)
 	var picked []eval.Case
 	for _, c := range cases {
@@ -165,6 +168,7 @@ func TestMarginsMeasureTheActualMove(t *testing.T) {
 
 // TestWrongDecisionsCarryTheirMargin：错判明细带 margin，读者能分开「校准问题」（margin 小）与「标签或题目问题」（margin 大）。
 func TestWrongDecisionsCarryTheirMargin(t *testing.T) {
+	t.Parallel()
 	cases := corpus(t)[:16] // 含第一条只靠模型命中的漏判（下标 15，python -c ... os.remove）；正则命中的在 veto 与 hit 之间仍是 ask
 	b := newOracle(cases)
 	b.hitYes = 0.55
@@ -193,6 +197,7 @@ func TestWrongDecisionsCarryTheirMargin(t *testing.T) {
 // recursive_delete 1.0），base 下放行；各自把下限降 0.25 才恰好 ask，所以 margin 都是 0.25 (radius_floor)。
 // 旧实现把所有下限设成第一条的 start-d：不论谁排第一，另一条都被移错（要么在 0.01 就翻转，要么够不到）。
 func TestMarginsPerturbEachFloorFromItsOwnBase(t *testing.T) {
+	t.Parallel()
 	var picked []eval.Case
 	b := newOracle(nil)
 	b.radius = map[string][]float64{}
