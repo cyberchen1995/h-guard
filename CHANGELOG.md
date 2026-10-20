@@ -54,6 +54,15 @@ minor releases. Every such change is recorded in this file.
 - Action rules can mark such forms with `match.exec.local`: patterns matched
   at each command position that interrupt even with the judge off, in
   `requires_judge` rules. The rest of the rule still needs the judge.
+- `h-guard eval --compare` replays held-out sessions through the Claude Code
+  hook under five configurations (no h-guard, local rules only, the judge, a
+  judge that times out, a judge that fails) and reports, for each, justified
+  and needless interruptions, misses, judge calls, estimated tokens and
+  latency, as text and with `--json` as JSON. It runs offline: the judge is
+  an in-process stand-in that answers from the sample labels, so its row is
+  an upper bound. The samples are new and kept out of threshold sweeps: 88
+  held-out steps in `corpus/holdout.jsonl` and five multi-step task scripts
+  in `corpus/tasks/` ([docs/guide/evaluation.md](docs/guide/evaluation.md)).
 
 ### Changed
 

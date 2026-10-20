@@ -437,6 +437,9 @@ delete the file) and, if you like, h-guard's configuration directory.
   harness contract and the extension protocol.
 - [Harnesses](docs/guide/harnesses.md): how each harness is connected, and
   what each can do.
+- [Comparison evaluation](docs/guide/evaluation.md): what installing h-guard
+  changes on held-out sessions, with the judge off, on and failing, and how
+  to reproduce it.
 - [Changelog](CHANGELOG.md), [security policy](SECURITY.md),
   [contributing](CONTRIBUTING.md).
 
