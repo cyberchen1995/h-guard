@@ -116,6 +116,10 @@ type ExecMatch struct {
 	// Encoded 另用 detect/encoded 识别把编码内容交给解释器执行的写法（不解码，只看有没有；规则 obfuscated_exec）。
 	// 有它时可以不写正则。
 	Encoded bool `yaml:"encoded"`
+	// Local 是 requires_judge 规则里不靠模型也打断的形态（用于所有 shell）：后果大、几乎不会误报的写法，
+	// 如 git reset --hard、npm publish。模型关闭时只有它们的命中打断，其余命中只记录；模型开启时与其他正则相同。
+	// 只在各段的命令位置上匹配（去掉环境变量赋值与 sudo，另含规范写法），引号里提到的同样文本不算：用 ^ 锚定。
+	Local []string `yaml:"local"`
 }
 
 // Question 是规则的判断题（发给模型，固定英文）。
@@ -157,6 +161,7 @@ var ExampleEnv = paths.Env{
 type compiledExec struct {
 	any, posix, powershell execGroup
 	redirects              execGroup
+	local                  execGroup
 	vars                   []string     // 各模式用到的占位符；为空时 base 就是全部模式
 	base                   resolvedExec // 不含占位符时加载时编译的全部模式
 	cache                  atomic.Pointer[resolvedExec]
@@ -341,6 +346,10 @@ func (r *Rule) validate() error {
 		if r.Match.Exec == nil {
 			return fieldErr("match.exec", "missing for an exec rule")
 		}
+		if len(r.Match.Exec.Local) > 0 && !r.RequiresJudge {
+			// 不依赖模型的规则模型关闭时本来就打断：local 组没有意义，多半是写错了地方
+			return fieldErr("match.exec.local", "only for requires_judge rules")
+		}
 		c, err := compileExec(r.Match.Exec)
 		if err != nil {
 			return err
@@ -399,7 +408,7 @@ func compileExec(m *ExecMatch) (*compiledExec, error) {
 		src  []string
 		dst  *execGroup
 	}{{"any", m.Any, &c.any}, {"posix", m.POSIX, &c.posix}, {"powershell", m.PowerShell, &c.powershell},
-		{"redirects", m.Redirects, &c.redirects}}
+		{"redirects", m.Redirects, &c.redirects}, {"local", m.Local, &c.local}}
 	total := 0
 	for _, g := range groups {
 		for i, p := range g.src {
@@ -428,7 +437,8 @@ func compileExec(m *ExecMatch) (*compiledExec, error) {
 	if total == 0 && !m.Encoded {
 		return nil, fieldErr("match.exec", "no patterns")
 	}
-	c.base = resolvedExec{any: c.any.static(), posix: c.posix.static(), powershell: c.powershell.static(), redirect: c.redirects.static()}
+	c.base = resolvedExec{any: c.any.static(), posix: c.posix.static(), powershell: c.powershell.static(), redirect: c.redirects.static(),
+		local: c.local.static()}
 	return c, nil
 }
 
@@ -442,6 +452,7 @@ func execPatternErr(group string, i int, err error) error {
 type Result struct {
 	Hit      bool // 命中（含超时按命中处理）
 	TimedOut bool // 有正则匹配超时（action 规则按命中处理）
+	Local    bool // 命中来自 local 组：模型关闭时照样打断
 }
 
 // MatchExec 在命令展开出的各单元上匹配：每个单元用 any 组加该单元 shell 的组，redirects 组另在重定向视图上匹配；
@@ -451,31 +462,48 @@ type Result struct {
 // （计时粒度为一次匹配，单次匹配受 MatchTimeout 约束）。
 // env 提供模式里占位符的值（Vars）与主目录（见 execPlaceholder）；含占位符的模式展开后编译失败时按命中处理
 // （带超时标记，只收紧）。
+// local 组先在全部单元上匹配：命中（含超时）即标记 Local，其余组的命中不能盖过它。
 func (r *Rule) MatchExec(ctx context.Context, e command.Expansion, env paths.Env) (Result, error) {
-	var res Result
 	if r.exec == nil {
-		return res, nil
+		return Result{}, nil
 	}
 	rx := r.exec.resolve(env)
-	if rx.broken {
+	if len(rx.local) > 0 {
+		res, err := r.matchExec(ctx, e, rx, true)
+		if res.Hit || err != nil {
+			res.Local = res.Hit
+			return res, err
+		}
+	}
+	return r.matchExec(ctx, e, rx, false)
+}
+
+// matchExec 是一遍匹配：local 时只用 local 组，在命令位置上匹配（不看重定向、编码与展开失败）。
+func (r *Rule) matchExec(ctx context.Context, e command.Expansion, rx *resolvedExec, local bool) (Result, error) {
+	var res Result
+	if !local && rx.broken {
 		res = Result{Hit: true, TimedOut: true}
 	}
 	for _, u := range e.Units {
 		if err := ctx.Err(); err != nil {
 			return res, err
 		}
-		if r.exec.encoded && (u.Encoded || slices.ContainsFunc(u.FullTexts(), func(t string) bool { return encoded.Find(t, u.Shell) })) {
+		if !local && r.exec.encoded && (u.Encoded || slices.ContainsFunc(u.FullTexts(), func(t string) bool { return encoded.Find(t, u.Shell) })) {
 			return Result{Hit: true}, nil
 		}
 		patterns := rx.any
-		switch u.Shell {
-		case guard.ShellPOSIX:
+		switch {
+		case local:
+			patterns = rx.local
+		case u.Shell == guard.ShellPOSIX:
 			patterns = append(slices.Clip(patterns), rx.posix...)
-		case guard.ShellPowerShell:
+		case u.Shell == guard.ShellPowerShell:
 			patterns = append(slices.Clip(patterns), rx.powershell...)
 		}
 		var hay []string
 		switch {
+		case local:
+			hay = append(u.Positions(), u.NormalizedPositions()...)
 		case r.exec.commandPosition:
 			hay = u.Positions()
 			if r.Action == guard.DecisionDeny {
@@ -490,7 +518,7 @@ func (r *Rule) MatchExec(ctx context.Context, e command.Expansion, env paths.Env
 			patterns []*regexp2.Regexp
 			hay      []string
 		}{{patterns, hay}}
-		if len(rx.redirect) > 0 {
+		if !local && len(rx.redirect) > 0 {
 			groups = append(groups, struct {
 				patterns []*regexp2.Regexp
 				hay      []string

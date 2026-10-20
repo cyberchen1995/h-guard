@@ -71,7 +71,7 @@ func TestStatusRulesAndHealth(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, now.Format("2006-01-02")+".jsonl"), []byte(recent), 0o600)
 	os.WriteFile(filepath.Join(dir, now.AddDate(0, 0, -10).Format("2006-01-02")+".jsonl"), []byte(`{"code":"internal_error"}`+"\n"), 0o600)
 	out, _, _ := e.run(nil, "status")
-	for _, want := range []string{"rules not in effect:", "branch_ops (disabled)", "publish (judge disabled)", "sensitive_read (action tier)",
+	for _, want := range []string{"rules not in effect:", "branch_ops (disabled)", "verify_bypass (judge disabled)", "sensitive_read (action tier)",
 		"degradations in the last 7 days: judge_unavailable 2, ask_unsupported 1", "health records: " + dir} {
 		if !strings.Contains(out, want) {
 			t.Errorf("status lacks %q:\n%s", want, out)

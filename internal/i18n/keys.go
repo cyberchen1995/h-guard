@@ -4,11 +4,13 @@ package i18n
 const (
 	KeyActionBlocked           = "action.blocked"            // {rules}
 	KeyActionDangerous         = "action.dangerous"          // {rules}
+	KeyActionDangerousLocal    = "action.dangerous_local"    // {rules}，模型关闭时：判断不了是不是 agent 自己决定的
 	KeyActionRadius            = "action.radius"             // {radius}
 	KeyActionNotRequested      = "action.not_requested"      // {p}
 	KeyActionGuardSelf         = "action.guard_self"         // {rules}
 	KeyActionGuardSelfFile     = "action.guard_self_file"    // {paths} {rules}
 	KeyActionFileRule          = "action.file_rule"          // {paths} {rules}
+	KeyActionGlobTooMany       = "action.glob_too_many"      // {pattern} {limit}
 	KeyActionJudgeUnavailable  = "action.judge_unavailable"  // {code} {rules}
 	KeyActionEvidenceTruncated = "action.evidence_truncated" //
 	KeyActionRegexTimeout      = "action.regex_timeout"      //
@@ -46,7 +48,7 @@ const (
 
 // AllKeys 是全部消息键；en 目录必须覆盖它们（测试检查）。
 var AllKeys = []string{
-	KeyActionBlocked, KeyActionDangerous, KeyActionRadius, KeyActionNotRequested, KeyActionGuardSelf, KeyActionGuardSelfFile,
+	KeyActionBlocked, KeyActionDangerous, KeyActionDangerousLocal, KeyActionRadius, KeyActionNotRequested, KeyActionGuardSelf, KeyActionGuardSelfFile, KeyActionGlobTooMany,
 	KeyActionFileRule, KeyActionJudgeUnavailable, KeyActionEvidenceTruncated, KeyActionRegexTimeout, KeyActionBudgetExceeded,
 	KeyActionProbe, KeyActionOperation, KeyActionOperationHere, KeyActionImpact, KeyActionAdvice, KeyOutboundCredentials, KeyOutboundPrivateKey, KeyOutboundPII, KeyOutboundCustom, KeyOutboundJudge, KeyErrorInternal, KeyErrorConfigInvalid, KeyErrorInputTooLarge, KeyErrorTargetUnparsed, KeyErrorToolUnknown, KeyDegradeAskUnsupported,
 	KeySourceLocal, KeySourceJudge, KeySourceBoth, KeyHintManual, KeyHintConsent, KeyHintJudgeUnavailable,

@@ -73,6 +73,8 @@ func TestDecide(t *testing.T) {
 
 		{"judge off silences requires_judge hits", Input{Regex: regex("publish"), Judge: JudgeOff}, guard.DecisionPass, BranchNone, nil},
 		{"judge off still asks for guard tampering", Input{Regex: regex("guard_tampering", "publish"), Judge: JudgeOff}, guard.DecisionAsk, BranchJudgeOff, nil},
+		{"judge off asks for a local form of a requires_judge rule",
+			Input{Regex: []RegexHit{{Rule: "publish", Local: true}}, Judge: JudgeOff}, guard.DecisionAsk, BranchJudgeOff, nil},
 
 		{"unavailable with a hit asks",
 			Input{Regex: regex("publish"), Judge: JudgeFailed, JudgeFallback: FallbackJudgeTimeout, OnUnavailable: guard.DecisionPass},

@@ -97,10 +97,10 @@ func TestSelftestRunsTheInstalledEntries(t *testing.T) {
 		// 只看 hook 运行这一层：Windows 上测试按 linux 安装，盘符里的冒号让插件目录的登记读成「with problems」
 		"| hook running: not seen since install (restart Claude Code",
 		"  codex: config written: yes | hook running: unverified (Codex has not run the hooks since they were installed; trust them with /hooks in Codex) | self-test: passed",
-		"interrupts: catastrophic (deny), fork_bomb (deny), guard_tampering (ask), obfuscated_exec (ask), sensitive_read (ask, file tools only)",
-		"matched but not interrupting, and not recorded (log.decisions is off) (judge off; h-guard init turns it on): branch_ops, destructive_git, publish, recursive_delete, verify_bypass",
+		"interrupts: branch_ops (ask, only its high-impact forms while the judge is off), catastrophic (deny), destructive_git (ask, only its high-impact forms while the judge is off), fork_bomb (deny), guard_tampering (ask), obfuscated_exec (ask), publish (ask, only its high-impact forms while the judge is off), recursive_delete (ask, only its high-impact forms while the judge is off), sensitive_read (ask, file tools and common shell reads)",
+		"matched but not interrupting, and not recorded (log.decisions is off) (judge off; h-guard init turns it on): verify_bypass",
 		"prompts and tool output: credentials deny, private_key deny (scans prompts)",
-		"not covered: shell commands that read secret files",
+		"not covered: secret files read in ways h-guard does not recognize as reading",
 		"approve one stopped operation with h-guard allow <id>",
 	} {
 		if !strings.Contains(status, w) {
@@ -172,6 +172,16 @@ func TestStatusProtectionWithTheJudgeOn(t *testing.T) {
 		}
 	}
 	if strings.Contains(out, "matched but not interrupting") || strings.Contains(out, "no judge to catch them") {
+		t.Errorf("status:\n%s", out)
+	}
+}
+
+// TestStatusGapWithoutReadRules：读文件规则都停用时，status 写明文件读取在运行前不检查。
+func TestStatusGapWithoutReadRules(t *testing.T) {
+	e := newEnv(t)
+	e.config("version: 1\nrules: {sensitive_read: {enabled: false}}\n")
+	out, _, _ := e.run(nil, "status")
+	if !strings.Contains(out, "are not checked before they run: no file-read rule is enabled") {
 		t.Errorf("status:\n%s", out)
 	}
 }
