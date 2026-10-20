@@ -135,6 +135,13 @@ func TestExecPlaceholderRoot(t *testing.T) {
 		[]string{"rm /tmp/cordis.patch.yml", "rm cordis.patch.yml"})
 	mustMatch(t, `rm {dsh_home}[/\\]?(?=$|\s)`, root, []string{"rm /", "rm / x"}, []string{"rm /tmp/x", "rm x"})
 	mustMatch(t, `^rm {dsh_home}$`, root, []string{"rm /", "rm //"}, []string{"rm /tmp", "rm x/"})
+	// 盘的根目录同样：盘符可写可省略，不能变成只匹配「C:」
+	for _, v := range []string{`C:\`, "c:/"} {
+		drive := paths.Env{Home: "/home/u", Vars: map[string]string{VarDSHHome: v}}
+		mustMatch(t, `{dsh_home}[/\\]+cordis\.patch\.yml`, drive,
+			[]string{`rm C:\cordis.patch.yml`, "rm c:/cordis.patch.yml", `rm \cordis.patch.yml`, "rm /cordis.patch.yml"},
+			[]string{`rm C:\tmp\cordis.patch.yml`, "rm cordis.patch.yml", "rm C:cordis.patch.yml"})
+	}
 }
 
 // TestExecPlaceholderOrder：展开后的模式保持规则里的顺序（含占位符的与不含的交错）。
@@ -168,5 +175,18 @@ func TestExecPlaceholderInLookbehind(t *testing.T) {
 				t.Errorf("%v: %q matched = %v", env.Vars, s, ok)
 			}
 		}
+	}
+}
+
+// TestExecPlaceholderList：有多个值的占位符（paths.Env.Lists）匹配其中任一个值；没有值时那一处不匹配；值变了缓存跟着换。
+func TestExecPlaceholderList(t *testing.T) {
+	env := paths.Env{Home: "/home/u", Lists: map[string][]string{VarOpenClawIncludes: {"/etc/openclaw/plugins.json", "/home/u/.openclaw/a b.json5", ""}}}
+	mustMatch(t, `^sed -i x {openclaw_includes}$`, env,
+		[]string{"sed -i x /etc/openclaw/plugins.json", `sed -i x \etc\openclaw\plugins.json`, `sed -i x ~/.openclaw/a\ b.json5`},
+		[]string{"sed -i x /etc/openclaw/plugins.jsonX", "sed -i x /etc/openclaw/other.json", "sed -i x "})
+	mustMatch(t, `^rm {openclaw_includes}$`, paths.Env{Lists: map[string][]string{VarOpenClawIncludes: nil}}, nil, []string{"rm /etc/openclaw/plugins.json", "rm "})
+	other := paths.Env{Home: "/home/u", Lists: map[string][]string{VarOpenClawIncludes: {"/srv/x.json"}}}
+	if templateKey(env, []string{VarOpenClawIncludes}) == templateKey(other, []string{VarOpenClawIncludes}) {
+		t.Errorf("the cache key ignores the list's values")
 	}
 }

@@ -28,6 +28,7 @@ error.input_too_large: "The hook input is too large to inspect; asking for confi
 error.target_unparsed: "h-guard cannot tell which files {tool} would change; asking for confirmation to be safe."
 error.tool_unknown: "h-guard does not know whether {tool} runs commands or changes files, so it needs your confirmation; a tool that only reads can be listed in harnesses.{harness}.read_only_tools."
 degrade.ask_unsupported: "This harness cannot ask for confirmation, so h-guard blocked it."
+degrade.prompt_not_blocked: "This harness cannot hold back a prompt, so it has already reached the model."
 source.local: "rule"
 source.judge: "judge"
 source.both: "rule+judge"

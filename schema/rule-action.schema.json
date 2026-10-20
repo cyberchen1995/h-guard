@@ -145,7 +145,7 @@
       }
     },
     "fileMatch": {
-      "description": "Path patterns for file actions. A pattern may start with {config}, {cache}, {extra_config}, {claude_config}, {codex_home}, {xdg_config}, {pi_agent_dir}, {omp_config} or {dsh_home}.",
+      "description": "Path patterns for file actions. A pattern may start with {config}, {cache}, {extra_config}, {claude_config}, {codex_home}, {xdg_config}, {pi_agent_dir}, {omp_config}, {dsh_home}, {openclaw_config} or {openclaw_includes} (one pattern per included file).",
       "type": "object",
       "additionalProperties": false,
       "required": ["paths"],

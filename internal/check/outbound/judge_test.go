@@ -206,23 +206,27 @@ func TestJudgeMasksAcrossTheCut(t *testing.T) {
 // 字符落在切点上的情形；LF、CRLF 与缩进三种写法。
 func TestJudgeMasksKeyEndAtTheCut(t *testing.T) {
 	body := strings.Repeat("AbCdEf012345678+", 4)
+	// 四种写法各 400 次完整评估，-race 下要两分钟：作为子测试并行跑
 	for name, w := range map[string]struct{ indent, nl, last string }{"lf": {"", "\n", ""}, "crlf": {"", "\r\n", ""}, "indented": {"  ", "\n", ""},
 		"short last line": {"", "\n", "AB3x==\n"}} { // END 前最后一行很短
-		lines := 4400 / len(w.indent+body+w.nl) // END 从约 4400 字节扫到约 4800 字节，切点（约 4600）落在其中
-		c := judged(t, "outbound: {judge_chunk_chars: 500, judge_max_chunks: 1, categories: {private_key: {enabled: false}}}\n", nil, outbound.Judge{Threshold: 0.5})
-		for pad := 1; pad <= 400; pad++ {
-			text := strings.Repeat(w.indent+body+w.nl, lines) + w.indent + strings.Repeat("A", 16+pad) + w.nl + w.last +
-				w.indent + "-----END RSA PRIVATE KEY-----" + w.nl + strings.Repeat("safe text"+w.nl, 100)
-			b := &judgeBackend{answer: answering(nil)}
-			c.Judge.Backend = b
-			evaluate(t, c, prompt(text))
-			if len(b.states) != 1 {
-				t.Fatalf("%s pad %d: %d calls", name, pad, len(b.states))
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			lines := 4400 / len(w.indent+body+w.nl) // END 从约 4400 字节扫到约 4800 字节，切点（约 4600）落在其中
+			c := judged(t, "outbound: {judge_chunk_chars: 500, judge_max_chunks: 1, categories: {private_key: {enabled: false}}}\n", nil, outbound.Judge{Threshold: 0.5})
+			for pad := 1; pad <= 400; pad++ {
+				text := strings.Repeat(w.indent+body+w.nl, lines) + w.indent + strings.Repeat("A", 16+pad) + w.nl + w.last +
+					w.indent + "-----END RSA PRIVATE KEY-----" + w.nl + strings.Repeat("safe text"+w.nl, 100)
+				b := &judgeBackend{answer: answering(nil)}
+				c.Judge.Backend = b
+				evaluate(t, c, prompt(text))
+				if len(b.states) != 1 {
+					t.Fatalf("pad %d: %d calls", pad, len(b.states))
+				}
+				if strings.Contains(b.states[0]["text"].(string), body) {
+					t.Errorf("pad %d (END at byte %d): key body sent", pad, strings.Index(text, "-----END"))
+				}
 			}
-			if strings.Contains(b.states[0]["text"].(string), body) {
-				t.Errorf("%s pad %d (END at byte %d): key body sent", name, pad, strings.Index(text, "-----END"))
-			}
-		}
+		})
 	}
 }
 

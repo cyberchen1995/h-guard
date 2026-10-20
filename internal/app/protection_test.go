@@ -622,7 +622,7 @@ func TestStatusShowsJudgeOnlyCategories(t *testing.T) {
 	if err := (consent.Store{Dir: e.configDir}).Grant(id, []consent.Scope{consent.ScopeAction, consent.ScopeOutbound}, time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	if out, _, _ := e.run(nil, "status"); !strings.Contains(out, "acme-codename warn (judge only, not on Codex or DeepSeek Harness)") {
+	if out, _, _ := e.run(nil, "status"); !strings.Contains(out, "acme-codename warn (judge only, not on Codex or DeepSeek Harness, nor for tool output on Hermes Agent)") {
 		t.Errorf("status:\n%s", out)
 	}
 }
@@ -666,6 +666,28 @@ func TestStatusListsExtensionHarnesses(t *testing.T) {
 		if !strings.Contains(out, w) {
 			t.Errorf("status lacks %q:\n%s", w, out)
 		}
+	}
+}
+
+// TestStatusListsOpenClaw：装了 OpenClaw 时保护摘要同样只列配置这一层；OpenClaw 能请求确认，不写「cannot ask」；
+// openclaw.json 用了 JSON5 写法（install 不改写）时注明有问题。
+func TestStatusListsOpenClaw(t *testing.T) {
+	e := hostInstallEnv(t)
+	if out, _, _ := e.run(nil, "status"); strings.Contains(out, "  openclaw:") {
+		t.Errorf("listed before install:\n%s", out)
+	}
+	if _, errs, code := e.run(nil, "install", "openclaw", "--write"); code != 0 {
+		t.Fatalf("install: %d %s", code, errs)
+	}
+	out, _, _ := e.run(nil, "status")
+	if !strings.Contains(out, "  openclaw: config written: yes") ||
+		!strings.Contains(out, "| hook running: not tracked for openclaw | self-test: not available for openclaw") ||
+		strings.Contains(out, "openclaw: cannot ask") {
+		t.Errorf("status:\n%s", out)
+	}
+	os.WriteFile(filepath.Join(e.home, ".openclaw", "openclaw.json"), []byte("{ // edited by hand\n}\n"), 0o600)
+	if out, _, _ := e.run(nil, "status"); !strings.Contains(out, "  openclaw: config written: yes, with problems") {
+		t.Errorf("status:\n%s", out)
 	}
 }
 

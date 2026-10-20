@@ -259,6 +259,27 @@ func TestToolOutputDenyWithoutReplaceBecomesWarn(t *testing.T) {
 	}
 }
 
+// TestPromptDenyWithoutBlockBecomesWarn：挡不住的提示词（Hermes 的 pre_llm_call）上 deny 改为 warn，记 prompt_not_blocked，
+// 说明它已经交给了模型；从 ask 降级来的「已阻止」说明去掉。
+func TestPromptDenyWithoutBlockBecomesWarn(t *testing.T) {
+	ev := guard.Event{Kind: guard.EventPrompt, Harness: "h"}
+	e := newEngine(t, &stub{name: "outbound", ret: verdict(guard.DecisionDeny, i18n.KeyOutboundPrivateKey)})
+	o := e.Evaluate(context.Background(), ev, harness.EventCaps{Warn: true}).Outcome
+	if o.Verdict.Decision != guard.DecisionWarn || o.Raw != guard.DecisionDeny ||
+		!slices.Contains(o.Verdict.Fallbacks, engine.FallbackPromptNotBlocked) || !strings.Contains(o.Message, "already reached the model") {
+		t.Errorf("outcome = %+v", o)
+	}
+	e = newEngine(t, &stub{name: "outbound", ret: verdict(guard.DecisionAsk, i18n.KeyOutboundPII)})
+	o = e.Evaluate(context.Background(), ev, harness.EventCaps{Warn: true}).Outcome
+	if o.Verdict.Decision != guard.DecisionWarn || strings.Contains(o.Message, "cannot ask") ||
+		!slices.Contains(o.Verdict.Fallbacks, engine.FallbackAskUnsupported) || !slices.Contains(o.Verdict.Fallbacks, engine.FallbackPromptNotBlocked) {
+		t.Errorf("ask on a prompt that cannot be blocked: %+v", o)
+	}
+	if o := e.Evaluate(context.Background(), ev, harness.EventCaps{Block: true, Warn: true}).Outcome; o.Verdict.Decision != guard.DecisionDeny {
+		t.Errorf("with Block the deny stays: %s", o.Verdict.Decision)
+	}
+}
+
 func TestLocalization(t *testing.T) {
 	e := newEngine(t, &stub{name: "action", ret: verdict(guard.DecisionAsk, i18n.KeyActionGuardSelf, i18n.KeyHintManual)})
 	e.Locale = "zh-CN"

@@ -107,14 +107,77 @@ minor releases. Every such change is recorded in this file.
   `CLAUDE_CONFIG_DIR` or `CODEX_HOME`, or under h-guard's own directories,
   asks as well.
 
+- `h-guard install openclaw` connects OpenClaw (written against and
+  smoke-tested with 2026.10.4). It writes a native plugin to h-guard's
+  configuration directory and loads it from `openclaw.json`
+  (`plugins.load.paths`, `plugins.entries.h-guard`). When `openclaw.json`
+  uses JSON5 syntax or `$include`, or the configuration is read-only
+  (`OPENCLAW_NIX_MODE`, `OPENCLAW_CONFIG_READONLY`), it writes only the plugin
+  and prints the settings to add yourself. install and status ask OpenClaw
+  whether it loads the plugin (`openclaw plugins inspect h-guard --json`, and
+  `--runtime` to list its hooks only when the plugin directory holds exactly
+  the files h-guard writes) and report "could not verify" when it cannot be
+  asked. Tool
+  calls are checked in `before_tool_call` (`ask` becomes a
+  plugin approval), tool output in the tool result middleware and prompts in
+  `before_agent_run` and, for channel messages (including those steered into
+  a running turn), `before_dispatch`. OpenClaw's own tools are classified like pi's, and for
+  `browser`, `message`, `sessions`, `transcripts` and `canvas` by action (only
+  observing the browser, reading and sending messages pass). Local files that
+  tools send away (message attachments, PDFs, reference media, `MEDIA:` lines)
+  are checked as file reads, with `file:` URLs decoded as OpenClaw does. Other
+  tools and actions ask (`tool_unknown`), MCP tools included: the plugin cannot
+  tell them from plugin tools with the same kind of name. An opt-in channel notifier
+  (`plugins.entries.h-guard.config.notify` in OpenClaw's configuration) sends
+  denials and warnings to chats with `openclaw message send`.
+- The locked `guard_tampering` rule also protects `openclaw.json` (including
+  `OPENCLAW_CONFIG_PATH`, `OPENCLAW_STATE_DIR`, named profiles and the
+  pre-rename `clawdbot.json`, the files it pulls in with `$include`, wherever
+  they are, for file tools and shell commands alike, and `.json5` files next
+  to it), the `~/.openclaw` and `~/.clawdbot`
+  directories, and OpenClaw commands that change plugin settings (including
+  the `openclaw configure` and `openclaw config` wizards and `openclaw gateway
+  call` with `config.set`, `config.patch` or `config.apply`) or disable
+  the plugin, reset or uninstall OpenClaw's configuration and state
+  (`openclaw reset`, `openclaw uninstall --state`/`--all`, `--reset` on
+  `onboard`, `setup` and `gateway`). Path and `exec` patterns can use `{openclaw_config}` and
+  `{openclaw_includes}` (matching any included file).
+- `h-guard install hermes` connects Hermes Agent through a Python plugin in
+  `$HERMES_HOME/plugins/h-guard`, enabled in `plugins.enabled`. Tool calls are
+  checked on `pre_tool_call` (`ask` goes to Hermes's own approval, keyed to the
+  one call; it becomes `deny` when Hermes would approve without asking), tool
+  results and background process output are replaced on `deny`, prompts from
+  messaging platforms are blocked when the gateway receives them
+  (`pre_gateway_dispatch`), and other prompts get a
+  warning on `pre_llm_call`, since they cannot be blocked there. The plugin
+  was written against Hermes 2026.9.24 and smoke-tested by driving its hooks
+  through Hermes's plugin manager, not yet with a model.
+- `harnesses.hermes.notify` (off by default) sends h-guard's masked reason for
+  chosen decisions to the originating chat, or a configured `hermes send`
+  target, as a best-effort notification.
+- New degradation `prompt_not_blocked`: a `deny` on a prompt the harness cannot
+  hold back becomes a `warn` that says the prompt has already reached the model.
+- The locked `guard_tampering` rule also protects Hermes Agent's
+  `config.yaml`, h-guard's plugin directory and the shell-hook allowlist (also
+  per profile, under `HERMES_HOME` and on Windows), and the `hermes plugins
+  disable|remove` and `hermes config set plugins.*` commands. Path patterns, and
+  `exec` patterns, can use `{hermes_home}`, so a command naming the real path of
+  a custom `HERMES_HOME` is covered as well; `{hermes_managed}` (Hermes's
+  managed scope, `$HERMES_MANAGED_DIR` or `/etc/hermes`) protects the managed
+  `config.yaml` the same way. `install hermes` and `status` take the managed
+  scope's `plugins` settings into account.
+
 ### Public packages
 
 - `pkg/detect/command` adds `ReadTargets`: the files a command reads locally
   (file operands of common read commands, input redirections and PowerShell's
   `Get-Content` paths).
 - New adapters `pkg/harness/opencode`, `pkg/harness/pi` (registers `pi` and
-  `omp`) and `pkg/harness/dsh`.
+  `omp`), `pkg/harness/dsh`, `pkg/harness/openclaw` and `pkg/harness/hermes`.
 - `pkg/harness` adds `UnknownToolError` for tools an adapter does not know.
+- `pkg/harness/extproto`: `Reply` has an optional `Subject`, a summary of the
+  call with recognized credentials masked, for extensions that show the call to
+  a person.
 - `pkg/harness` adds `ErrNoAction` and the optional `NoActionRenderer`: an
   adapter that answers every request (extension protocol) replies `pass` to a
   tool call with nothing to check, so an empty reply always means h-guard could

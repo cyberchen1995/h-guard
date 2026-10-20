@@ -96,11 +96,23 @@ const (
 	VarDSHHome    = "dsh_home"
 	// VarOMPConfig 是 oh-my-pi 的配置根目录：主目录下的 $PI_CONFIG_DIR（没有设置时为空）。
 	VarOMPConfig = "omp_config"
+	// VarOpenClawConfig 是 OpenClaw 实际读的配置文件（install.OpenClawConfig）：$OPENCLAW_CONFIG_PATH，或 $OPENCLAW_STATE_DIR、
+	// $OPENCLAW_HOME 下的默认位置，包括改名前的 ~/.clawdbot 与 clawdbot.json（都没有时是 ~/.openclaw/openclaw.json）。
+	VarOpenClawConfig = "openclaw_config"
+	// VarOpenClawIncludes 是 OpenClaw 的配置用 $include 引入的文件（install.OpenClawIncludes），有多个值（paths.Env.Lists）。
+	VarOpenClawIncludes = "openclaw_includes"
+	// VarHermesHome 是 Hermes Agent 的主目录：$HERMES_HOME，没有设置时是默认位置（~/.hermes，Windows 上是
+	// %LOCALAPPDATA%\hermes）。
+	VarHermesHome = "hermes_home"
+	// VarHermesManaged 是 Hermes Agent 的托管范围目录：$HERMES_MANAGED_DIR，默认 /etc/hermes（Windows 上没有默认位置，
+	// 没有设置时为空）。
+	VarHermesManaged = "hermes_managed"
 )
 
 // placeholders 是路径模式与 exec 模式可以用的占位符。
 var placeholders = map[string]bool{VarConfig: true, VarCache: true, VarExtraConfig: true, VarClaudeConfig: true, VarCodexHome: true,
-	VarXDGConfig: true, VarPiAgentDir: true, VarDSHHome: true, VarOMPConfig: true}
+	VarXDGConfig: true, VarPiAgentDir: true, VarDSHHome: true, VarOMPConfig: true, VarOpenClawConfig: true,
+	VarOpenClawIncludes: true, VarHermesHome: true, VarHermesManaged: true}
 
 // ExecMatch 是命令正则，按 shell 分组：any 用于所有 shell。
 type ExecMatch struct {
@@ -150,12 +162,16 @@ type Example struct {
 
 // ExampleEnv 是样例的环境：主目录 /home/user，工作目录 /home/user/project，
 // {config} 为 /xdg/config/h-guard，{cache} 为 /xdg/cache/h-guard，{extra_config} 为 /etc/guard/extra.yaml，
-// {pi_agent_dir} 为 /opt/pi/agent，{dsh_home} 为 /home/user/my dsh（在主目录之下、含空格），区分大小写；
+// {pi_agent_dir} 为 /opt/pi/agent，{dsh_home} 为 /home/user/my dsh（在主目录之下、含空格），{openclaw_config} 为
+// /srv/openclaw/openclaw.json，{openclaw_includes} 是 OpenClaw 配置引入的三个文件，{hermes_home} 为 /opt/hermes，
+// {hermes_managed} 为 /srv/hermes-policy，区分大小写；
 // 其余占位符没有值。命令样例也用它展开 exec 模式里的占位符。
 var ExampleEnv = paths.Env{
 	Home: "/home/user", Cwd: "/home/user/project", Lexical: true,
 	Vars: map[string]string{VarConfig: "/xdg/config/h-guard", VarCache: "/xdg/cache/h-guard", VarExtraConfig: "/etc/guard/extra.yaml",
-		VarPiAgentDir: "/opt/pi/agent", VarDSHHome: "/home/user/my dsh"},
+		VarPiAgentDir: "/opt/pi/agent", VarDSHHome: "/home/user/my dsh", VarOpenClawConfig: "/srv/openclaw/openclaw.json",
+		VarHermesHome: "/opt/hermes", VarHermesManaged: "/srv/hermes-policy"},
+	Lists: map[string][]string{VarOpenClawIncludes: {"/home/user/.openclaw/conf.d/plugins.json", "/etc/openclaw/plugins.json", `C:\etc\openclaw\plugins.json`}},
 }
 
 type compiledExec struct {

@@ -45,6 +45,14 @@ var eventKinds = map[string]guard.EventKind{
 	"tool.execute.before": guard.EventAction, "tool.execute.after": guard.EventToolOutput, "chat.message": guard.EventPrompt, // opencode
 	"tool_call": guard.EventAction, "tool_result": guard.EventToolOutput, "input": guard.EventPrompt, // pi、omp
 	"tools/pre-execute": guard.EventAction, "tools/post-execute": guard.EventToolOutput, "agent/pre-step": guard.EventPrompt, // dsh
+	"before_tool_call": guard.EventAction, "before_agent_run": guard.EventPrompt, "before_dispatch": guard.EventPrompt, // openclaw（工具结果是 tool_result）
+	"pre_tool_call": guard.EventAction, "transform_tool_result": guard.EventToolOutput, "transform_terminal_output": guard.EventToolOutput, // hermes
+	"pre_gateway_dispatch": guard.EventPrompt, "pre_llm_call": guard.EventPrompt,
+}
+
+// notifier 由能把结论发到消息渠道的 adapter 实现（Hermes）：WithNotify 返回按配置 harnesses.<name>.notify 发通知的副本。
+type notifier interface {
+	WithNotify(on []guard.Decision, to string) harness.Adapter
 }
 
 // budgets 由 --timeout 推出两个时间点：内部截止时间（经 context 传给各阶段）为 timeout 减 1 秒；
@@ -312,6 +320,11 @@ func (h *hookRun) run(ctx context.Context, extra string) {
 			rev, rnote = ev, unparsed
 		}
 		if ev, note = rev, rnote; !h.setEvent(ev, ad) {
+			return
+		}
+	}
+	if nf, ok := h.adapter.(notifier); ok {
+		if on, to, enabled := s.cfg.NotifyFor(h.adapter.Name()); enabled && !h.setEvent(ev, nf.WithNotify(on, to)) {
 			return
 		}
 	}

@@ -117,7 +117,10 @@ func Workdir(cwd, workdir string) string {
 }
 
 // Render 渲染扩展接入协议的回复：pass 不带说明；其余结论必须带说明，缺失时用固定文本。
-func Render(out guard.Outcome) []byte {
+func Render(out guard.Outcome) []byte { return RenderSubject(out, "") }
+
+// RenderSubject 同 Render，非 pass 的回复另带调用摘要 subject（见 extproto.Reply.Subject）。
+func RenderSubject(out guard.Outcome, subject string) []byte {
 	d := out.Verdict.Decision
 	if d == guard.DecisionPass {
 		b, _ := json.Marshal(extproto.NewReply(extproto.ActionPass, "", ""))
@@ -127,6 +130,8 @@ func Render(out guard.Outcome) []byte {
 	if strings.TrimSpace(msg) == "" {
 		msg = "h-guard" // 非 pass 的回复必须带说明
 	}
-	b, _ := json.Marshal(extproto.NewReply(extproto.Action(d), msg, out.Hint))
+	r := extproto.NewReply(extproto.Action(d), msg, out.Hint)
+	r.Subject = subject
+	b, _ := json.Marshal(r)
 	return b
 }

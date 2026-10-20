@@ -17,7 +17,7 @@ import (
 	"github.com/cyberchen1995/h-guard/internal/store"
 )
 
-// 单文件扩展（opencode 插件、pi 与 omp 的扩展、dsh 插件）：内嵌的模板里 CONFIG 一行（pi 的模板另有 HARNESS 一行）
+// 单文件扩展（opencode 插件、pi 与 omp 的扩展、dsh 插件，以及 OpenClaw 插件的入口）：内嵌的模板里 CONFIG 一行（pi 的模板另有 HARNESS 一行）
 // 以 「// h-guard install」 结尾，install 把它们换成本次安装的取值，其余内容原样写出。
 const extMarker = "// h-guard install"
 
@@ -26,12 +26,13 @@ var (
 	extHarnessLine = regexp.MustCompile(`(?m)^const HARNESS = '([a-z]+)' ` + regexp.QuoteMeta(extMarker) + `$`)
 )
 
-// OpenCodeWritten、PiWritten、OMPWritten、DSHWritten 是各扩展按其源码编写的 harness 版本（还没有经过录制核实）。
+// OpenCodeWritten、PiWritten、OMPWritten、DSHWritten、OpenClawWritten 是各扩展按其源码编写的 harness 版本（还没有经过录制核实）。
 const (
 	OpenCodeWritten = "1.19.3"
 	PiWritten       = "1.3.0"
 	OMPWritten      = "18.11.3"
 	DSHWritten      = "0.2.1-rc.2"
+	OpenClawWritten = "2026.10.4"
 )
 
 // extConfig 是写进扩展的 CONFIG：h-guard 的命令（不含 --event）与等待它的毫秒数。

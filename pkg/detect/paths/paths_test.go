@@ -456,3 +456,23 @@ func TestDarwinFirmlinkAndVolfs(t *testing.T) {
 		t.Error("a volfs path did not match")
 	}
 }
+
+// TestLists：Lists 里的占位符按每个值各展开一份；空列表或空值不匹配，Vars 里同名的值不再使用。
+func TestLists(t *testing.T) {
+	env := paths.Env{Home: "/home/u", Lexical: true, Vars: map[string]string{"inc": "/ignored"},
+		Lists: map[string][]string{"inc": {"/home/u/.openclaw/plugins.json5", "", "/srv/oc/agents.json5"}, "none": nil}}
+	m, err := paths.Compile([]string{"{inc}", "{none}"}, env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for in, want := range map[string]bool{
+		"/home/u/.openclaw/plugins.json5": true,
+		"/srv/oc/agents.json5":            true,
+		"/ignored":                        false,
+		"/home/u/.openclaw/other.json5":   false,
+	} {
+		if got := m.Match(paths.Resolve(in, env)); got != want {
+			t.Errorf("%s: match = %v, want %v", in, got, want)
+		}
+	}
+}

@@ -30,6 +30,8 @@ import (
 	_ "github.com/cyberchen1995/h-guard/pkg/harness/codex"
 	_ "github.com/cyberchen1995/h-guard/pkg/harness/dsh"
 	_ "github.com/cyberchen1995/h-guard/pkg/harness/generic"
+	_ "github.com/cyberchen1995/h-guard/pkg/harness/hermes"
+	_ "github.com/cyberchen1995/h-guard/pkg/harness/openclaw"
 	_ "github.com/cyberchen1995/h-guard/pkg/harness/opencode"
 	_ "github.com/cyberchen1995/h-guard/pkg/harness/pi"
 	_ "github.com/cyberchen1995/h-guard/pkg/judge/anthropic" // 内置判断后端
@@ -92,6 +94,9 @@ type Options struct {
 	Executable func() (string, error)
 	// RunHarness 运行 harness 的命令行（取版本、校验插件），默认在 PATH 中查找并限时 10 秒；找不到时返回错误。
 	RunHarness func(name string, args ...string) ([]byte, error)
+	// QueryHarness 运行 harness 的只读查询命令（如 openclaw plugins inspect），只取标准输出，命令失败时也返回已有的
+	// 输出；默认在 PATH 中查找并限时 60 秒，不经 shell、没有标准输入。
+	QueryHarness func(name string, args ...string) ([]byte, error)
 	// RunEntry 运行 harness 的一个 h-guard 入口（selftest）：argv 不经 shell，env 追加到本进程的环境，stdin 是输入；
 	// 默认限时 30 秒。
 	RunEntry func(argv, env []string, stdin []byte) ([]byte, error)
@@ -135,6 +140,9 @@ func (o *Options) fill() {
 	if o.RunHarness == nil {
 		o.RunHarness = runHarness
 	}
+	if o.QueryHarness == nil {
+		o.QueryHarness = queryHarness
+	}
 	if o.RunEntry == nil {
 		o.RunEntry = runEntry
 	}
@@ -163,7 +171,7 @@ const usage = `usage:
   h-guard eval --outbound [--backend <name>] [--sweep] [--threshold <t>] [--cases <file>] [--yes] [--config <file>]
   h-guard eval --compare [--tasks <dir>] [--holdout <file>] [--json <file>]
   h-guard init
-  h-guard install claudecode|codex|opencode|pi|omp|dsh [--write] [--remove] [--timeout <seconds>] [--shell posix|powershell]
+  h-guard install claudecode|codex|opencode|pi|omp|dsh|openclaw|hermes [--write] [--remove] [--timeout <seconds>] [--shell posix|powershell]
   h-guard migrate <questions.json> [--write]
   h-guard config validate [--rules <dir>] | show | init [--config <file>]
   h-guard version
@@ -322,6 +330,44 @@ func piAgentDir(o Options) string {
 	return install.ExpandPiDir(o.Home, d)
 }
 
+// openclawConfig 是 OpenClaw 的配置文件（install openclaw 改写的 openclaw.json）。
+func openclawConfig(o Options) string {
+	if o.Home == "" {
+		return ""
+	}
+	return install.OpenClawConfig(install.Target{Home: o.Home, Getenv: o.Getenv, GOOS: o.GOOS})
+}
+
+// openclawIncludes 是 OpenClaw 的配置用 $include 引入的文件。
+func openclawIncludes(o Options) []string {
+	if o.Home == "" {
+		return nil
+	}
+	files, _ := install.OpenClawIncludes(install.Target{Home: o.Home, Getenv: o.Getenv, GOOS: o.GOOS})
+	return files
+}
+
+// hermesHome 是 Hermes Agent 的主目录（install hermes 写插件的目录）：$HERMES_HOME，默认 ~/.hermes（Windows 上是
+// %LOCALAPPDATA%\hermes）；没有主目录时为空。
+func hermesHome(o Options) string {
+	if o.Home == "" {
+		return ""
+	}
+	return install.HermesHome(install.Target{Home: o.Home, GOOS: o.GOOS, Getenv: o.Getenv})
+}
+
+// hermesManaged 是 Hermes Agent 的托管范围目录：$HERMES_MANAGED_DIR，默认 /etc/hermes（Windows 上没有默认位置）。
+// 目录不存在时 Hermes 不读它，这里照样保护：之后建起来的托管配置同样能停用 h-guard。
+func hermesManaged(o Options) string {
+	if d := strings.TrimSpace(o.Getenv("HERMES_MANAGED_DIR")); d != "" {
+		return d
+	}
+	if o.GOOS == "windows" {
+		return ""
+	}
+	return install.HermesManagedDefault
+}
+
 // absVars 把占位符的相对值按 h-guard 的工作目录解析成绝对路径：harness 按它自己的工作目录解析这些环境变量，
 // h-guard 由它启动、继承同一个目录。不能按事件里某次工具调用的目录解析，那是命令的目录，不是 harness 的。
 func absVars(vars map[string]string) map[string]string {
@@ -343,7 +389,9 @@ func (s setup) newEngine(o Options, j action.Judge, oj outbound.Judge) *engine.E
 		Paths: paths.Env{Home: o.Home, FoldCase: paths.FoldCaseDefault, Windows: paths.WindowsDefault,
 			Vars: absVars(map[string]string{rules.VarConfig: o.ConfigDir, rules.VarCache: o.CacheDir, rules.VarExtraConfig: s.extra,
 				rules.VarClaudeConfig: o.Getenv("CLAUDE_CONFIG_DIR"), rules.VarCodexHome: o.Getenv("CODEX_HOME"),
-				rules.VarXDGConfig: o.Getenv("XDG_CONFIG_HOME"), rules.VarPiAgentDir: piAgentDir(o), rules.VarDSHHome: install.ExpandDSHHome(o.Home, o.Getenv("DSH_HOME")), rules.VarOMPConfig: ompConfig(o)})}}
+				rules.VarXDGConfig: o.Getenv("XDG_CONFIG_HOME"), rules.VarPiAgentDir: piAgentDir(o), rules.VarDSHHome: install.ExpandDSHHome(o.Home, o.Getenv("DSH_HOME")), rules.VarOMPConfig: ompConfig(o),
+				rules.VarOpenClawConfig: openclawConfig(o), rules.VarHermesHome: hermesHome(o), rules.VarHermesManaged: hermesManaged(o)}),
+			Lists: map[string][]string{rules.VarOpenClawIncludes: openclawIncludes(o)}}}
 	o2 := &outbound.Check{Rules: s.rules, Config: s.cfg, Judge: oj}
 	return &engine.Engine{
 		Checks: []guard.Check{c, o2}, Catalog: s.catalog, Locale: s.locale,

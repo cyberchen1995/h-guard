@@ -14,7 +14,7 @@ import (
 // 前面的反斜杠个数为奇数时（\{config}）是字面的花括号，不是占位符；不认识的名字原样保留（regexp2 里不是量词的
 // {…} 按字面匹配）。
 //
-// 展开：值是一个目录或文件（paths.Env.Vars），换成匹配它的字面量（regexp.QuoteMeta 转义，regexp2 接受这些转义），
+// 展开：值是一个目录或文件（paths.Env.Vars；有多个值的占位符取 paths.Env.Lists，匹配其中任一个），换成匹配它的字面量（regexp.QuoteMeta 转义，regexp2 接受这些转义），
 // 外面包一层 (?i:…)：
 //   - \ 与 / 都当作分隔符，每处分隔符匹配 [/\\]+（命令里两种写法都有，Windows 上 PowerShell 也接受 /）；
 //   - 空格前可以有一个反斜杠（POSIX 的 Application\ Support）；
@@ -54,6 +54,18 @@ func expandExec(p string, env paths.Env) string {
 		if len(m[1])%2 != 0 || !placeholders[m[2]] {
 			return s
 		}
+		if vals, ok := env.Lists[m[2]]; ok { // 有多个值的占位符：任一个值
+			var alts []string
+			for _, v := range vals {
+				if lit := execLiteral(v, env.Home); lit != neverMatch {
+					alts = append(alts, lit)
+				}
+			}
+			if len(alts) == 0 {
+				return m[1] + neverMatch
+			}
+			return m[1] + "(?:" + strings.Join(alts, "|") + ")"
+		}
 		return m[1] + execLiteral(env.Vars[m[2]], env.Home)
 	})
 }
@@ -73,7 +85,10 @@ func execLiteral(v, home string) string {
 		return pathStart + `(?:[/\\]+|(?=[/\\]))`
 	}
 	lit := literalSegments(n)
-	if d := driveLetter.FindString(n); d != "" && len(n) > len(d) && n[len(d)] == '/' {
+	if d := driveLetter.FindString(n); d != "" && len(n) == len(d) {
+		// 盘的根目录（C:\ 规范化成 C:；Windows 上 / 经 absVars 也成了它）：与根目录相同，盘符可省略
+		return "(?i:(?:" + regexp.QuoteMeta(d) + "|" + pathStart + "))" + `(?:[/\\]+|(?=[/\\]))`
+	} else if d != "" && n[len(d)] == '/' {
 		// Windows 的盘符路径：命令里也可能省略盘符（\agent、/agent 相对当前盘），省略时须从参数开头起
 		lit = "(?:" + regexp.QuoteMeta(d) + "|" + pathStart + ")" + literalSegments(n[len(d):])
 	}
@@ -143,6 +158,9 @@ func templateKey(env paths.Env, names []string) string {
 	b.WriteString(env.Home)
 	for _, n := range names {
 		b.WriteString("\x00" + env.Vars[n])
+		for _, v := range env.Lists[n] {
+			b.WriteString("\x01" + v)
+		}
 	}
 	return b.String()
 }

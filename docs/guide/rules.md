@@ -204,6 +204,10 @@ write patterns with `**/` or `~/` (not a drive letter). Placeholders:
 | `{pi_agent_dir}` | `$PI_CODING_AGENT_DIR`, with a leading `~` expanded (no match when unset) |
 | `{omp_config}` | `$PI_CONFIG_DIR` under the home directory (no match when unset) |
 | `{dsh_home}` | `$DSH_HOME`, with a leading `~` expanded (no match when unset) |
+| `{openclaw_config}` | the `openclaw.json` OpenClaw reads (see the OpenClaw section of the harness guide) |
+| `{openclaw_includes}` | each file OpenClaw's configuration pulls in with `$include`, as h-guard resolves them; a pattern with it matches any of them (no match when there are none) |
+| `{hermes_managed}` | Hermes Agent's managed-scope directory: `$HERMES_MANAGED_DIR`, otherwise `/etc/hermes` (unset on Windows) |
+| `{hermes_home}` | Hermes Agent's home: `$HERMES_HOME` with environment variables and a leading `~` expanded as Hermes does, otherwise the default `~/.hermes` (`%LOCALAPPDATA%\hermes` on Windows); always set |
 
 Relative targets are resolved against the working directory and symbolic links
 are resolved, so a link to a protected file matches too. `exclude` patterns are
@@ -220,8 +224,11 @@ File examples (`{action, path}`) are matched literally, without touching the
 file system, with the home directory `/home/user`, the working directory
 `/home/user/project`, `{config}` = `/xdg/config/h-guard`, `{cache}` =
 `/xdg/cache/h-guard`, `{extra_config}` = `/etc/guard/extra.yaml`,
-`{pi_agent_dir}` = `/opt/pi/agent` and `{dsh_home}` = `/home/user/my dsh`; the
-other placeholders are unset. Command examples use the same values for
+`{pi_agent_dir}` = `/opt/pi/agent`, `{dsh_home}` = `/home/user/my dsh`,
+`{openclaw_config}` = `/srv/openclaw/openclaw.json`, `{openclaw_includes}` =
+`/home/user/.openclaw/conf.d/plugins.json`, `/etc/openclaw/plugins.json` and
+`C:\etc\openclaw\plugins.json`, `{hermes_home}` = `/opt/hermes` and
+`{hermes_managed}` = `/srv/hermes-policy`; the other placeholders are unset. Command examples use the same values for
 placeholders in `exec` patterns.
 
 ### `question`

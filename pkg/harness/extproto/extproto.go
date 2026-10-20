@@ -57,6 +57,9 @@ type Reply struct {
 	Action   Action `json:"action"`
 	Message  string `json:"message,omitempty"`
 	Hint     string `json:"hint,omitempty"`
+	// Subject 是给人看的调用摘要（工具、命令、文件），h-guard 认出的凭据已遮蔽。可选：只有部分 adapter 在请求确认时
+	// 给出，扩展把它放进会出现在聊天里的确认说明，代替自己拼出的原始参数。
+	Subject string `json:"subject,omitempty"`
 }
 
 // NewReply 返回已填好协议标识的回复。

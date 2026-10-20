@@ -1,0 +1,622 @@
+// Package openclaw 是 OpenClaw 的 adapter。h-guard 以原生插件接入 OpenClaw：插件在 before_tool_call、工具结果
+// middleware、before_agent_run 与 before_dispatch 四处按扩展接入协议 v1 把事件交给 h-guard hook openclaw，再把回复翻译成 OpenClaw 的
+// 决定（block、requireApproval、替换工具结果、拦下这一轮）。
+//
+// 请求的 data 是事件里能序列化的部分：
+//   - before_tool_call：{toolName, params, toolKind, toolInputKind, toolCallId, derivedPaths, platform, execHost}，toolKind 为
+//     code_mode_exec 时这是 Code Mode 的 JavaScript 单元（其中的工具调用各自经过检查），platform 是 Gateway 所在平台
+//     （process.platform），execHost 是 exec 实际运行的位置（见 toolData）；
+//   - tool_result（工具结果 middleware）：{toolName, toolCallId, args, isError, platform}，result 是 {content}；
+//   - before_agent_run：{prompt, trigger, provenance, sessionKey, channel}，trigger 是这一轮的起因（user、cron、
+//     heartbeat 等），provenance 是用户消息的来源（external_user、inter_session、internal_system）；
+//   - before_dispatch：{prompt, sessionKey, channel}，渠道收到的消息在分派给 agent 之前（包括默认的 steer 队列模式下
+//     插进正在进行的运行、不经过 before_agent_run 的消息），按外部用户的输入检查。
+//
+// 导入本包即注册名为 openclaw 的 adapter。
+package openclaw
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"slices"
+	"strings"
+
+	"github.com/cyberchen1995/h-guard/pkg/detect/command"
+	"github.com/cyberchen1995/h-guard/pkg/detect/secrets"
+	"github.com/cyberchen1995/h-guard/pkg/guard"
+	"github.com/cyberchen1995/h-guard/pkg/harness"
+	"github.com/cyberchen1995/h-guard/pkg/harness/internal/applypatch"
+	"github.com/cyberchen1995/h-guard/pkg/harness/internal/extadapter"
+)
+
+// Name 是 adapter 名，也是扩展请求中的 harness 字段。
+const Name = "openclaw"
+
+// MinVersion 是插件按其源码编写的 OpenClaw 版本。
+const MinVersion = "2026.10.4"
+
+// codeModeExec 是 Code Mode 外层 exec 的 toolKind：参数是 JavaScript，不是 shell 命令。
+const codeModeExec = "code_mode_exec"
+
+// ErrNoAction 表示这次工具调用不产生动作（查询、会话与子 agent、网页、MCP 等工具，或没有可检查的内容），插件照常放行。
+var ErrNoAction = fmt.Errorf("openclaw: %w", harness.ErrNoAction)
+
+var errUnparsed = errors.New("openclaw: the tool's target cannot be parsed")
+
+// errUnknownTool 表示 OpenClaw 自带的工具里 h-guard 不认识的，或插件提供的工具（Parse 返回 *harness.UnknownToolError）。
+var errUnknownTool = errors.New("openclaw: the tool is not known")
+
+func init() {
+	if err := harness.Register(Adapter{}); err != nil {
+		panic(err)
+	}
+}
+
+// Adapter 是 OpenClaw adapter，无状态。
+type Adapter struct{}
+
+func (Adapter) Name() string { return Name }
+
+// Capabilities：before_tool_call 的 deny 阻止工具调用（模型读到说明），ask 交给 OpenClaw 的插件审批（审批送到发起对话的
+// 聊天或配置的目标；没有能回答的界面时 OpenClaw 自己拦下，属于安全方向）；before_agent_run 的 block 拦下这一轮；工具结果
+// middleware 用说明代替工具结果。插件没有向用户显示提示的接口，warn 不声明，由 Engine 记为 warn_undelivered（插件可以另外
+// 经频道通知）。
+func (Adapter) Capabilities() harness.Caps {
+	return harness.Caps{
+		MinVersion: MinVersion,
+		Events: map[guard.EventKind]harness.EventCaps{
+			guard.EventAction:     {Block: true, Ask: true},
+			guard.EventPrompt:     {Block: true},
+			guard.EventToolOutput: {Block: true, Replace: true},
+		},
+	}
+}
+
+// CapsFor 返回事件类型的能力。
+func (a Adapter) CapsFor(ev guard.Event) harness.EventCaps { return a.Capabilities().Events[ev.Kind] }
+
+type toolData struct {
+	ToolName   string          `json:"toolName"`
+	ToolCallID string          `json:"toolCallId"`
+	Params     json.RawMessage `json:"params"`
+	Args       json.RawMessage `json:"args"` // tool_result 的参数
+	ToolKind   string          `json:"toolKind"`
+	Platform   string          `json:"platform"`
+	// ExecHost 是插件解析出的 exec 实际运行的位置：调用自己的 host（或 node），没有时依次取会话的 /exec 设置、agent 与
+	// tools.exec 的配置（auto、gateway、sandbox、node）；读不到这些设置时为 unknown。没有这个字段时用参数里的 host。
+	ExecHost string `json:"execHost"`
+}
+
+// params 是工具参数里 h-guard 用到的字段。OpenClaw 2026.10.4 的 read、write、edit 只用 path（CLI 后端的原生文件工具把
+// file_path 换成 path 再交给 before_tool_call）；file_path、filePath、file 是其他版本或别的工具接受的写法。各种写法都有
+// 值时 OpenClaw 用哪一个随版本而变，所以每一个都检查（paths）。
+type params struct {
+	Command  string   `json:"command"`
+	Code     string   `json:"code"` // Code Mode 的 JavaScript
+	Workdir  string   `json:"workdir"`
+	Host     string   `json:"host"`     // exec：auto、sandbox、gateway、node
+	Elevated bool     `json:"elevated"` // exec：在 Gateway 上运行（离开 sandbox）
+	asked    string   // 调用自己写的 host（Host 可能被插件解析出的 execHost 替换）
+	Node     string   `json:"node"` // exec：远端节点
+	Path     string   `json:"path"`
+	FilePath string   `json:"file_path"`
+	FileCase string   `json:"filePath"`
+	File     string   `json:"file"`
+	Paths    []string `json:"paths"` // view_image
+	Input    string   `json:"input"` // apply_patch
+	Action   string   `json:"action"`
+	Data     string   `json:"data"` // process write
+	Text     string   `json:"text"` // process paste
+	EOF      bool     `json:"eof"`  // process write：写完后关闭 stdin
+}
+
+// filePaths 返回 path、file_path、filePath、file 里不为空的值（去掉重复的）。
+func (p params) filePaths() []string {
+	var out []string
+	for _, s := range []string{p.Path, p.FilePath, p.FileCase, p.File} {
+		if strings.TrimSpace(s) != "" && !slices.Contains(out, s) {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// fileActions 返回 filePaths 里每个路径（按 openclawFilePaths 解析）的文件动作。
+func (p params) fileActions(kind guard.ActionKind, platform string) []guard.Action {
+	var acts []guard.Action
+	var seen []string
+	for _, s := range p.filePaths() {
+		for _, f := range openclawFilePaths(s, platform) {
+			if slices.Contains(seen, f) {
+				continue
+			}
+			seen = append(seen, f)
+			if act, ok := extadapter.File(kind, f); ok {
+				acts = append(acts, act)
+			}
+		}
+	}
+	return acts
+}
+
+// openclawFilePaths 返回 OpenClaw 的文件工具对一个路径实际可能用的文件（2026.10.4 的 sessions/tools/path-utils 的
+// expandPath 与 path-policy 的 preserveAtPrefixedRelativePath）：
+//   - 开头的一个 @ 是提及文件的写法：@/abs、@~/x、@file://… 去掉 @；相对路径的 @x 在 ./@x 存在时按字面读，否则读 x，
+//     这里看不到对方的文件系统，两个都检查（@@x 同样是 @@x 或 @x）；
+//   - 以 file:// 开头的按 file: URL 解码（OpenClaw 解码不了时按字面）。
+func openclawFilePaths(p, platform string) []string {
+	out := []string{p}
+	if r, ok := strings.CutPrefix(p, "@"); ok && r != "" {
+		if r == "~" || strings.HasPrefix(r, "~/") || strings.HasPrefix(r, `~\`) || (len(r) >= 7 && strings.EqualFold(r[:7], "file://")) ||
+			strings.HasPrefix(r, "/") || strings.HasPrefix(r, `\`) || driveRe.MatchString(r) {
+			out = []string{r}
+		} else {
+			out = []string{p, r}
+		}
+	}
+	for i, s := range out {
+		if strings.HasPrefix(s, "file://") {
+			if d, ok := fileURLPath(s, platform); ok {
+				out[i] = d
+			}
+		}
+	}
+	return out
+}
+
+type runData struct {
+	Prompt     string `json:"prompt"`
+	Trigger    string `json:"trigger"`
+	Provenance string `json:"provenance"`
+	SessionKey string `json:"sessionKey"`
+}
+
+type resultPayload struct {
+	Content json.RawMessage `json:"content"`
+}
+
+// Parse 解析插件转交的请求。
+func (Adapter) Parse(raw []byte) (guard.Event, error) {
+	req, err := extadapter.Request(raw, Name)
+	if err != nil {
+		return guard.Event{}, err
+	}
+	ev := guard.Event{Harness: Name, SessionID: req.Session.ID, Cwd: req.Session.Cwd}
+	switch req.Hook {
+	case "before_tool_call", "tool_result":
+		var d toolData
+		if err := json.Unmarshal(req.Data, &d); err != nil {
+			return guard.Event{}, fmt.Errorf("openclaw: %s data: %w", req.Hook, err)
+		}
+		ev.Tool, ev.CallID = d.ToolName, d.ToolCallID
+		rawParams := d.Params
+		if req.Hook == "tool_result" {
+			rawParams = d.Args
+		}
+		var in params
+		if !extadapter.IsNull(rawParams) {
+			if err := json.Unmarshal(rawParams, &in); err != nil {
+				if req.Hook == "before_tool_call" && touches[d.ToolName] {
+					ev.Kind = guard.EventAction
+					return guard.Event{}, &harness.TargetUnparsedError{Event: ev}
+				}
+				in = params{}
+			}
+		}
+		in.asked = in.Host
+		if d.ExecHost != "" {
+			in.Host = d.ExecHost
+		}
+		codeMode := d.ToolKind == codeModeExec || (d.ToolName == "exec" && in.Code != "" && in.Command == "")
+		if req.Hook == "tool_result" {
+			var r resultPayload
+			if !extadapter.IsNull(req.Result) {
+				if err := json.Unmarshal(req.Result, &r); err != nil {
+					return guard.Event{}, fmt.Errorf("openclaw: tool_result result: %w", err)
+				}
+			}
+			ev.Kind, ev.Text = guard.EventToolOutput, extadapter.Text(r.Content)
+			ev.FileContent = fileContent(d.ToolName, in, rawParams, shells(in, d.Platform), codeMode)
+			break
+		}
+		ev.Kind = guard.EventAction
+		if codeMode {
+			return guard.Event{}, ErrNoAction // Code Mode 单元里的工具调用各自经过 before_tool_call
+		}
+		if d.ToolName == "exec" {
+			ev.Cwd = extadapter.Workdir(ev.Cwd, in.Workdir)
+		}
+		acts, err := actions(d.ToolName, in, rawParams, d.Platform)
+		if errors.Is(err, errUnparsed) {
+			ev.Actions = acts
+			return guard.Event{}, &harness.TargetUnparsedError{Event: ev}
+		}
+		if errors.Is(err, errUnknownTool) {
+			return guard.Event{}, &harness.UnknownToolError{Event: ev}
+		}
+		if err != nil {
+			return guard.Event{}, err
+		}
+		ev.Actions = acts
+	case "before_agent_run", "before_dispatch":
+		var d runData
+		if err := json.Unmarshal(req.Data, &d); err != nil {
+			return guard.Event{}, fmt.Errorf("openclaw: %s data: %w", req.Hook, err)
+		}
+		if req.Hook == "before_dispatch" { // 渠道收到的消息：外部用户发来的
+			d.Trigger, d.Provenance = "user", "external_user"
+		}
+		ev.Kind, ev.Text = guard.EventPrompt, d.Prompt
+		if strings.TrimSpace(d.Prompt) != "" {
+			ev.Requests = []guard.Request{{Text: d.Prompt, Source: SourceOf(d.Trigger, d.Provenance, d.SessionKey)}}
+		}
+	default:
+		return guard.Event{}, fmt.Errorf("openclaw: unsupported hook %q", req.Hook)
+	}
+	if err := ev.Validate(); err != nil {
+		return guard.Event{}, err
+	}
+	return ev, nil
+}
+
+// SourceOf 判定一轮输入的来源：起因是 user（聊天消息、openclaw agent、Web 界面）或 manual（用户发起的系统助手等），
+// 且用户消息确实来自外部用户、会话不是子 agent 的，才是用户本人的指令。cron、heartbeat、event（webhook）、memory、
+// overflow 等起因，另一个会话转来的消息（inter_session，子 agent 的结果、sessions_send）与系统交接（internal_system），
+// 以及子 agent 会话（会话键里有 subagent:）里的输入，都是自动消息。
+func SourceOf(trigger, provenance, sessionKey string) guard.Source {
+	if trigger != "user" && trigger != "manual" {
+		return guard.SourceAutomated
+	}
+	if provenance == "inter_session" || provenance == "internal_system" {
+		return guard.SourceAutomated
+	}
+	if k := strings.ToLower(sessionKey); strings.HasPrefix(k, "subagent:") || strings.Contains(k, ":subagent:") {
+		return guard.SourceAutomated
+	}
+	return guard.SourceUser
+}
+
+// openclawReadOnly 是 OpenClaw 自带的、不执行命令、不改动用户文件、也不替用户在外部操作的工具
+// （src/agents/tool-catalog.ts，2026.10.4）：目录与搜索、网页、记忆的查询、会话与子 agent（子 agent 的工具调用各自经过
+// 检查）、目标与进度、向用户提问、技能的查找与读取、图片与 PDF 的理解、媒体生成（写进 OpenClaw 管理的媒体目录）、
+// 操作界面的布局、主题、仪表盘与组件、Code Mode 的 wait、tool_search 等。browser、message、sessions、transcripts、
+// canvas 只有部分子命令在内（见 openclawActions）。
+// 其余 OpenClaw 自带的工具（向终端或运行中的进程输入、控制桌面与手机、节点、Gateway 更新与配置、插件管理、定时任务、
+// 技能与个人指令的改写、凭据、发布 GitHub PR、暴露本地服务、远端代码执行等）与插件提供的工具 h-guard 不认识，请求确认；
+// 用户可以在 harnesses.openclaw.read_only_tools 里补充只读的工具。MCP 工具（<服务>__<工具>）同样请求确认：插件
+// 读不到 OpenClaw 实际的工具目录，分不出它们与同样这样命名的插件工具（mcp.servers 里有 github 时，插件的
+// github__delete 名字上也像 MCP 工具），只按名字放行不可靠；只读的 MCP 工具可以写进 read_only_tools（如 github__get_*）。Tool Search 的调用工具（tool_call，较新版本叫 dispatch_action）不产生动作：OpenClaw 调用目标工具时
+// 再经过一次 before_tool_call。工具参数里引用的本地文件（附件、参考图、PDF 等，见 fileRefs）按读文件检查。
+var openclawReadOnly = map[string]bool{
+	"ls": true, "find": true, "glob": true, "search": true, "tool_search": true, "tool_describe": true, "wait": true,
+	"tool_call": true, "dispatch_action": true,
+	"structured_output": true, "decision_evaluate": true,
+	"web_search": true, "web_fetch": true, "x_search": true, "memory_search": true, "memory_get": true,
+	"presence": true, "sessions_list": true, "sessions_history": true, "sessions_search": true,
+	"sessions_create": true, "sessions_send": true, "sessions_spawn": true, "sessions_yield": true, "session_status": true,
+	"conversations_list": true, "conversations_send": true, "conversations_turn": true,
+	"agents_list": true, "agents_wait": true, "subagents": true, "suggest_task": true, "dismiss_task": true,
+	"get_goal": true, "create_goal": true, "update_goal": true, "progress_card": true, "ask_user": true,
+	"skills_search": true, "skills_read": true, "github_identity_status": true,
+	"screen": true, "theme": true, "dashboard": true, "show_widget": true,
+	"heartbeat_respond": true,
+	"pdf":               true, "image_generate": true, "music_generate": true, "video_generate": true, "tts": true,
+}
+
+// openclawActions 是只有部分子命令只读的工具里放行的子命令；其余子命令（与没有或读不懂的子命令）请求确认
+// （tool_unknown）。
+//   - browser 控制一个可能已登录的真实浏览器：只放行观察页面的子命令（screenshot 与 pdf 写到 path 时按写文件检查）；
+//     打开、切换与关闭标签页、导航、点击输入（act）、上传下载、对话框、模拟设备、启动与导入配置档等请求确认。
+//   - message 是 agent 在频道里发消息的方式（src/channels/plugins/message-action-names.ts）：放行读取类子命令与发送、
+//     回复、表情回应、投票，附件里的本地文件按读文件检查（文件会发到频道）；编辑、撤回、删除、置顶，与群组、频道、
+//     成员、身份、事件的管理请求确认。
+//   - sessions 放行查看与改标签、分组、模型等会话设置，重置与删除会话（及其记录）、删除分组、转交所有者请求确认。
+//   - transcripts 放行查看、导入与总结会议记录，开始录制会议（start）请求确认。
+//   - canvas 控制配对的 Mac 上的 WebView 面板：放行隐藏面板（hide）与截取面板（snapshot，较新的版本）；present 与
+//     navigate 让面板加载文档或 URL，较新版本的 eval 在面板里执行 JavaScript，请求确认。
+var openclawActions = map[string]map[string]bool{
+	"browser": set("doctor", "status", "profiles", "tabs", "snapshot", "console", "requests", "errors", "text", "screenshot", "pdf"),
+	"message": set(
+		"reactions", "read", "list-pins", "permissions", "thread-list", "search", "sticker-search", "member-info", "role-info",
+		"emoji-list", "channel-info", "channel-list", "voice-status", "event-list", "download-file",
+		"send", "broadcast", "poll", "reply", "sendWithEffect", "sendAttachment", "thread-reply", "sticker", "upload-file",
+		"react", "poll-vote"),
+	"sessions":    set("cloud_profiles", "patch", "stop", "group_list", "group_set", "group_rename"),
+	"transcripts": set("stop", "status", "import", "summarize", "list", "show"),
+	"canvas":      set("hide", "snapshot"),
+}
+
+func set(names ...string) map[string]bool {
+	m := map[string]bool{}
+	for _, n := range names {
+		m[n] = true
+	}
+	return m
+}
+
+// touches 是会执行命令或改动文件的工具。
+var touches = map[string]bool{"exec": true, "process": true, "write": true, "edit": true, "apply_patch": true}
+
+// shells 返回检查 exec 命令用的 shell。macOS 与 Linux 上 Gateway（$SHELL）与 sandbox 都按 POSIX。Windows 上 Gateway
+// 用 PowerShell，sandbox 是 POSIX：命令在哪里运行要到 exec 执行时才定（auto 看这个会话有没有 sandbox；会话要求 sandbox
+// 时配置的 gateway 也进 sandbox；默认开启的 elevated 让 sandbox 的命令回到 Gateway），插件看不全，所以两种 shell 都检查，
+// 取更严的结果。只有调用自己要求 gateway 或 elevated 时才确定在 Gateway 上（不能运行时 OpenClaw 拒绝这次调用）。
+func shells(in params, platform string) []guard.Shell {
+	if platform != "win32" {
+		return []guard.Shell{guard.ShellPOSIX}
+	}
+	if in.asked == "gateway" || in.Elevated {
+		return []guard.Shell{guard.ShellPowerShell}
+	}
+	return []guard.Shell{guard.ShellPowerShell, guard.ShellPOSIX}
+}
+
+// execActions 返回命令在每种 shell 下的动作。
+func execActions(cmd string, sh []guard.Shell) []guard.Action {
+	var acts []guard.Action
+	for _, s := range sh {
+		if act, ok := extadapter.Exec(cmd, s); ok {
+			acts = append(acts, act)
+		}
+	}
+	return acts
+}
+
+// actions 把工具映射为动作：exec 执行命令（按 shells 的 shell；host 为 node 时命令在配对的远端设备上运行，那里的 shell
+// 与文件 h-guard 看不到，按 POSIX 检查并请求确认；插件读不到运行位置（unknown）时另外请求确认）；read、grep、view_image 读文件；write、edit 写文件；apply_patch 按补丁里的文件；process 向
+// 运行中的进程写入的内容按命令检查并请求确认，提交输入（submit）、关闭 stdin、发送按键、结束进程请求确认，查看进程的
+// 子命令（list、poll、log）与 clear 不产生动作。其余工具不产生动作，或是不认识的工具。
+func actions(tool string, in params, raw json.RawMessage, platform string) ([]guard.Action, error) {
+	one := func(act guard.Action, ok bool) ([]guard.Action, error) {
+		if !ok {
+			return nil, ErrNoAction
+		}
+		return []guard.Action{act}, nil
+	}
+	switch tool {
+	case "exec":
+		if in.Host == "node" || strings.TrimSpace(in.Node) != "" {
+			if act, ok := extadapter.Exec(in.Command, guard.ShellPOSIX); ok {
+				return []guard.Action{act}, errUnparsed
+			}
+			return nil, ErrNoAction
+		}
+		acts := execActions(in.Command, shells(in, platform))
+		if len(acts) == 0 {
+			return nil, ErrNoAction
+		}
+		if in.Host == "unknown" {
+			return acts, errUnparsed
+		}
+		return acts, nil
+	case "read", "grep":
+		if acts := in.fileActions(guard.ActionFileRead, platform); len(acts) > 0 {
+			return acts, nil
+		}
+		return one(extadapter.File(guard.ActionFileRead, ""))
+	case "view_image":
+		if acts := refReads(tool, raw, platform); len(acts) > 0 {
+			return acts, nil
+		}
+		return nil, ErrNoAction
+	case "write", "edit":
+		if acts := in.fileActions(guard.ActionFileWrite, platform); len(acts) > 0 {
+			return acts, nil
+		}
+		return nil, errUnparsed
+	case "apply_patch":
+		acts, err := applypatch.Actions(in.Input)
+		if err != nil {
+			return nil, errUnparsed
+		}
+		return acts, nil
+	case "process":
+		switch in.Action {
+		case "list", "poll", "log", "clear": // 查看进程与输出；clear 只清掉已结束的进程
+			return nil, ErrNoAction
+		case "write", "paste":
+			// 写进运行中进程的内容多半是一条命令，但那是哪种 shell（或别的程序）这里看不出：按 POSIX 命令检查，另外请求确认
+			text := in.Data
+			if in.Action == "paste" {
+				text = in.Text
+			}
+			if act, ok := extadapter.Exec(text, guard.ShellPOSIX); ok {
+				return []guard.Action{act}, errUnparsed
+			}
+			if in.Action == "write" && in.EOF { // 关闭 stdin 会让进程执行还没换行的输入
+				return nil, errUnknownTool
+			}
+			if strings.ContainsAny(text, "\r\n") { // 只有换行（与空白）：与 submit 一样提交之前写入还没执行的输入
+				return nil, errUnknownTool
+			}
+			return nil, ErrNoAction
+		}
+		// submit（发送回车，执行之前写入还没提交的输入）、send-keys、kill、remove 与读不懂的子命令
+		return nil, errUnknownTool
+	}
+	if allowed, ok := openclawActions[tool]; ok {
+		if !allowed[in.Action] {
+			return nil, errUnknownTool
+		}
+		return partlyReadOnly(tool, in, raw, platform)
+	}
+	if tool == "show_widget" && widgetCapabilities(raw) {
+		return nil, errUnknownTool
+	}
+	if tool == "dashboard" && dashboardLoadsURL(in.Action, raw) {
+		return nil, errUnknownTool
+	}
+	if openclawReadOnly[tool] {
+		if acts := refReads(tool, raw, platform); len(acts) > 0 {
+			return acts, nil
+		}
+		return nil, ErrNoAction
+	}
+	return nil, errUnknownTool
+}
+
+// partlyReadOnly 返回 openclawActions 放行的子命令的动作：browser 的 screenshot、pdf 写到 path 的文件，message 附件里
+// 的本地文件。没有时不产生动作。
+func partlyReadOnly(tool string, in params, raw json.RawMessage, platform string) ([]guard.Action, error) {
+	var acts []guard.Action
+	switch {
+	case tool == "browser" && (in.Action == "screenshot" || in.Action == "pdf"):
+		if act, ok := extadapter.File(guard.ActionFileWrite, in.Path); ok {
+			acts = append(acts, act)
+		}
+	case tool == "message":
+		acts = refReads(tool, raw, platform)
+	}
+	if len(acts) == 0 {
+		return nil, ErrNoAction
+	}
+	return acts, nil
+}
+
+// listsMessages 报告 sessions_list 是否要求带上会话里的消息（messageLimit 大于 0，includeLastMessage 或
+// includeDerivedTitles）；参数读不懂
+// 时按带上处理。
+func listsMessages(raw json.RawMessage) bool {
+	if extadapter.IsNull(raw) {
+		return false
+	}
+	var p map[string]any
+	if json.Unmarshal(raw, &p) != nil {
+		return true
+	}
+	for _, k := range []string{"includeLastMessage", "includeDerivedTitles"} { // 标题取自会话的第一条消息
+		if v, ok := p[k]; ok && v != false {
+			return true
+		}
+	}
+	if v, ok := p["messageLimit"]; ok {
+		n, isNum := v.(float64)
+		return !isNum || n > 0
+	}
+	return false
+}
+
+// widgetCapabilities 报告 show_widget 是否给组件要了能力：capabilities.tools（让组件发提示词、触发定时任务）或
+// capabilities.netOrigins（让组件访问外部来源）。
+// dashboardLoadsURL 报告 dashboard 的 widget_put 是否放一个打开网址的组件（2026.10.4 的 docs/web/dashboards.md）：
+// session:website 在用户的浏览器里直接加载网站，browser:dashboard（Browser 插件的 browser:*）在 OpenClaw 管理的
+// 浏览器里打开标签页；与 browser、canvas 的导航一样请求确认。别的组件的 props 里有 url 时同样如此，参数读不懂时也是。
+// 其余子命令（读取、排列、切换标签页与展示方式等）只读。
+func dashboardLoadsURL(action string, raw json.RawMessage) bool {
+	if action != "widget_put" {
+		return false
+	}
+	var p struct {
+		PluginKind string         `json:"pluginKind"`
+		Props      map[string]any `json:"props"`
+	}
+	if extadapter.IsNull(raw) {
+		return false
+	}
+	if json.Unmarshal(raw, &p) != nil {
+		return true
+	}
+	kind := strings.ToLower(strings.TrimSpace(p.PluginKind))
+	if kind == "session:website" || strings.HasPrefix(kind, "browser:") {
+		return true
+	}
+	_, url := p.Props["url"]
+	return url
+}
+
+func widgetCapabilities(raw json.RawMessage) bool {
+	var p struct {
+		Capabilities struct {
+			Tools      []json.RawMessage `json:"tools"`
+			NetOrigins []json.RawMessage `json:"netOrigins"`
+		} `json:"capabilities"`
+	}
+	if extadapter.IsNull(raw) {
+		return false
+	}
+	if json.Unmarshal(raw, &p) != nil {
+		return true
+	}
+	return len(p.Capabilities.Tools) > 0 || len(p.Capabilities.NetOrigins) > 0
+}
+
+// fileContent 报告工具结果是不是文件内容：读文件的工具，或读文件的命令。
+func fileContent(tool string, in params, raw json.RawMessage, sh []guard.Shell, codeMode bool) bool {
+	if codeMode { // Code Mode 单元里的工具调用（如 read）取回的值可以原样返回
+		return true
+	}
+	switch tool {
+	case "read", "grep", "pdf", "memory_get", "skills_read":
+		return true
+	case "memory_search", "skills_search": // 记忆文件与技能文件的摘录
+		return true
+	case "transcripts": // show 是会议记录的原文与笔记，summarize 按记录总结
+		return in.Action == "show" || in.Action == "summarize" || in.Action == ""
+	case "dashboard": // read 取回仪表盘组件保存的内容（如会话报告）
+		return in.Action == "read" || in.Action == ""
+	case "sessions_list": // messageLimit、includeLastMessage、includeDerivedTitles 时带上会话里的消息
+		return listsMessages(raw)
+	case "tool_call", "dispatch_action": // Tool Search 调用目标工具，结果里是目标工具（可能是 read）的结果
+		return true
+	case "exec":
+		for _, s := range sh {
+			if command.ReadsFiles(in.Command, s) {
+				return true
+			}
+		}
+		return false
+	case "process": // 后台进程的新输出：看不出是哪条命令写的，按文件内容扫描
+		return true
+	case "sessions_history", "sessions_search": // 会话里之前的消息（包括读文件的结果）原文或摘录
+		return true
+	}
+	return false
+}
+
+// RenderNoAction 对不产生动作的工具调用回复放行（harness.NoActionRenderer）。
+func (Adapter) RenderNoAction() ([]byte, int) {
+	return extadapter.Render(guard.Outcome{Verdict: guard.Verdict{Decision: guard.DecisionPass}}), 0
+}
+
+// Render 渲染扩展接入协议的回复，pass 也有回复。请求确认时带上调用摘要（Subject）：插件把它放进会出现在聊天里的审批说明。
+func (Adapter) Render(ev guard.Event, out guard.Outcome) ([]byte, int) {
+	if out.Verdict.Decision == guard.DecisionAsk {
+		return extadapter.RenderSubject(out, Subject(ev)), 0
+	}
+	return extadapter.Render(out), 0
+}
+
+// maxSubject 是调用摘要的长度上限（字符）：OpenClaw 把审批说明截在 512 个字符，还要放 h-guard 的说明。
+const maxSubject = 300
+
+// Subject 返回给人看的调用摘要：工具名，后接命令或文件（重命名写出新名字），每个动作一行；h-guard 认出的凭据换成
+// [redacted]，太长时截断。没有动作（不认识的工具）时只有工具名。
+func Subject(ev guard.Event) string {
+	var parts []string
+	for _, a := range ev.Actions {
+		var p string
+		switch {
+		case a.Exec != nil:
+			p = a.Exec.Command
+		case a.File != nil && a.File.To != "":
+			p = string(a.Kind) + " " + a.File.Path + " -> " + a.File.To
+		case a.File != nil:
+			p = string(a.Kind) + " " + a.File.Path
+		default:
+			continue
+		}
+		if !slices.Contains(parts, p) { // Windows 上同一条命令按两种 shell 各有一个动作
+			parts = append(parts, p)
+		}
+	}
+	s := ev.Tool
+	if len(parts) > 0 {
+		s += ": " + strings.Join(parts, "\n")
+	}
+	s = secrets.Redact(s)
+	if r := []rune(s); len(r) > maxSubject {
+		s = string(r[:maxSubject-1]) + "…"
+	}
+	return s
+}

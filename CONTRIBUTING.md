@@ -30,10 +30,13 @@ Fuzz targets live next to the code they cover (`pkg/detect/...`,
 go test -run '^$' -fuzz '^FuzzFind$' -fuzztime 30s ./pkg/detect/pii/
 ```
 
-The opencode, pi/oh-my-pi and DeepSeek Harness extensions have JavaScript tests
+The opencode, pi/oh-my-pi, DeepSeek Harness and OpenClaw extensions have JavaScript tests
 under `extensions/*/tests`. They run against simulated harness APIs and a
 freshly built h-guard; `go test ./extensions/` runs them when `node` is on
 `PATH` (CI runners have it), and skips them otherwise or with `-short`.
+The Hermes Agent plugin has Python tests (standard library `unittest`) under
+`extensions/hermes/tests`, run the same way when `python3` or `python` (3.9 or
+later) is on `PATH`.
 
 The Claude Code plugin has its own tests; they need the `claude` CLI and are not
 part of CI:
@@ -42,8 +45,8 @@ part of CI:
 claude plugin test extensions/claudecode
 ```
 
-To check every commit of a branch the way CI does (gofmt, vet, Windows vet,
-race tests, golden):
+To check every commit of a branch the way CI does (commit message, gofmt, vet,
+Windows vet; tests run only on the branch head):
 
 ```sh
 .github/scripts/each-commit.sh <base> <head>
@@ -70,8 +73,11 @@ configuration (`~/.claude`, `~/.codex`). Use a temporary `HOME` and
 ## Commits and pull requests
 
 - Use conventional commits: `feat:`, `fix:`, `docs:`, `test:`, `perf:`,
-  `chore:`. Keep each commit buildable and passing, since CI checks every
-  commit in a pull request.
+  `chore:`. Keep each commit buildable, since CI vets every commit in a pull
+  request; the full test suite runs on the branch head.
+- Pull requests are squash-merged. The commit that lands on `main` takes its
+  message from the pull request title and description, so write them the way
+  you would write a commit message; CI checks them the same way.
 - Do not put review ids, internal planning terms or private paths in commit
   messages, code or docs. A repository test rejects them.
 - Do not commit real credentials or personal data. Fixtures use made-up values.

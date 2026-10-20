@@ -1,0 +1,11 @@
+name: h-guard
+version: "1"
+description: "h-guard safety guard: checks tool calls, tool output and prompts with the h-guard binary."
+author: h-guard
+kind: standalone
+provides_hooks:
+  - pre_tool_call
+  - transform_tool_result
+  - transform_terminal_output
+  - pre_gateway_dispatch
+  - pre_llm_call

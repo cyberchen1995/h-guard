@@ -1,7 +1,8 @@
 // Package eval 用标注语料评估判断后端并校准阈值。
 //
-// 每条语料走一遍真实的 action 检查（规则、state 构造、答案校验、策略都与 hook 相同），记下后端的答案；
-// 阈值扫描复用这些答案重算结论，不再调用后端。建议档案带指纹（模型、概率获取方式、题集），只打印、不写配置。
+// 每条语料走一遍真实的 action 检查（规则、state 构造、答案校验、策略都与 hook 相同），记下后端的答案与
+// 套用阈值之前的全部材料（action.Judged）；阈值扫描只重算套用阈值这一步，不再调用后端，也不重跑规则匹配。
+// 建议档案带指纹（模型、概率获取方式、题集），只打印、不写配置。
 //
 // 内置语料（corpus/commands.jsonl）是 Python 版的 102 条标注语料加上「先要求、后撤回」用例；
 // user_requests 按时间先后排列，旧的在前。PowerShell 另有一份（corpus/powershell.jsonl），
@@ -124,6 +125,7 @@ type Outcome struct {
 	Fallbacks []string      // 结论的降级原因（如 judge_answer_invalid）
 	Latency   time.Duration // 调用耗时
 	recorded  *recording
+	judged    *action.Judged // 套用阈值之前的材料；Rescore 只重算这一步
 }
 
 // OK 报告结论是否符合标注。
@@ -178,25 +180,39 @@ func Run(ctx context.Context, env Env, cases []Case) ([]Outcome, error) {
 
 // evaluate 让 action 检查判断一条语料，后端为 b，阈值为 th。
 func evaluate(ctx context.Context, env Env, cat *i18n.Catalog, c Case, b judge.Backend, th config.Thresholds) (Outcome, error) {
-	cfg := *env.Config
-	cfg.Judge.Enabled = true
-	// 语料的工作目录是虚构的：路径只按文本判断，不读文件系统（macOS 上 /home 是自动挂载点，逐级 Lstat 很慢）
-	chk := &action.Check{Rules: env.Rules, Config: &cfg, Catalog: cat, Locale: i18n.DefaultLocale,
-		Judge: action.Judge{Backend: b, Thresholds: &th}, Paths: paths.Env{Home: Home, Lexical: true}}
+	chk := checkFor(env, cat, b, th)
 	ev := guard.Event{Kind: guard.EventAction, Harness: Harness, Tool: Tool, Cwd: Cwd,
 		Actions: []guard.Action{{Kind: guard.ActionExec, Exec: &guard.ExecAction{Command: c.Command, Shell: c.Shell}}}}
 	for _, r := range c.UserRequests {
 		ev.Requests = append(ev.Requests, guard.Request{Text: r, Source: guard.SourceUser})
 	}
+	var judged *action.Judged
+	chk.OnJudged = func(j *action.Judged) { judged = j }
 	v, err := guard.Run(ctx, chk, ev)
 	if err != nil {
 		return Outcome{}, fmt.Errorf("%q: %w", c.Command, err)
 	}
+	o := outcomeOf(c, v)
+	o.judged = judged
+	return o, nil
+}
+
+// outcomeOf 把结论写成语料 c 的结果。
+func outcomeOf(c Case, v guard.Verdict) Outcome {
 	o := Outcome{Case: c, Decision: v.Decision, Signals: v.Signals, Fallbacks: v.Fallbacks}
 	for _, f := range v.Findings {
 		o.Hits = append(o.Hits, f.Rule)
 	}
-	return o, nil
+	return o
+}
+
+// checkFor 构造评估用的 action 检查：模型开启，后端为 b，阈值为 th，其余取 env 的规则与配置。
+func checkFor(env Env, cat *i18n.Catalog, b judge.Backend, th config.Thresholds) *action.Check {
+	cfg := *env.Config
+	cfg.Judge.Enabled = true
+	// 语料的工作目录是虚构的：路径只按文本判断，不读文件系统（macOS 上 /home 是自动挂载点，逐级 Lstat 很慢）
+	return &action.Check{Rules: env.Rules, Config: &cfg, Catalog: cat, Locale: i18n.DefaultLocale,
+		Judge: action.Judge{Backend: b, Thresholds: &th}, Paths: paths.Env{Home: Home, Lexical: true}}
 }
 
 // recording 是一次调用记下的答案或错误。
@@ -205,8 +221,8 @@ type recording struct {
 	err     error
 	invalid int // 调用成功时，所问题目中没有有效答案的题数（按 judge.Validate）
 	latency time.Duration
-	// kinds 是记录时后端声明的题型（Caps().Kinds，nil 为全部）。重算时 replay 照样声明，
-	// 动作检查才会把没有问出的题记成 judge_kind_unsupported，与记录时一致
+	// kinds 是记录时后端声明的题型（Caps().Kinds，nil 为全部）。Rescore 不再回放调用，
+	// 这里留给等价性测试的参照实现：它照样声明题型，完整重跑一遍动作检查
 	kinds []judge.Kind
 }
 
@@ -237,34 +253,26 @@ func (r *recorder) Ask(ctx context.Context, state map[string]any, qs []judge.Que
 	return resp, err
 }
 
-// replay 按记下的答案或错误回答，不调用后端；能力声明里带着记录时后端的题型。
-type replay struct{ rec *recording }
-
-func (replay) Name() string { return "replay" }
-func (p replay) Caps() judge.BackendCaps {
-	return judge.BackendCaps{Batch: true, Kinds: slices.Clone(p.rec.kinds)}
-}
-func (p replay) Ask(context.Context, map[string]any, []judge.Question) (judge.Response, error) {
-	return p.rec.resp, p.rec.err
-}
-
-// Rescore 用记下的答案在阈值 th 下重算全部结论，不调用后端。没有调用后端的语料（deny 级规则）结论不变。
+// Rescore 用记下的答案在阈值 th 下重算全部结论，不调用后端，也不重跑规则匹配：每条语料记下的材料
+// （action.Judged）只有套用阈值这一步要重做。没有调用后端的语料（deny 级规则）结论不变。
 func Rescore(ctx context.Context, env Env, outs []Outcome, th config.Thresholds) ([]Outcome, error) {
 	cat, err := i18n.Load()
 	if err != nil {
 		return nil, err
 	}
+	chk := checkFor(env, cat, nil, th)
 	res := make([]Outcome, len(outs))
 	for i, o := range outs {
-		if o.recorded == nil {
+		if o.recorded == nil || o.judged == nil {
 			res[i] = o
 			continue
 		}
-		n, err := evaluate(ctx, env, cat, o.Case, replay{o.recorded}, th)
-		if err != nil {
+		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		n.Called, n.Err, n.ErrDetail, n.Invalid, n.Latency, n.recorded = o.Called, o.Err, o.ErrDetail, o.Invalid, o.Latency, o.recorded
+		n := outcomeOf(o.Case, chk.Rejudge(o.judged, th))
+		n.Run, n.Called, n.Err, n.ErrDetail, n.Invalid, n.Latency = o.Run, o.Called, o.Err, o.ErrDetail, o.Invalid, o.Latency
+		n.recorded, n.judged = o.recorded, o.judged
 		res[i] = n
 	}
 	return res, nil

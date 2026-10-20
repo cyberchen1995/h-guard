@@ -1,0 +1,6 @@
+{
+  "name": "h-guard-openclaw",
+  "private": true,
+  "type": "module",
+  "openclaw": { "extensions": ["./index.mjs"] }
+}
