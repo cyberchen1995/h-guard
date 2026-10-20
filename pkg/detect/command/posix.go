@@ -109,6 +109,9 @@ var prefixWords = map[string][]string{
 	"ionice":  {"-c", "-n", "-p", "--class", "--classdata"},
 	"exec":    {"-a"},
 	"builtin": nil,
+	// xargs 运行它后面的命令（输入为空时 GNU xargs 也运行一次）
+	"xargs": {"-I", "-L", "-n", "-P", "-s", "-d", "-E", "-a", "--max-args", "--max-procs", "--max-chars", "--delimiter",
+		"--arg-file", "--replace", "--max-lines", "--eof"},
 	"busybox": nil,
 	// 保留字：if rm …、do rm …、{ rm …; }、! rm …
 	"!": nil, "{": nil, "}": nil, "if": nil, "then": nil, "else": nil, "elif": nil, "do": nil, "while": nil, "until": nil,

@@ -54,7 +54,7 @@ func runStatus(args []string, o Options) int {
 
 func statusJudge(s setup, o Options) {
 	if !s.cfg.Judge.Enabled {
-		fmt.Fprintln(o.Stdout, "judge: disabled (the six dangerous-operation rules do not interrupt; h-guard init turns it on)")
+		fmt.Fprintln(o.Stdout, "judge: disabled (the dangerous-operation rules interrupt only their high-impact forms or not at all; h-guard init turns it on)")
 		return
 	}
 	st := s.inspectJudge(o, s.cfg.Judge.Backend)

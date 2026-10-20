@@ -36,14 +36,18 @@ and choose `claude-haiku` (recommended: fast and calibrated) or `gemma4-local`
 >   for confirmation (guard self-protection);
 > - running encoded content (for example `base64 -d | sh`) asks;
 > - reading files that usually hold secrets (`.env`, private keys, `~/.ssh`,
->   cloud credentials) with the harness's file tools asks;
+>   cloud credentials) asks, with the harness's file tools and with common
+>   shell reads (`cat`, `grep`, `head`, `< file`);
+> - the high-impact forms of losing work and publishing ask: `git reset
+>   --hard`, `git clean`, `git checkout .`, a force push without lease,
+>   `git filter-repo`, recursive deletes under `~`, `..` or of `.git`,
+>   `npm`/`cargo` publish, `twine upload`, `docker push`, `gh release create`;
 > - credentials and private keys in your prompts are blocked.
 >
-> Six categories of dangerous operation are **not judged** with the model off.
-> `recursive_delete`, `destructive_git`, `branch_ops`, `publish` and
-> `verify_bypass` do not interrupt at all: without the model h-guard cannot
-> tell whether you asked for the operation or how much it would destroy, so
-> their local matches are only logged. `guard_tampering` still asks on every
+> Everything else those rules match is **not judged** with the model off:
+> without the model h-guard cannot tell whether you asked for the operation or
+> how much it would destroy, so other recursive deletes, `git push`, a rebase
+> and `verify_bypass` are only logged. `guard_tampering` still asks on every
 > local match, but nothing looks for tampering that its patterns miss. Run
 > `h-guard init` to choose a backend and turn the model on.
 
@@ -122,10 +126,10 @@ which rules interrupt, which only log, which are off, and what is not covered:
 protection:
   claudecode: config written: yes | hook running: yes, last 2 min ago (PreToolUse, prompt.submit, tool.result) | self-test: passed 3 min ago
   codex: config written: yes | hook running: unverified (Codex has not run the hooks since they were installed; trust them with /hooks in Codex) | self-test: passed 3 min ago
-  interrupts: catastrophic (deny), fork_bomb (deny), guard_tampering (ask), obfuscated_exec (ask), sensitive_read (ask, file tools only)
-  matched but not interrupting, and not recorded (log.decisions is off) (judge off; h-guard init turns it on): branch_ops, destructive_git, publish, recursive_delete, verify_bypass
+  interrupts: branch_ops (ask, only its high-impact forms while the judge is off), catastrophic (deny), destructive_git (ask, only its high-impact forms while the judge is off), …
+  matched but not interrupting, and not recorded (log.decisions is off) (judge off; h-guard init turns it on): verify_bypass
   prompts and tool output: credentials deny, private_key deny (scans prompts)
-  not covered: shell commands that read secret files (cat ~/.ssh/id_rsa): ...
+  not covered: secret files read in ways h-guard does not recognize as reading (python -c, a script, …) …
 ```
 
 Turn on the model:
@@ -152,9 +156,10 @@ finding: publish (local)
 signals: {"action":{"judge":"off","judge_disabled_hits":["publish"]}}
 ```
 
-The second command matches `publish`, but with the model off that rule does not
-interrupt. With the model on, the same command asks for confirmation unless one
-of your recent prompts asked for the push (`--request 'push this to origin'`
+The second command matches `publish`, but with the model off only that rule's
+high-impact forms interrupt (publishing a package or a release), not a plain
+push. With the model on, the same command asks for confirmation unless one of
+your recent prompts asked for the push (`--request 'push this to origin'`
 simulates that).
 
 ## When it interrupts
@@ -205,11 +210,11 @@ built-in rules:
 | `fork_bomb` | fork bombs | deny | no (locked) |
 | `guard_tampering` | changes to h-guard's configuration, consent, cache or the harness's hook settings | ask | no (locked); the model can add hits |
 | `obfuscated_exec` | encoded content handed to an interpreter | ask | no |
-| `sensitive_read` | reading `.env`, `*.pem`, `*.key`, `id_rsa*`, `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.netrc` and similar through the harness's file tools (not `cat` in a shell) | ask | no |
-| `recursive_delete` | deleting files or directories recursively | ask | yes |
-| `destructive_git` | git operations that discard uncommitted changes or untracked files | ask | yes |
-| `branch_ops` | rewriting history, force-deleting a branch, changing an upstream | ask | yes |
-| `publish` | push, pull/merge requests, releases, package publishing, mutating API calls | ask | yes |
+| `sensitive_read` | reading `.env`, `*.pem`, `*.key`, `id_rsa*`, `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.netrc` and similar, through the harness's file tools or common shell reads (`cat`, `grep`, `head`, `< file`) | ask | no |
+| `recursive_delete` | deleting files or directories recursively | ask | yes, except under `~`, `..` or of `.git` |
+| `destructive_git` | git operations that discard uncommitted changes or untracked files | ask | yes, except `reset --hard`, `clean`, `checkout .`, `stash clear` |
+| `branch_ops` | rewriting history, force-deleting a branch, changing an upstream | ask | yes, except a force push without lease and `filter-branch`/`filter-repo` |
+| `publish` | push, pull/merge requests, releases, package publishing, mutating API calls | ask | yes, except publishing a package, an image or a release |
 | `verify_bypass` | bypassing git hooks, checks or signing | ask | yes |
 
 With the model on, a rule that needs the model interrupts only when the agent
@@ -389,12 +394,13 @@ on Windows.
 - **Windows is not verified on real hardware.** Path handling, the PowerShell
   hook wrapper and Codex's command forms on Windows are tested only in CI and
   by cross-compilation.
-- **Path rules only see file tools.** `sensitive_read` and other file rules
-  check the harness's file tools (Claude Code's Read, Codex's patches, generic
-  file actions). A shell command that reads the same file, such as
-  `cat ~/.ssh/id_rsa`, is not caught by them. At `outbound.tier: 2` (default
-  1) the output of shell commands recognized as reading files is scanned for
-  credentials and keys after the read.
+- **Shell reads are recognized, not isolated.** `sensitive_read` checks the
+  harness's file tools and the files that common shell reads name (`cat`,
+  `grep`, `head`, `base64`, `< file`, PowerShell's `Get-Content`). Other ways
+  of reading a file, such as `python -c`, a script, or names passed through
+  `xargs` or to a remote host, are not caught before they run. At
+  `outbound.tier: 2` (default 1) the output of shell commands recognized as
+  reading files is scanned for credentials and keys after the read.
 - **Personal-data detection has false positives.** Email addresses and public
   IP addresses are common in development work, which is why `pii` is off by
   default. Use a category's `ignore` list or turn off single rules.
@@ -424,6 +430,8 @@ delete the file) and, if you like, h-guard's configuration directory.
 
 - [Configuration](docs/guide/configuration.md): every field, merge order,
   backends and calibration profiles.
+- [Protection scenarios](docs/guide/scenarios.md): keeping your work, stopping
+  unasked publishing and keeping credentials in, with a demo for each.
 - [Rule packs](docs/guide/rules.md): writing action and outbound rules.
 - [Protocols](docs/guide/protocols.md): the judge exec protocol, the generic
   harness contract and the extension protocol.

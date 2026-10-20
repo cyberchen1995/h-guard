@@ -39,6 +39,28 @@ minor releases. Every such change is recorded in this file.
   they cannot be replayed. An approval is bound to the exact tool input, and
   only shell commands get one: tool calls with file actions, partly unparsed
   operations and commands too long to show in full get no approval. Records keep only a digest and a redacted copy of the operation.
+- Three protection scenarios work with the model off
+  ([docs/guide/scenarios.md](docs/guide/scenarios.md)):
+  - keeping your work: `git reset --hard`, `git clean`, `git checkout .`,
+    `git stash clear`, a force push without lease, `git filter-branch` /
+    `filter-repo` and recursive deletes under `~`, `..` or of `.git` ask;
+  - stopping unasked publishing: `npm`/`pnpm`/`yarn publish`, `cargo publish`,
+    `twine upload`, `uv publish`, `gem push`, `docker`/`podman push`,
+    `gh release create`/`upload`/`delete`, `Publish-Module` and `nuget push`
+    ask (dry runs do not);
+  - keeping credentials in: `sensitive_read` also checks the files that common
+    shell reads name (`cat`, `head`, `grep`, `sed`, `base64`, `< file`,
+    PowerShell's `Get-Content`), not only the harness's file tools.
+- Action rules can mark such forms with `match.exec.local`: patterns matched
+  at each command position that interrupt even with the judge off, in
+  `requires_judge` rules. The rest of the rule still needs the judge.
+
+### Changed
+
+- With the judge off, `recursive_delete`, `destructive_git`, `branch_ops` and
+  `publish` interrupt their high-impact forms instead of only logging every
+  match. The interruption no longer says that the agent chose the operation on
+  its own, which h-guard cannot tell without the judge.
 
 ### Harnesses
 
@@ -78,6 +100,9 @@ minor releases. Every such change is recorded in this file.
 
 ### Public packages
 
+- `pkg/detect/command` adds `ReadTargets`: the files a command reads locally
+  (file operands of common read commands, input redirections and PowerShell's
+  `Get-Content` paths).
 - New adapters `pkg/harness/opencode`, `pkg/harness/pi` (registers `pi` and
   `omp`) and `pkg/harness/dsh`.
 - `pkg/harness` adds `UnknownToolError` for tools an adapter does not know.

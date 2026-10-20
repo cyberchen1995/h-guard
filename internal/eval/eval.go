@@ -27,6 +27,7 @@ import (
 	"github.com/cyberchen1995/h-guard/internal/config"
 	"github.com/cyberchen1995/h-guard/internal/i18n"
 	"github.com/cyberchen1995/h-guard/internal/rules"
+	"github.com/cyberchen1995/h-guard/pkg/detect/paths"
 	"github.com/cyberchen1995/h-guard/pkg/detect/secrets"
 	"github.com/cyberchen1995/h-guard/pkg/guard"
 	"github.com/cyberchen1995/h-guard/pkg/judge"
@@ -35,6 +36,7 @@ import (
 // 语料的固定上下文（与 golden 语料清单一致）。
 const (
 	Cwd     = "/home/dev/project"
+	Home    = "/home/dev" // 语料的主目录：~ 按它解析
 	Harness = "generic"
 	Tool    = "Bash"
 )
@@ -178,8 +180,9 @@ func Run(ctx context.Context, env Env, cases []Case) ([]Outcome, error) {
 func evaluate(ctx context.Context, env Env, cat *i18n.Catalog, c Case, b judge.Backend, th config.Thresholds) (Outcome, error) {
 	cfg := *env.Config
 	cfg.Judge.Enabled = true
+	// 语料的工作目录是虚构的：路径只按文本判断，不读文件系统（macOS 上 /home 是自动挂载点，逐级 Lstat 很慢）
 	chk := &action.Check{Rules: env.Rules, Config: &cfg, Catalog: cat, Locale: i18n.DefaultLocale,
-		Judge: action.Judge{Backend: b, Thresholds: &th}}
+		Judge: action.Judge{Backend: b, Thresholds: &th}, Paths: paths.Env{Home: Home, Lexical: true}}
 	ev := guard.Event{Kind: guard.EventAction, Harness: Harness, Tool: Tool, Cwd: Cwd,
 		Actions: []guard.Action{{Kind: guard.ActionExec, Exec: &guard.ExecAction{Command: c.Command, Shell: c.Shell}}}}
 	for _, r := range c.UserRequests {
