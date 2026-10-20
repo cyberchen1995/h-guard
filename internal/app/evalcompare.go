@@ -53,7 +53,8 @@ const (
 	compareStubKey    = "eval-stub-not-a-secret"
 )
 
-// 留出集共用的沙箱工程文件，覆盖留出步骤引用的常见路径。
+// 留出步骤没写 files（nil）时沙箱里预置的默认文件，覆盖内置留出步骤引用的常见路径；
+// 写了 files 的步骤只用自己声明的那些，显式写成空数组则沙箱为空。
 var compareHoldoutFiles = []string{".env", ".env.example", "src/main.go", "go.mod", "id_rsa", "id_rsa.pub"}
 
 // 沙箱 home 下预置的文件，让 ~ 开头的路径指向存在的占位文件。
@@ -88,6 +89,10 @@ func runEvalCompare(o Options, co compareOptions) int {
 		fmt.Fprintln(o.Stderr, "h-guard:", shown(err.Error()))
 		return 1
 	}
+	// 后端从进程环境读替身的 key（不经 Options.Getenv）。调用方环境里已有这个变量时（哪怕是空值），
+	// 沙箱里的 .env 也不会覆盖它，judge 调用会因没有 key 全部降级；所以重放期间直接设好，结束时还原
+	restore := setProcessEnv(compareStubKeyEnv, compareStubKey)
+	defer restore()
 	ctx := context.Background()
 	var runs []eval.ConfigRun
 	for _, cfg := range eval.Configs {
@@ -135,6 +140,19 @@ func runEvalCompare(o Options, co compareOptions) int {
 		return 1
 	}
 	return 0
+}
+
+// setProcessEnv 把进程环境变量 k 设为 v，返回还原函数：原来有就恢复原值（含空值），原来没有就删掉。
+func setProcessEnv(k, v string) func() {
+	prev, had := os.LookupEnv(k)
+	_ = os.Setenv(k, v)
+	return func() {
+		if had {
+			_ = os.Setenv(k, prev)
+		} else {
+			_ = os.Unsetenv(k)
+		}
+	}
 }
 
 // allSteps 返回留出集与全部任务的步骤：先留出集，再按任务顺序。
@@ -268,8 +286,9 @@ func (r *compareRunner) Run(ctx context.Context, cfg eval.Config, tasks []eval.T
 		cacheDir:  filepath.Join(root, "cache"),
 		home:      filepath.Join(root, "home"),
 	}
-	// 任务沙箱在 proj/tasks/<id>，留出集在 proj/holdout：任务 id 叫 holdout 也不会撞上
-	for _, d := range []string{env.configDir, env.cacheDir, env.home, filepath.Join(root, "proj"), filepath.Join(root, "proj", "tasks")} {
+	// 任务沙箱在 proj/tasks/<id>，留出步骤各自在 proj/holdout/<序号>：任务 id 叫 holdout 也不会撞上
+	for _, d := range []string{env.configDir, env.cacheDir, env.home, filepath.Join(root, "proj"),
+		filepath.Join(root, "proj", "tasks"), filepath.Join(root, "proj", "holdout")} {
 		if err := os.Mkdir(d, 0o700); err != nil {
 			return run, err
 		}
@@ -308,12 +327,6 @@ func (r *compareRunner) Run(ctx context.Context, cfg eval.Config, tasks []eval.T
 	if err := os.WriteFile(filepath.Join(env.configDir, "config.yaml"), []byte(cfgYAML), 0o600); err != nil {
 		return run, err
 	}
-	// 后端从进程环境读 key，不经 Options.Getenv：由 hook 加载沙箱配置目录里的 .env 写进进程环境
-	// （已设置的变量不覆盖；替身不校验 key，值是什么都可以）
-	dotenv := compareStubKeyEnv + "=" + compareStubKey + "\n"
-	if err := os.WriteFile(filepath.Join(env.configDir, ".env"), []byte(dotenv), 0o600); err != nil {
-		return run, err
-	}
 
 	for _, t := range tasks {
 		if err := ctx.Err(); err != nil {
@@ -323,7 +336,7 @@ func (r *compareRunner) Run(ctx context.Context, cfg eval.Config, tasks []eval.T
 		if err != nil {
 			return run, fmt.Errorf("task %s: %w", t.ID, err)
 		}
-		results, err := r.runGroup(cfg, env, t.ID, false, cwd, t.Steps)
+		results, err := r.runGroup(cfg, env, []stepGroup{{compareSession(cfg, "task", t.ID), cwd, t.Steps}})
 		if err != nil {
 			return run, err
 		}
@@ -332,11 +345,20 @@ func (r *compareRunner) Run(ctx context.Context, cfg eval.Config, tasks []eval.T
 	if err := ctx.Err(); err != nil {
 		return run, err
 	}
-	cwd, err := r.project("", "holdout", compareHoldoutFiles)
-	if err != nil {
-		return run, err
+	// 每个留出步骤一个沙箱目录，按序号命名（id 可能含不能做目录名的字符），文件取自步骤的 files
+	groups := make([]stepGroup, 0, len(holdout))
+	for i, s := range holdout {
+		files := s.Files
+		if files == nil {
+			files = compareHoldoutFiles
+		}
+		cwd, err := r.project("holdout", strconv.Itoa(i+1), files)
+		if err != nil {
+			return run, fmt.Errorf("held-out step %s: %w", s.ID, err)
+		}
+		groups = append(groups, stepGroup{compareSession(cfg, "holdout", s.ID), cwd, []eval.Step{s}})
 	}
-	if run.Holdout, err = r.runGroup(cfg, env, "", true, cwd, holdout); err != nil {
+	if run.Holdout, err = r.runGroup(cfg, env, groups); err != nil {
 		return run, err
 	}
 	if stub != nil {
@@ -364,10 +386,10 @@ func (r *compareRunner) project(parent, name string, files []string) (string, er
 // 路径必须留在 dir 之内。
 func placeFiles(dir string, files []string) error {
 	for _, f := range files {
-		rel := filepath.FromSlash(strings.TrimSuffix(f, "/"))
-		if !filepath.IsLocal(rel) {
-			return fmt.Errorf("project file %q is outside the project", shown(f))
+		if err := eval.ValidFixturePath(f); err != nil {
+			return errors.New(shown(err.Error()))
 		}
+		rel := filepath.FromSlash(strings.TrimSuffix(f, "/"))
 		p := filepath.Join(dir, rel)
 		if strings.HasSuffix(f, "/") {
 			if err := os.MkdirAll(p, 0o700); err != nil {
@@ -389,18 +411,20 @@ func placeFiles(dir string, files []string) error {
 	return nil
 }
 
-// runGroup 重放一组步骤（一个任务或留出集），再读一次决策日志补全结果。
-// perStep 为真时（留出集）每步一个会话 compareSession(cfg, "holdout", step.ID)：留出样本互不相干，
-// 一个样本的用户指令不能留在指令缓存里影响后面的样本；否则整个任务共用会话 compareSession(cfg, "task", taskID)，
-// 指令随会话累积。日志读不了是沙箱的问题，整个配置报错；单步的问题记在 StepResult.Err。
-func (r *compareRunner) runGroup(cfg eval.Config, env compareEnv, taskID string, perStep bool, cwd string, steps []eval.Step) ([]eval.StepResult, error) {
+// stepGroup 是在同一个会话、同一个工作目录里依次重放的几步。
+type stepGroup struct {
+	session, cwd string
+	steps        []eval.Step
+}
+
+// runGroup 依次重放 groups（一个任务是一组；留出集每步一组），再读一次决策日志补全结果。
+// 任务的步骤共用会话 compareSession(cfg, "task", id)，指令随会话累积；留出步骤各用 compareSession(cfg, "holdout", id)
+// 与自己的沙箱目录：留出样本互不相干，一个样本的用户指令不能留在指令缓存里影响后面的样本。
+// 日志读不了是沙箱的问题，整个配置报错；单步的问题记在 StepResult.Err。
+func (r *compareRunner) runGroup(cfg eval.Config, env compareEnv, groups []stepGroup) ([]eval.StepResult, error) {
 	var results []eval.StepResult
-	if perStep {
-		for _, s := range steps {
-			results = append(results, r.runSteps(cfg, env, compareSession(cfg, "holdout", s.ID), cwd, []eval.Step{s})...)
-		}
-	} else {
-		results = r.runSteps(cfg, env, compareSession(cfg, "task", taskID), cwd, steps)
+	for _, g := range groups {
+		results = append(results, r.runSteps(cfg, env, g.session, g.cwd, g.steps)...)
 	}
 	logs, err := readDecisions(env.cacheDir)
 	if err != nil {

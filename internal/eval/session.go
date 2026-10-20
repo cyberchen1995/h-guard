@@ -9,6 +9,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"unicode/utf8"
@@ -60,6 +61,9 @@ type Step struct {
 	Harm         []string       `json:"harm,omitempty" yaml:"harm,omitempty"`
 	Basis        string         `json:"basis" yaml:"basis"` // 标注依据
 	Note         string         `json:"note,omitempty" yaml:"note,omitempty"`
+	// Files 是留出步骤沙箱里预置的占位文件（相对路径，以 / 结尾的只建目录）；缺省（nil）时用重放器内置的一组，
+	// 显式写成空数组则沙箱里什么都没有。任务步骤不能写：任务用 project.files。
+	Files []string `json:"files,omitempty" yaml:"files,omitempty"`
 }
 
 // Text 返回步骤的文本：命令，文件工具则为路径。
@@ -191,6 +195,17 @@ func validateStep(s Step, holdout bool) error {
 			return fmt.Errorf("user_requests[%d] is longer than %d characters; the judge request would be truncated and the stand-in does not reproduce that", i, maxStepRequestChars)
 		}
 	}
+	if holdout && s.Requested && !hasRequest(s.UserRequests) {
+		return fmt.Errorf("step %q: requested is true but user_requests has no non-blank request; a held-out step runs in a session of its own, so the hook would never see the request", s.ID)
+	}
+	if !holdout && s.Files != nil {
+		return errors.New("files is not allowed on a task step; declare the task's project.files instead")
+	}
+	for _, f := range s.Files {
+		if err := ValidFixturePath(f); err != nil {
+			return err
+		}
+	}
 	for _, h := range s.Harm {
 		if !slices.Contains(HarmIDs, h) {
 			return fmt.Errorf("harm %q is not one of %s", h, strings.Join(HarmIDs, ", "))
@@ -203,6 +218,20 @@ func validateStep(s Step, holdout bool) error {
 		return errors.New("harm is required when expect is not pass or the step is requested")
 	case !needsHarm && len(s.Harm) > 0:
 		return errors.New("harm must be empty when expect is pass and the step is not requested")
+	}
+	return nil
+}
+
+// hasRequest 报告 reqs 里是否有非空白的指令：空白指令不写入指令缓存，hook 看不到。
+func hasRequest(reqs []string) bool {
+	return slices.ContainsFunc(reqs, func(r string) bool { return strings.TrimSpace(r) != "" })
+}
+
+// ValidFixturePath 校验一个占位文件路径（留出步骤的 files、任务的 project.files）：必须是相对路径、
+// 留在沙箱目录之内（filepath.IsLocal：不能是绝对路径，不能含 ..）；以 / 结尾表示目录。
+func ValidFixturePath(f string) error {
+	if !filepath.IsLocal(filepath.FromSlash(strings.TrimSuffix(f, "/"))) {
+		return fmt.Errorf("project file %q is outside the project", f)
 	}
 	return nil
 }
@@ -239,6 +268,7 @@ func ParseTask(data []byte, name string) (Task, error) {
 		return Task{}, fmt.Errorf("%s: steps needs at least one step", name)
 	}
 	seen := map[string]bool{}
+	sent := false // 任务共用一个会话，指令随会话累积：本步或之前的步骤发过指令即可
 	for i := range t.Steps {
 		s := &t.Steps[i]
 		if s.ID == "" {
@@ -254,6 +284,10 @@ func ParseTask(data []byte, name string) (Task, error) {
 			return Task{}, fmt.Errorf("%s: step %d: id %q is used by an earlier step", name, i+1, s.ID)
 		}
 		seen[s.ID] = true
+		sent = sent || hasRequest(s.UserRequests)
+		if s.Requested && !sent {
+			return Task{}, fmt.Errorf("%s: step %d (%s): requested is true but neither this step nor an earlier one lists a non-blank user request", name, i+1, s.ID)
+		}
 	}
 	return t, nil
 }

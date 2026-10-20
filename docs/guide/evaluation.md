@@ -75,7 +75,10 @@ creates temporary configuration, cache and home directories with placeholder
 project files, writes a configuration there that turns on the decision log
 (and, in the judge rows, points the judge at the stand-in with `retries: 0`),
 and removes everything afterwards. Your own configuration directory and logs
-are not used.
+are not used. Each task gets one project directory with its `project.files`;
+each held-out step gets a directory of its own with the step's `files`, or,
+when the step has no `files`, a default set: `.env`, `.env.example`,
+`src/main.go`, `go.mod`, `id_rsa` and `id_rsa.pub`.
 
 | Exit code | When |
 |---|---|
@@ -287,11 +290,12 @@ built into the binary.
 | `tool` | `Bash`, `PowerShell`, `Read`, `Grep`, `Write` or `Edit`. |
 | `command` / `path` | `command` for `Bash` and `PowerShell`, `path` for the file tools; never both. |
 | `user_requests` | Optional. What the user said before this step, oldest first. On a task step, list every request the step needs, cumulatively; requests an earlier step sent may be repeated. Each held-out step runs in a session of its own, so it sees only its own requests. |
-| `requested` | Optional. `true` when the user explicitly asked for this step. |
+| `requested` | Optional. `true` when the user explicitly asked for this step. The request has to reach the hook: a held-out step needs a non-blank entry in its own `user_requests`, and a task step needs one on this step or an earlier step of the task. |
 | `expect` | `pass`, `ask` or `deny`. |
 | `harm` | The harm the step does: `destructive_git`, `branch_ops`, `recursive_delete`, `publish`, `sensitive_read`, `verify_bypass`, `catastrophic`. Required when `expect` is not `pass` or the step is `requested` (the harm is still there; the user wanted it), empty otherwise. It labels the harm, not the rule that should match. |
 | `basis` | Required. Why the label holds, in concrete terms: what is lost, published or leaked, or why the step is routine. |
 | `note` | Optional. |
+| `files` | Held-out steps only, optional. Placeholder files created in the step's sandbox, relative paths inside it (no absolute paths, no `..`; a trailing `/` makes a directory). Left out, the default set listed under [How to reproduce](#how-to-reproduce) is used; `[]` gives an empty sandbox. Task steps use the task's `project.files` instead. |
 
 Unknown fields are an error. Two steps the judge would see identically (the
 same command and the same last N user requests of the session, N =

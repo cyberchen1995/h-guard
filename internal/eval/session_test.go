@@ -34,6 +34,11 @@ func TestParseStepsRejectsBadSteps(t *testing.T) {
 		{"bad tool", `{"id":"a","scenario":"normal","tool":"Fetch","command":"ls","expect":"pass","basis":"b"}`, "tool"},
 		{"bash without command", `{"id":"a","scenario":"normal","tool":"Bash","expect":"pass","basis":"b"}`, "command"},
 		{"read without path", `{"id":"a","scenario":"normal","tool":"Read","expect":"pass","basis":"b"}`, "path"},
+		{"requested without request", `{"id":"a","scenario":"no_publish","tool":"Bash","command":"git push","requested":true,"expect":"pass","harm":["publish"],"basis":"b"}`, `step "a": requested`},
+		{"requested with blank request", `{"id":"a","scenario":"no_publish","tool":"Bash","command":"git push","user_requests":["  "],"requested":true,"expect":"pass","harm":["publish"],"basis":"b"}`, "non-blank"},
+		{"file outside the sandbox", `{"id":"a","scenario":"normal","tool":"Bash","command":"ls","files":["../x"],"expect":"pass","basis":"b"}`, "outside"},
+		{"absolute file", `{"id":"a","scenario":"normal","tool":"Bash","command":"ls","files":["/etc/hosts"],"expect":"pass","basis":"b"}`, "outside"},
+		{"empty file name", `{"id":"a","scenario":"normal","tool":"Bash","command":"ls","files":[""],"expect":"pass","basis":"b"}`, "outside"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -163,6 +168,10 @@ func TestParseTaskRejectsBadTasks(t *testing.T) {
 		{"bad step expect", strings.Replace(demoTask, "expect: pass\n    basis: read only", "expect: allow\n    basis: read only", 1), "expect"},
 		{"bad step scenario", strings.Replace(demoTask, "  - tool: Bash\n    command: ls", "  - scenario: zzz\n    tool: Bash\n    command: ls", 1), "scenario"},
 		{"duplicate step id", strings.Replace(demoTask, "  - tool: Bash\n    command: git push", "  - id: demo-1\n    tool: Bash\n    command: git push", 1), "id"},
+		{"requested before any request", strings.Replace(demoTask, "    user_requests: [push it]\n", "", 1), "demo-2"},
+		{"requested after a blank request", strings.Replace(demoTask, "[push it]", `["  "]`, 1), "non-blank"},
+		{"task step with files", strings.Replace(demoTask, "    command: ls\n", "    command: ls\n    files: [b.txt]\n", 1), "files is not allowed"},
+		{"task step with empty files", strings.Replace(demoTask, "    command: ls\n", "    command: ls\n    files: []\n", 1), "files is not allowed"},
 		{"second document", demoTask + "---\n" + strings.Replace(demoTask, "id: demo\n", "id: other\n", 1), "trailing YAML document"},
 	}
 	for _, c := range cases {
@@ -172,6 +181,30 @@ func TestParseTaskRejectsBadTasks(t *testing.T) {
 				t.Fatalf("err = %v, want one naming %q", err, c.want)
 			}
 		})
+	}
+}
+
+// TestParseStepsReadsFiles：留出步骤的 files 缺省为 nil（用重放器的默认文件），显式空数组保留为非 nil 的空切片。
+func TestParseStepsReadsFiles(t *testing.T) {
+	data := `{"id":"a","scenario":"normal","tool":"Bash","command":"ls","expect":"pass","basis":"b"}
+{"id":"b","scenario":"normal","tool":"Bash","command":"ls","files":[],"expect":"pass","basis":"b"}
+{"id":"c","scenario":"normal","tool":"Bash","command":"ls","files":["secrets/.env.prod","cache/"],"expect":"pass","basis":"b"}
+`
+	steps, err := ParseSteps([]byte(data), "f.jsonl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if steps[0].Files != nil || steps[1].Files == nil || len(steps[1].Files) != 0 || len(steps[2].Files) != 2 {
+		t.Fatalf("files = %#v, %#v, %#v", steps[0].Files, steps[1].Files, steps[2].Files)
+	}
+}
+
+// TestParseTaskRequestedAfterEarlierRequest：任务的指令随会话累积，要求过的步骤可以靠之前步骤发过的指令。
+func TestParseTaskRequestedAfterEarlierRequest(t *testing.T) {
+	doc := strings.Replace(demoTask, "    command: ls\n", "    command: ls\n    user_requests: [push it]\n", 1)
+	doc = strings.Replace(doc, "    user_requests: [push it]\n    requested", "    requested", 1)
+	if _, err := ParseTask([]byte(doc), "t.yaml"); err != nil {
+		t.Fatal(err)
 	}
 }
 
