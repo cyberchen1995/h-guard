@@ -53,6 +53,32 @@ type Check struct {
 	// GrantInput 是 harness 原始工具输入的规范写法，GrantCwd 是工作目录的真实路径，GrantDir 是它的文件身份，
 	// 都绑进授权（grant.Op.Input、RealCwd、DirID）；入口取不到时不接入 Grants。
 	GrantInput, GrantCwd, GrantDir string
+	// OnJudged 在每个 exec 动作套用阈值之前收到它的全部材料（见 Judged）；nil 时不通知。
+	// 只有走完规则匹配、到了得出结论这一步的动作才通知：探针命令、本地阶段预算耗尽而提前返回的不通知。
+	OnJudged func(*Judged)
+}
+
+// Judged 是一个 exec 动作套用阈值之前的全部材料：规则匹配结果、模型的答案（或不可用的原因码）、
+// 写进拦截说明的命令与工作目录。规则的正则匹配与阈值无关，只有由此得出结论的一步看阈值；
+// eval 扫描阈值时记下它，用 Rejudge 只重算这一步，不重跑匹配。
+type Judged struct {
+	in           Input // Thresholds 字段是评估时用的阈值，Rejudge 换掉它
+	command, cwd string
+}
+
+// Rejudge 用阈值 th 从 j 得出结论：命中、信号、降级原因与说明都与评估时在 th 下得出的一致。
+func (c *Check) Rejudge(j *Judged, th config.Thresholds) guard.Verdict {
+	in := j.in
+	in.Thresholds = th
+	return c.conclude(in, j.command, j.cwd)
+}
+
+// conclude 按策略得出 exec 动作的结论并补上拦截说明。
+func (c *Check) conclude(in Input, cmd, cwd string) guard.Verdict {
+	res := Decide(in)
+	v := c.render(res, in)
+	c.explain(&v, res.Dangerous, cmd, cwd)
+	return v
 }
 
 // Grants 是单次授权的存取（grant.Store 实现它）。
@@ -408,10 +434,10 @@ func (c *Check) evalExec(ctx context.Context, ev guard.Event, ex *guard.ExecActi
 			in.JudgeTimedOut = ctx.Err() != nil
 		}
 	}
-	res := Decide(in)
-	v := c.render(res, in)
-	c.explain(&v, res.Dangerous, ex.Command, ev.Cwd)
-	return v
+	if c.OnJudged != nil {
+		c.OnJudged(&Judged{in: in, command: ex.Command, cwd: ev.Cwd})
+	}
+	return c.conclude(in, ex.Command, ev.Cwd)
 }
 
 // unsupportedQuestions 返回 qs 中后端不支持其题型的题的 ID。
