@@ -105,13 +105,6 @@ func promptReq(text, kind string) []byte {
 	return b
 }
 
-type hookOutput struct {
-	HookSpecificOutput struct {
-		PermissionDecision       string `json:"permissionDecision"`
-		PermissionDecisionReason string `json:"permissionDecisionReason"`
-	} `json:"hookSpecificOutput"`
-}
-
 func decisionOf(t *testing.T, stdout string) (string, string) {
 	t.Helper()
 	if stdout == "" {

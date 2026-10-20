@@ -6,6 +6,7 @@ import (
 
 	"github.com/cyberchen1995/h-guard/internal/config"
 	"github.com/cyberchen1995/h-guard/internal/i18n"
+	"github.com/cyberchen1995/h-guard/pkg/guard"
 	"github.com/cyberchen1995/h-guard/pkg/judge"
 )
 
@@ -17,6 +18,9 @@ var LegalRange = legalRange
 var Within = func(a, best Score, runs int) bool { return a.within(best, runs) }
 
 var Better = func(a, b Score) bool { return a.better(b) }
+
+// CorpusFiles 暴露阈值扫描读取的内置语料文件。
+func CorpusFiles() map[guard.Shell]string { return corpusFiles }
 
 // Public 去掉 o 的内部字段（记下的答案与材料），剩下可以直接比较的部分。
 func Public(o Outcome) Outcome {

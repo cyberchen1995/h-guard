@@ -169,6 +169,7 @@ const usage = `usage:
   h-guard allow [<id> [--ttl <duration>] | --revoke <id>]
   h-guard eval [--backend <name>] [--sweep] [--shell posix|powershell | --cases <file>] [--repeat <K>] [--bootstrap <N>] [--seed <n>] [--yes] [--config <file>]
   h-guard eval --outbound [--backend <name>] [--sweep] [--threshold <t>] [--cases <file>] [--yes] [--config <file>]
+  h-guard eval --compare [--tasks <dir>] [--holdout <file>] [--json <file>]
   h-guard init
   h-guard install claudecode|codex|opencode|pi|omp|dsh|openclaw|hermes [--write] [--remove] [--timeout <seconds>] [--shell posix|powershell]
   h-guard migrate <questions.json> [--write]

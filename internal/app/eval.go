@@ -36,12 +36,38 @@ func runEval(args []string, o Options) int {
 	extra := fs.String("config", "", "extra config file")
 	ob := fs.Bool("outbound", false, "evaluate the outbound judge on the outbound corpus")
 	threshold := fs.Float64("threshold", -1, "with --outbound: report at this threshold instead of the profile's")
+	compare := fs.Bool("compare", false, "replay the session tasks and held-out steps under five configurations (offline)")
+	tasksDir := fs.String("tasks", "", "with --compare: directory of task YAML files to use instead of the built-in ones")
+	holdoutPath := fs.String("holdout", "", "with --compare: JSONL held-out steps to use instead of the built-in ones")
+	jsonPath := fs.String("json", "", "with --compare: also write the comparison as JSON to this file")
 	pos, err := parseInterleaved(fs, args)
-	shellSet, actionOnly := false, false
+	shellSet, actionOnly, compareOnly, notCompare := false, false, false, false
 	fs.Visit(func(f *flag.Flag) {
 		shellSet = shellSet || f.Name == "shell"
 		actionOnly = actionOnly || f.Name == "shell" || f.Name == "repeat" || f.Name == "bootstrap" || f.Name == "seed"
+		switch f.Name {
+		case "tasks", "holdout", "json":
+			compareOnly = true
+		case "compare", "config":
+		default:
+			notCompare = true // 其余选项都只属于在线评估
+		}
 	})
+	// --compare 离线运行、不读后端：在 load() 之前分发，不需要配置（--config 接受但不读，重放只用沙箱里的配置）。
+	// 解析错误与多余的位置参数留给下面的通用检查
+	if *compare && notCompare {
+		fmt.Fprintln(o.Stderr, "h-guard: --compare runs offline and takes only --tasks, --holdout, --json and --config")
+		fmt.Fprint(o.Stderr, usage)
+		return 2
+	}
+	if compareOnly && !*compare {
+		fmt.Fprintln(o.Stderr, "h-guard: --tasks, --holdout and --json need --compare")
+		fmt.Fprint(o.Stderr, usage)
+		return 2
+	}
+	if *compare && err == nil && len(pos) == 0 {
+		return runEvalCompare(o, compareOptions{tasksDir: *tasksDir, holdoutPath: *holdoutPath, jsonPath: *jsonPath})
+	}
 	thresholdSet := *threshold != -1
 	if thresholdSet && (!*ob || !(*threshold >= 0 && *threshold <= 1)) {
 		fmt.Fprintln(o.Stderr, "h-guard: --threshold needs --outbound and a value between 0 and 1")

@@ -278,6 +278,7 @@ h-guard install opencode --remove --write   # pi、omp、dsh、openclaw、hermes
 - [规则包](docs/guide/rules.md)：编写 action 与 outbound 规则。
 - [协议](docs/guide/protocols.md)：判断 exec 协议、generic harness 契约与扩展接入协议。
 - [Harness](docs/guide/harnesses.md)：各 harness 的接入方式及各自的能力。
+- [对比评估](docs/guide/evaluation.md)：在留出的会话上，装上 h-guard 后有什么不同（判断模型关闭、开启与出故障时），以及如何复现。
 - [更新记录](CHANGELOG.md)、[安全策略](SECURITY.md)、[贡献指南](CONTRIBUTING.md)。
 
 指南与上述文件为英文。
