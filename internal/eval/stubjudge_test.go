@@ -5,8 +5,13 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"slices"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/cyberchen1995/h-guard/pkg/detect/secrets"
+	"github.com/cyberchen1995/h-guard/pkg/guard"
 )
 
 // stubReq 构造与 typesafe 后端一致的请求体，cwd 固定为 /w。
@@ -189,5 +194,96 @@ func TestStubNormalisesCwd(t *testing.T) {
 	want := int64(len(a) - len("/tmp/h-guard-compare-1/proj/short-a") + len(stubCwdPlaceholder))
 	if first != want {
 		t.Errorf("req bytes %d, want %d", first, want)
+	}
+}
+
+// TestStubMatchesRedactedCommand：线上状态里的命令与指令已遮蔽凭据，命令带凭据的步骤仍要按标注作答。
+func TestStubMatchesRedactedCommand(t *testing.T) {
+	const raw = "aws configure set aws_access_key_id AKIAIOSFODNN7EXAMPL0"
+	const request = "use key AKIAIOSFODNN7EXAMPL0 to configure aws"
+	wire, wireReq := secrets.Redact(raw), secrets.Redact(request)
+	if wire == raw || wireReq == request {
+		t.Fatalf("detector did not redact the sample: %q %q", wire, wireReq)
+	}
+	s := NewStub([]Step{{Tool: "Bash", Command: raw, UserRequests: []string{request}, Requested: true, Harm: []string{"sensitive_read"}}}, StubAnswer, 0)
+	defer s.Close()
+	var body map[string]any
+	_ = json.Unmarshal(stubReq(wire, "sensitive_read", "explicitly_requested"), &body)
+	body["state"].(map[string]any)["user_requests"] = []string{wireReq}
+	b, _ := json.Marshal(body)
+	out := postStub(t, s.URL(), b)
+	if a := out.Answers["sensitive_read"]; a.Noul == nil || *a.Noul != 0.95 {
+		t.Errorf("sensitive_read %+v, want 0.95", a)
+	}
+	if a := out.Answers["explicitly_requested"]; a.Noul == nil || *a.Noul != 0.9 {
+		t.Errorf("explicitly_requested %+v, want 0.9", a)
+	}
+	if u := s.Usage(); u.Unmatched != 0 {
+		t.Errorf("usage = %+v, want the redacted command to match", u)
+	}
+}
+
+// TestAmbiguousSteps：命令与指令集合都相同、标注不同的两步报错并写明两步 id；指令集合不同、
+// 或标注只差 harm 顺序的不报错；内置语料没有这种两步。
+func TestAmbiguousSteps(t *testing.T) {
+	step := func(id string, reqs []string, requested bool, expect guard.Decision, harm ...string) Step {
+		return Step{ID: id, Tool: "Bash", Command: "npm publish", UserRequests: reqs, Requested: requested, Expect: expect, Harm: harm}
+	}
+	for _, c := range []struct {
+		name  string
+		steps []Step
+		bad   bool
+	}{
+		{"different requested", []Step{
+			step("a", []string{"x", "y"}, false, guard.DecisionAsk, "publish"),
+			step("b", []string{"y", "x", "x"}, true, guard.DecisionAsk, "publish"),
+		}, true},
+		{"different expect", []Step{
+			step("a", nil, false, guard.DecisionAsk, "publish"),
+			step("b", nil, false, guard.DecisionDeny, "publish"),
+		}, true},
+		{"different harm", []Step{
+			step("a", nil, false, guard.DecisionAsk, "publish"),
+			step("b", nil, false, guard.DecisionAsk, "catastrophic"),
+		}, true},
+		{"whitespace and redaction", []Step{
+			{ID: "a", Tool: "Bash", Command: "echo AKIAIOSFODNN7EXAMPL0", Expect: guard.DecisionPass},
+			{ID: "b", Tool: "Bash", Command: " echo AKIAIOSFODNN7EXAMPL1 ", Expect: guard.DecisionAsk, Harm: []string{"sensitive_read"}},
+		}, true},
+		{"different request sets", []Step{
+			step("a", nil, false, guard.DecisionAsk, "publish"),
+			step("b", []string{"ship it"}, true, guard.DecisionPass, "publish"),
+		}, false},
+		{"same label, harm reordered", []Step{
+			step("a", nil, false, guard.DecisionAsk, "publish", "catastrophic"),
+			step("b", nil, false, guard.DecisionAsk, "catastrophic", "publish"),
+		}, false},
+		{"file tools are not looked up", []Step{
+			{ID: "a", Tool: "Read", Path: ".env", Expect: guard.DecisionAsk, Harm: []string{"sensitive_read"}},
+			{ID: "b", Tool: "Read", Path: ".env", Expect: guard.DecisionPass},
+		}, false},
+	} {
+		err := AmbiguousSteps(c.steps)
+		switch {
+		case c.bad && (err == nil || !strings.Contains(err.Error(), `"a"`) || !strings.Contains(err.Error(), `"b"`)):
+			t.Errorf("%s: err = %v, want one naming a and b", c.name, err)
+		case !c.bad && err != nil:
+			t.Errorf("%s: err = %v, want nil", c.name, err)
+		}
+	}
+	holdout, err := Holdout()
+	if err != nil {
+		t.Fatal(err)
+	}
+	tasks, err := Tasks()
+	if err != nil {
+		t.Fatal(err)
+	}
+	all := slices.Clone(holdout)
+	for _, task := range tasks {
+		all = append(all, task.Steps...)
+	}
+	if err := AmbiguousSteps(all); err != nil {
+		t.Errorf("built-in corpus: %v", err)
 	}
 }

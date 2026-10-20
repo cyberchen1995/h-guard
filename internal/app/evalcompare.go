@@ -3,6 +3,8 @@ package app
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -80,6 +82,11 @@ func runEvalCompare(o Options, co compareOptions) int {
 		fmt.Fprintf(o.Stderr, "h-guard: step id %q is used more than once across the tasks and the held-out steps\n", shown(id))
 		return 1
 	}
+	// 替身按命令与指令查标注，分不开、标注又不同的两步会让后一步的标注悄悄失效
+	if err := eval.AmbiguousSteps(allSteps(tasks, holdout)); err != nil {
+		fmt.Fprintln(o.Stderr, "h-guard:", shown(err.Error()))
+		return 1
+	}
 	ctx := context.Background()
 	var runs []eval.ConfigRun
 	for _, cfg := range eval.Configs {
@@ -129,14 +136,19 @@ func runEvalCompare(o Options, co compareOptions) int {
 	return 0
 }
 
-// duplicateStepID 返回全部任务与留出集里第一个重复出现的步骤 id。
-func duplicateStepID(tasks []eval.Task, holdout []eval.Step) (string, bool) {
-	seen := map[string]bool{}
+// allSteps 返回留出集与全部任务的步骤：先留出集，再按任务顺序。
+func allSteps(tasks []eval.Task, holdout []eval.Step) []eval.Step {
 	steps := slices.Clone(holdout)
 	for _, t := range tasks {
 		steps = append(steps, t.Steps...)
 	}
-	for _, s := range steps {
+	return steps
+}
+
+// duplicateStepID 返回全部任务与留出集里第一个重复出现的步骤 id。
+func duplicateStepID(tasks []eval.Task, holdout []eval.Step) (string, bool) {
+	seen := map[string]bool{}
+	for _, s := range allSteps(tasks, holdout) {
 		if seen[s.ID] {
 			return s.ID, true
 		}
@@ -213,7 +225,8 @@ func (r *compareRunner) Run(ctx context.Context, cfg eval.Config, tasks []eval.T
 		cacheDir:  filepath.Join(root, "cache"),
 		home:      filepath.Join(root, "home"),
 	}
-	for _, d := range []string{env.configDir, env.cacheDir, env.home, filepath.Join(root, "proj")} {
+	// 任务沙箱在 proj/tasks/<id>，留出集在 proj/holdout：任务 id 叫 holdout 也不会撞上
+	for _, d := range []string{env.configDir, env.cacheDir, env.home, filepath.Join(root, "proj"), filepath.Join(root, "proj", "tasks")} {
 		if err := os.Mkdir(d, 0o700); err != nil {
 			return run, err
 		}
@@ -234,11 +247,7 @@ func (r *compareRunner) Run(ctx context.Context, cfg eval.Config, tasks []eval.T
 	if mode, ok := map[eval.Config]eval.StubMode{
 		eval.ConfigJudge: eval.StubAnswer, eval.ConfigJudgeTimeout: eval.StubTimeout, eval.ConfigJudgeError: eval.StubError,
 	}[cfg]; ok {
-		all := slices.Clone(holdout)
-		for _, t := range tasks {
-			all = append(all, t.Steps...)
-		}
-		stub = eval.NewStub(all, mode, compareStubSleep)
+		stub = eval.NewStub(allSteps(tasks, holdout), mode, compareStubSleep)
 		defer stub.Close() // 出错返回时关闭；正常结束时下面已先关闭，再关一次无妨
 		// 只有超时一行用短超时；retries: 0：超时一行每次调用只等一次超时
 		timeoutMS := compareJudgeTimeoutMS
@@ -267,11 +276,11 @@ func (r *compareRunner) Run(ctx context.Context, cfg eval.Config, tasks []eval.T
 		if err := ctx.Err(); err != nil {
 			return run, err
 		}
-		cwd, err := r.project(t.ID, t.Project.Files)
+		cwd, err := r.project("tasks", t.ID, t.Project.Files)
 		if err != nil {
 			return run, fmt.Errorf("task %s: %w", t.ID, err)
 		}
-		results, err := r.runGroup(cfg, env, "cmp-"+string(cfg)+"-"+t.ID, false, cwd, t.Steps)
+		results, err := r.runGroup(cfg, env, t.ID, false, cwd, t.Steps)
 		if err != nil {
 			return run, err
 		}
@@ -280,11 +289,11 @@ func (r *compareRunner) Run(ctx context.Context, cfg eval.Config, tasks []eval.T
 	if err := ctx.Err(); err != nil {
 		return run, err
 	}
-	cwd, err := r.project("holdout", compareHoldoutFiles)
+	cwd, err := r.project("", "holdout", compareHoldoutFiles)
 	if err != nil {
 		return run, err
 	}
-	if run.Holdout, err = r.runGroup(cfg, env, "cmp-"+string(cfg)+"-holdout", true, cwd, holdout); err != nil {
+	if run.Holdout, err = r.runGroup(cfg, env, "", true, cwd, holdout); err != nil {
 		return run, err
 	}
 	if stub != nil {
@@ -295,12 +304,13 @@ func (r *compareRunner) Run(ctx context.Context, cfg eval.Config, tasks []eval.T
 	return run, nil
 }
 
-// project 在 proj/<name>/ 下建好占位文件，返回它的绝对路径。
-func (r *compareRunner) project(name string, files []string) (string, error) {
+// project 在 proj/<parent>/<name>/ 下建好占位文件，返回它的绝对路径；parent 为空时就是 proj/<name>/。
+// name 是任务 id 或固定的 holdout，必须是单独一级目录名。
+func (r *compareRunner) project(parent, name string, files []string) (string, error) {
 	if !filepath.IsLocal(name) || strings.ContainsAny(name, `/\`) {
 		return "", fmt.Errorf("id %q cannot name a directory", shown(name))
 	}
-	dir := filepath.Join(r.root, "proj", name)
+	dir := filepath.Join(r.root, "proj", parent, name)
 	if err := os.Mkdir(dir, 0o700); err != nil {
 		return "", err
 	}
@@ -337,17 +347,17 @@ func placeFiles(dir string, files []string) error {
 }
 
 // runGroup 重放一组步骤（一个任务或留出集），再读一次决策日志补全结果。
-// perStep 为真时（留出集）每步一个会话 <session>-<step.ID>：留出样本互不相干，一个样本的用户指令
-// 不能留在指令缓存里影响后面的样本；任务的步骤共用一个会话，指令随会话累积。
-// 日志读不了是沙箱的问题，整个配置报错；单步的问题记在 StepResult.Err。
-func (r *compareRunner) runGroup(cfg eval.Config, env compareEnv, session string, perStep bool, cwd string, steps []eval.Step) ([]eval.StepResult, error) {
+// perStep 为真时（留出集）每步一个会话 compareSession(cfg, "holdout", step.ID)：留出样本互不相干，
+// 一个样本的用户指令不能留在指令缓存里影响后面的样本；否则整个任务共用会话 compareSession(cfg, "task", taskID)，
+// 指令随会话累积。日志读不了是沙箱的问题，整个配置报错；单步的问题记在 StepResult.Err。
+func (r *compareRunner) runGroup(cfg eval.Config, env compareEnv, taskID string, perStep bool, cwd string, steps []eval.Step) ([]eval.StepResult, error) {
 	var results []eval.StepResult
 	if perStep {
 		for _, s := range steps {
-			results = append(results, r.runSteps(cfg, env, session+"-"+s.ID, cwd, []eval.Step{s})...)
+			results = append(results, r.runSteps(cfg, env, compareSession(cfg, "holdout", s.ID), cwd, []eval.Step{s})...)
 		}
 	} else {
-		results = r.runSteps(cfg, env, session, cwd, steps)
+		results = r.runSteps(cfg, env, compareSession(cfg, "task", taskID), cwd, steps)
 	}
 	logs, err := readDecisions(env.cacheDir)
 	if err != nil {
@@ -374,6 +384,15 @@ func (r *compareRunner) runGroup(cfg eval.Config, env compareEnv, session string
 		}
 	}
 	return results, nil
+}
+
+// compareSession 返回重放用的会话 ID：cmp-<配置>-<kind>-<sha256(id) 的前 16 位十六进制>。
+// 指令缓存按会话 ID 分目录，目录名只留安全字符且至多 120 个（internal/cache Prompts.sessionDir），
+// 直接用原始 id 时只差标点、或只在 120 字符之后才不同的两个 id 会落进同一个目录；
+// 哈希之后会话 ID 全是安全字符、长度固定，不同的 id 各得一个会话。
+func compareSession(cfg eval.Config, kind, id string) string {
+	sum := sha256.Sum256([]byte(id))
+	return "cmp-" + string(cfg) + "-" + kind + "-" + hex.EncodeToString(sum[:])[:16]
 }
 
 // signalList 取决策日志里某个 Check 的一项字符串数组信号：日志的 signals 按 Check 名字分开，

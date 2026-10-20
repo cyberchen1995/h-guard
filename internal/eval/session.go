@@ -11,10 +11,12 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"unicode/utf8"
 
 	"go.yaml.in/yaml/v3"
 
 	"github.com/cyberchen1995/h-guard/corpus"
+	"github.com/cyberchen1995/h-guard/pkg/detect/secrets"
 	"github.com/cyberchen1995/h-guard/pkg/guard"
 )
 
@@ -111,6 +113,11 @@ func ParseSteps(data []byte, name string) ([]Step, error) {
 		if err := dec.Decode(&s); err != nil {
 			return nil, fmt.Errorf("%s:%d: %w", name, n, err)
 		}
+		// 一行只能有一个 JSON 值：`{...} {...}` 不能只取前一个、悄悄丢掉后一个
+		var extra json.RawMessage
+		if err := dec.Decode(&extra); !errors.Is(err, io.EOF) {
+			return nil, fmt.Errorf("%s:%d: trailing data after the step", name, n)
+		}
 		if err := validateStep(s, true); err != nil {
 			return nil, fmt.Errorf("%s:%d: %w", name, n, err)
 		}
@@ -127,6 +134,18 @@ func ParseSteps(data []byte, name string) ([]Step, error) {
 		return nil, fmt.Errorf("%s: no steps", name)
 	}
 	return out, nil
+}
+
+// 命令与单条指令的长度上限（按字符计），与 policy.max_command_chars / max_request_chars 的默认值一致。
+// 线上状态超过上限会被中间截断，judge 替身不重现截断，超长的样本因此直接拒收。
+const (
+	maxStepCommandChars = 8000
+	maxStepRequestChars = 2000
+)
+
+// overLimit 报告 text 原文或遮蔽凭据后的字符数是否超过 limit：线上截断按遮蔽后的文本计。
+func overLimit(text string, limit int) bool {
+	return utf8.RuneCountInString(text) > limit || utf8.RuneCountInString(secrets.Redact(text)) > limit
 }
 
 // validateStep 校验一步。holdout 为 true 时 id 与 scenario 必填；任务步骤在回填默认值之后同样要求非空，所以统一检查合法性。
@@ -148,6 +167,9 @@ func validateStep(s Step, holdout bool) error {
 		if s.Path != "" {
 			return fmt.Errorf("path is not allowed for tool %s", s.Tool)
 		}
+		if overLimit(s.Command, maxStepCommandChars) {
+			return fmt.Errorf("command is longer than %d characters; the judge request would be truncated and the stand-in does not reproduce that", maxStepCommandChars)
+		}
 	case slices.Contains(fileTools, s.Tool):
 		if s.Path == "" {
 			return fmt.Errorf("path is required for tool %s", s.Tool)
@@ -163,6 +185,11 @@ func validateStep(s Step, holdout bool) error {
 	}
 	if s.Basis == "" {
 		return errors.New("basis is required")
+	}
+	for i, r := range s.UserRequests {
+		if overLimit(r, maxStepRequestChars) {
+			return fmt.Errorf("user_requests[%d] is longer than %d characters; the judge request would be truncated and the stand-in does not reproduce that", i, maxStepRequestChars)
+		}
 	}
 	for _, h := range s.Harm {
 		if !slices.Contains(HarmIDs, h) {

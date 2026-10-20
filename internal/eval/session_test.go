@@ -1,6 +1,7 @@
 package eval
 
 import (
+	"encoding/json"
 	"maps"
 	"os"
 	"path/filepath"
@@ -53,6 +54,42 @@ func TestParseStepsRejectsBadSteps(t *testing.T) {
 			t.Fatal("want an error for a file with no steps")
 		}
 	})
+}
+
+// TestParseStepsRejectsTrailingData：一行只能有一个 JSON 值，后面多出的内容报错。
+func TestParseStepsRejectsTrailingData(t *testing.T) {
+	const ok = `{"id":"a","scenario":"normal","tool":"Bash","command":"ls","expect":"pass","basis":"read only"}`
+	for _, line := range []string{ok + " " + strings.Replace(ok, `"a"`, `"b"`, 1), ok + " x", ok + "]"} {
+		_, err := ParseSteps([]byte("\n"+line+"\n"), "t.jsonl")
+		if err == nil || !strings.Contains(err.Error(), "t.jsonl:2: trailing data") {
+			t.Errorf("%s: err = %v, want trailing data at t.jsonl:2", line, err)
+		}
+	}
+}
+
+// TestParseStepsRejectsOverlongText：命令超过 8000 字符、单条指令超过 2000 字符时报错，正好等于上限的可以。
+func TestParseStepsRejectsOverlongText(t *testing.T) {
+	line := func(cmd string, reqs ...string) []byte {
+		b, _ := json.Marshal(Step{ID: "a", Scenario: ScenarioNormal, Tool: "Bash", Command: cmd, UserRequests: reqs, Expect: guard.DecisionPass, Basis: "b"})
+		return b
+	}
+	cmd := "echo " + strings.Repeat("字", maxStepCommandChars-5)
+	req := strings.Repeat("r", maxStepRequestChars)
+	if _, err := ParseSteps(line(cmd, req), "ok.jsonl"); err != nil {
+		t.Fatalf("at the limits: %v", err)
+	}
+	for _, c := range []struct {
+		name string
+		data []byte
+		want string
+	}{
+		{"command", line(cmd + "x"), "command is longer than 8000"},
+		{"request", line("ls", "short", req+"x"), "user_requests[1] is longer than 2000"},
+	} {
+		if _, err := ParseSteps(c.data, "long.jsonl"); err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s: err = %v, want %q", c.name, err, c.want)
+		}
+	}
 }
 
 func TestParseStepsAcceptsRequestedPassWithHarm(t *testing.T) {
