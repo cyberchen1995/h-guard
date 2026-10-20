@@ -275,7 +275,8 @@ func TestStateOf(t *testing.T) {
 		effective   bool
 		inactiveWhy string
 	}{
-		{"publish", 1, false, false, rules.InactiveJudgeDisabled},
+		{"verify_bypass", 1, false, false, rules.InactiveJudgeDisabled},
+		{"publish", 1, false, true, ""}, // 有 local 组：模型关闭时只有这些形态打断
 		{"publish", 1, true, true, ""},
 		{"guard_tampering", 1, false, true, ""},
 		{"catastrophic", 1, false, true, ""},
@@ -912,5 +913,34 @@ func TestObfuscatedExec(t *testing.T) {
 	// 用户规则同样可以只写 encoded
 	if _, err := rules.ParseUser([]byte("schema: 1\nid: mine\naction: ask\non: [exec]\nreason: {en: x}\nmatch: {exec: {encoded: true}}\n"), "mine.yaml"); err != nil {
 		t.Errorf("encoded only: %v", err)
+	}
+}
+
+// TestLocalPatterns：local 组的命中带 Local 标记，即使同一条命令里别的单元先命中了其他正则；
+// 只有 requires_judge 规则能写 local 组；有 local 组时模型关闭也算生效。
+func TestLocalPatterns(t *testing.T) {
+	const src = "schema: 1\nid: mine\naction: ask\non: [exec]\nrequires_judge: true\nreason: {en: x}\n" +
+		"question: {kind: probability, instructions: {question: 'q?'}}\n" +
+		"match: {exec: {any: ['\\bgit\\s+push\\b'], local: ['\\bgit\\s+push\\b[^\\n;&|]*\\s--force\\b']}}\n"
+	r, err := rules.ParseUser([]byte(src), "mine.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for cmd, want := range map[string]rules.Result{
+		"git push":                          {Hit: true},
+		"git push --force":                  {Hit: true, Local: true},
+		"git push origin; git push --force": {Hit: true, Local: true},
+		"git status":                        {},
+	} {
+		e, _ := command.Expand(context.Background(), cmd, guard.ShellPOSIX)
+		if got, err := r.MatchExec(context.Background(), e, rules.ExampleEnv); err != nil || got != want {
+			t.Errorf("%q: %+v, %v; want %+v", cmd, got, err, want)
+		}
+	}
+	if st := rules.StateOf(r, 1, false); !st.Effective {
+		t.Errorf("judge off: %+v", st)
+	}
+	if _, err := rules.ParseUser([]byte(strings.Replace(src, "requires_judge: true\n", "", 1)), "mine.yaml"); err == nil || !strings.Contains(err.Error(), "match.exec.local") {
+		t.Errorf("local without requires_judge: %v", err)
 	}
 }

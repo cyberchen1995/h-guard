@@ -3,7 +3,8 @@ id: sensitive_read
 enabled: true
 action: ask
 # 读取前按路径拦截（第 2 档默认开启，开箱就能拦截敏感文件读取）；读取后的内容由 outbound 扫描，两者互补。
-# 只按路径匹配，不调模型，不看用户授权。通过 shell 读取（cat .env）只由命令规则覆盖。
+# 只按路径匹配，不调模型，不看用户授权。shell 里读文件的常见写法（cat .env、grep KEY .env、< .env）读取的文件
+# 同样按这里的路径检查（command.ReadTargets）；认不出的写法（python -c、脚本）只能靠 outbound 扫描输出。
 on: [file_read]
 reason:
   en: 'Reads a file that usually holds secrets (.env, private keys, cloud or SSH credentials)'

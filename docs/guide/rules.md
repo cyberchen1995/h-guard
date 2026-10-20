@@ -82,7 +82,7 @@ examples:
 | `impact` | none | What the operation would cause, by locale (`en` required when given). Shown after the reason as "Impact: …" when the rule interrupts. |
 | `advice` | none | A safer way to continue, by locale (`en` required when given). Shown as "Safer way: …". |
 | `match` | required | `match.exec` for `exec`, `match.file` for file actions. |
-| `requires_judge` | `false` | The rule interrupts only when the judge is on; with the judge off its hits are only logged. Needs a `question`. |
+| `requires_judge` | `false` | The rule interrupts only when the judge is on; with the judge off its hits are only logged, except hits of `match.exec.local`. Needs a `question`. |
 | `question` | none | Question sent to the judge (`exec` rules only), see below. |
 | `radius_floor` | `0` | With the judge on, a hit is dangerous only when the judge rates the blast radius (`0`..`3`) at or above this. |
 | `bypassable_by_request` | `true` | Whether your explicit request (judged by the model) lets a hit pass. |
@@ -97,7 +97,8 @@ How a hit becomes a verdict:
 
 1. A `deny` rule that matches denies, without asking the judge.
 2. With the judge off, `ask` rules that match ask, except rules with
-   `requires_judge: true`, which are only logged.
+   `requires_judge: true`, which are only logged unless one of their
+   `match.exec.local` patterns matched.
 3. With the judge on but unavailable (no consent, error, timeout), every
    matching rule asks.
 4. With the judge answering, a match is withdrawn when the judge is confidently
@@ -134,6 +135,7 @@ Options:
 | `command_position` | Match only the text at command positions, not arguments of other commands. Use it for `deny` rules. |
 | `strip_quotes` | Blank out quoted text before matching. |
 | `redirects` | Patterns matched against redirections (POSIX), each written as `command fd-operator target`, for example `dd 2>/dev/sda`. |
+| `local` | Patterns for all shells that interrupt even with the judge off, in `requires_judge` rules only. Keep them to forms whose impact is high and that are almost never false positives (`git reset --hard`, `npm publish`); the other patterns still need the judge. They are matched at each command position, after environment assignments and `sudo`, so anchor them with `^`; the same text inside quotes does not count. |
 | `encoded` | Also hit when encoded content (base64, `-EncodedCommand` and similar) is handed to an interpreter. A rule with `encoded: true` needs no patterns. |
 
 An `exec` rule needs at least one pattern or `encoded: true`.

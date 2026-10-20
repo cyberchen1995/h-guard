@@ -37,6 +37,19 @@ match:
       - '\b(?:invoke-restmethod|irm|invoke-webrequest|iwr|curl|wget)\b(?=(?:@''[ \t]*\r?\n[\s\S]*?\n''@|@"[ \t]*\r?\n[\s\S]*?\n"@|''(?>(?:[^'']|'''')*)''|"(?>(?:[^"`]|`[\s\S]|"")*)"|`[\s\S]|[^\n;&|''"`])*\s-(?:me(?:t(?:h(?:o(?:d)?)?)?)?|custommethod)(?::|\s+)[''"]?(?:post|put|patch|delete)\b)(?!\s+[''\"]?https?://(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?(?:[/\s''"]|$)|(?:@''[ \t]*\r?\n[\s\S]*?\n''@|@"[ \t]*\r?\n[\s\S]*?\n"@|''(?>(?:[^'']|'''')*)''|"(?>(?:[^"`]|`[\s\S]|"")*)"|`[\s\S]|[^\n;&|''"`])*\s-ur(?:i)?(?::|\s+)[''"]?https?://(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?(?:[/\s''"]|$))'
       - '\b(?:publish-module|publish-script|publish-psresource)\b'
       - '\bnuget(?:\.exe)?\s+push\b'
+    # 模型关闭时也打断的形态：发布包、镜像或 release（发出去就收不回来）；git push 与 PR 操作仍要模型判断
+    # 是不是用户要求的（维护者决定，2026-10-19）
+    local:
+      - '^(?:npm|pnpm|yarn)(?![^\n;&|]*\s--dry-run(?:=true)?(?:\s|$))(?:\s+-{1,2}[\w-]+(?:=\S+|\s+[^-\s]\S*)?)*(?:\s+workspace\s+\S+|\s+workspaces\s+foreach(?:\s+-{1,2}[\w-]+(?:=\S+)?)*)?(?:\s+npm)?\s+(?:publish|pub)(?=\s|$)'
+      - '^(?:(?:python[\d.]*|py)(?:\s+-[^\sm]\S*)*\s+-m\s+)?twine\s+upload\b'
+      - '^(?:uv\s+publish|gem\s+push)\b'
+      - '^(?:docker|podman)(?:\s+-{1,2}[\w-]+(?:=\S+|\s+[^-\s]\S*)?)*\s+(?:image\s+)?push(?=\s|$)'
+      - '^(?:docker|podman)(?:\s+-{1,2}[\w-]+(?:=\S+|\s+[^-\s]\S*)?)*\s+compose(?:\s+-{1,2}[\w-]+(?:=\S+|\s+[^-\s]\S*)?)*\s+(?:push|publish)(?=\s|$)(?![^\n;&|]*\s--dry-run(?:=true)?(?:\s|$))'
+      - '^cargo(?:\s+\+\S+)?(?:\s+-{1,2}[\w-]+(?:=\S+|\s+[^-\s]\S*)?)*\s+publish(?=\s|$)(?![^\n;&|]*\s(?:--dry-run|-n)(?:\s|$))'
+      - '^gh(?:\.exe)?(?:\s+-{1,2}[\w-]+(?:=\S+|\s+[^-\s]\S*)?)*\s+release(?:\s+-{1,2}[\w-]+(?:=\S+|\s+[^-\s]\S*)?)*\s+(?:create|new|upload|delete)\b'
+      - '^gh(?:\.exe)?(?:\s+-{1,2}[\w-]+(?:=\S+|\s+[^-\s]\S*)?)*\s+release(?:\s+-{1,2}[\w-]+(?:=\S+|\s+[^-\s]\S*)?)*\s+edit\b(?=[^\n;&|]*\s--draft=false\b)'
+      - '^(?:publish-module|publish-script|publish-psresource)\b(?![^\n;&|]*\s-w(?:hatif|hati|hat|ha|h|i)?(?::\$true)?(?:\s|$))'
+      - '^(?:dotnet\s+)?nuget(?:\.exe)?\s+push\b'
 question:
   kind: probability
   instructions:

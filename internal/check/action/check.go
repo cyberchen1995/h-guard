@@ -7,6 +7,8 @@ import (
 	"context"
 	"fmt"
 	"maps"
+	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -153,8 +155,23 @@ func (c *Check) Evaluate(ctx context.Context, ev guard.Event, commit func(guard.
 		switch {
 		case isExec(a):
 			v = c.evalExec(ctx, ev, a.Exec, commit)
+			if v.Decision != guard.DecisionDeny {
+				// 命令读取的文件同样按读文件的规则检查（sensitive_read 等）：cat .env 与文件工具读 .env 一样。
+				// 只合并打断的结论：放行时的降级标记（路径解析不了）不该让每条读普通文件的命令都带上
+				reads, unchecked := c.expandReads(command.ReadTargets(a.Exec.Command, a.Exec.Shell), ev.Cwd,
+					dotglobOn.MatchString(a.Exec.Command), globstarOn.MatchString(a.Exec.Command))
+				for _, p := range reads {
+					if fv := c.evalFile(ctx, ev, guard.Action{Kind: guard.ActionFileRead, File: &guard.FileAction{Path: p}}, a.Exec.Command); fv.Decision != guard.DecisionPass {
+						v = merge(v, fv)
+					}
+				}
+				if len(unchecked) > 0 && c.readRulesActive() {
+					// 通配符匹配的文件超过上限：其余文件没有检查，不能当作没有读敏感文件（失败即确认）
+					v = merge(v, globTooMany(unchecked[0]))
+				}
+			}
 		case isFile(a):
-			v = c.evalFile(ctx, ev, a)
+			v = c.evalFile(ctx, ev, a, "")
 		default:
 			continue
 		}
@@ -294,8 +311,14 @@ func merge(acc, v guard.Verdict) guard.Verdict {
 	}
 	out := base
 	if acc.Decision == v.Decision {
-		// 同样严：两个动作的说明都保留（一次补丁改了几个受保护的文件时，每个文件都写明），前进路径取先出现的
-		out.Reasons = append(slices.Clone(acc.Reasons), v.Reasons...)
+		// 同样严：两个动作的说明都保留（一次补丁改了几个受保护的文件时，每个文件都写明），前进路径取先出现的；
+		// 完全相同的说明（同一条命令的操作）只留一条
+		out.Reasons = slices.Clone(acc.Reasons)
+		for _, r := range v.Reasons {
+			if !slices.ContainsFunc(out.Reasons, func(x guard.Reason) bool { return x.Code == r.Code && maps.Equal(x.Params, r.Params) }) {
+				out.Reasons = append(out.Reasons, r)
+			}
+		}
 		// 说明总数有上限：一次调用里成百上千个同样结论的动作不能把回复撑到几 MB
 		if len(out.Reasons) > maxMergedReasons {
 			out.Reasons = out.Reasons[:maxMergedReasons]
@@ -343,7 +366,7 @@ func (c *Check) evalExec(ctx context.Context, ev guard.Event, ex *guard.ExecActi
 		}
 		res, err := r.MatchExec(ctx, exp, c.Paths)
 		if res.Hit {
-			hits = append(hits, RegexHit{Rule: r.ID, TimedOut: res.TimedOut})
+			hits = append(hits, RegexHit{Rule: r.ID, TimedOut: res.TimedOut, Local: res.Local})
 		}
 		if err != nil {
 			// 预算耗尽同样写明操作，已经命中的规则写明后果与建议
@@ -493,7 +516,148 @@ func userRequests(reqs []guard.Request, window int) []string {
 // 原因写明命中的文件：护栏自我保护用 guard_self_file，其余路径规则（sensitive_read、用户的文件规则）用 file_rule。
 // 硬规则不受档位限制，其余规则须当前档位覆盖该动作类型。file_rename 的源与目标都检查。
 // 目标解析失败、或受保护目录读不全时按已知的写法匹配，带 path_unresolved。
-func (c *Check) evalFile(ctx context.Context, ev guard.Event, a guard.Action) guard.Verdict {
+// evalFile 评估一个文件动作。via 是读取这个文件的命令（命令里读文件时）：说明里写明的操作是这条命令。
+// maxGlobMatches 是一个通配符参数最多检查的文件数。
+const maxGlobMatches = 1024
+
+// expandReads 把命令读取的文件里的通配符参数换成它在工作目录里匹配到的文件（cat .env* 读到的是 .env）：
+// shell 展开发生在命令运行时，这里按磁盘现状展开；带通配符的原文不是一个文件，不检查。
+// * 与 ? 不匹配开头的点，与 shell 一致。unchecked 是匹配超过 maxGlobMatches、没有全部检查的通配符参数。
+// dotglob 为 true 时（命令里开了 shopt -s dotglob 等），* 也匹配开头的点；globstar 为 true 时 ** 跨目录匹配，
+// 这里不递归展开，含 ** 的参数算作没有全部检查。
+func (c *Check) expandReads(targets []string, cwd string, dotglob, globstar bool) (out, unchecked []string) {
+	var expanded []string
+	for _, t := range targets {
+		words, complete := expandBraces(t) // cat .{env,example}：先展开花括号，再展开通配符
+		expanded = append(expanded, words...)
+		if !complete {
+			unchecked = append(unchecked, t) // 展开出的词超过上限：其余的没有检查
+		}
+	}
+	for _, t := range expanded {
+		if !strings.ContainsAny(t, "*?[") {
+			out = append(out, t)
+			continue
+		}
+		if c.Paths.Lexical {
+			continue // 只按文本判断时不读磁盘
+		}
+		if globstar && strings.Contains(t, "**") {
+			unchecked = append(unchecked, t)
+			continue
+		}
+		pat := t
+		if rest, ok := strings.CutPrefix(pat, "~/"); ok && c.Paths.Home != "" {
+			pat = filepath.Join(c.Paths.Home, rest)
+		} else if !filepath.IsAbs(pat) && cwd != "" {
+			pat = filepath.Join(cwd, pat)
+		}
+		matches, err := filepath.Glob(pat)
+		if err != nil {
+			out = append(out, t) // 不是合法的通配符（引号里的 [）：shell 按字面读这个文件
+			continue
+		}
+		segs := strings.Split(filepath.ToSlash(pat), "/")
+		n := 0
+		for _, m := range matches {
+			if !dotglob && hiddenByGlob(segs, strings.Split(filepath.ToSlash(m), "/")) {
+				continue
+			}
+			if n == maxGlobMatches {
+				unchecked = append(unchecked, t)
+				break
+			}
+			out = append(out, m)
+			n++
+		}
+	}
+	return out, unchecked
+}
+
+// readRulesActive 报告当前档位下有没有检查读文件的规则：没有时通配符展开不全也无所谓。
+func (c *Check) readRulesActive() bool {
+	for _, r := range c.Rules.All() {
+		if r.Enabled() && r.AppliesTo(guard.ActionFileRead) && (r.Locked || rules.TierCovers(c.Config.Action.Tier, guard.ActionFileRead)) {
+			return true
+		}
+	}
+	return false
+}
+
+// globTooMany 是通配符参数匹配的文件太多、没有逐个检查时的结论：请求确认。
+func globTooMany(pattern string) guard.Verdict {
+	return guard.Verdict{
+		Decision: guard.DecisionAsk,
+		Reasons: []guard.Reason{
+			{Code: i18n.KeyActionGlobTooMany, Params: map[string]string{"pattern": pattern, "limit": strconv.Itoa(maxGlobMatches)}},
+			{Code: i18n.KeyHintManual},
+		},
+	}
+}
+
+// maxBraceWords 是一个参数的花括号最多展开出的词数。
+const maxBraceWords = maxGlobMatches
+
+// expandBraces 展开 bash 的花括号（{a,b}，可嵌套、可多组）；没有花括号时就是 t 本身，原文也保留。
+// 展开出的词超过 maxBraceWords 时停下，complete 为 false。
+func expandBraces(t string) (out []string, complete bool) {
+	out = []string{t}
+	for i := 0; i < len(out); i++ {
+		if len(out) >= maxBraceWords {
+			return out, false
+		}
+		w := out[i]
+		open := strings.IndexByte(w, '{')
+		if open < 0 {
+			continue
+		}
+		// 找到与 open 配对的 }，记下顶层的逗号
+		depth, commas, end := 0, []int{}, -1
+		for j := open; j < len(w) && end < 0; j++ {
+			switch w[j] {
+			case '{':
+				depth++
+			case '}':
+				if depth--; depth == 0 {
+					end = j
+				}
+			case ',':
+				if depth == 1 {
+					commas = append(commas, j)
+				}
+			}
+		}
+		if end < 0 || len(commas) == 0 {
+			continue
+		}
+		bounds := append(append([]int{open}, commas...), end)
+		for k := 0; k+1 < len(bounds); k++ {
+			out = append(out, w[:open]+w[bounds[k]+1:bounds[k+1]]+w[end+1:])
+		}
+	}
+	return out, true
+}
+
+// dotglobOn 认出命令里让通配符匹配点文件的设置：bash 的 shopt -s dotglob、GLOBIGNORE，zsh 的 setopt globdots。
+var dotglobOn = regexp.MustCompile(`\bshopt\s+(?:-\w+\s+)*-s\b[^\n;&|]*\bdotglob\b|\bGLOBIGNORE=|\bsetopt\b[^\n;&|]*\bglob_?dots\b`)
+
+// globstarOn 认出让 ** 递归匹配的设置：bash 的 shopt -s globstar。
+var globstarOn = regexp.MustCompile(`\bshopt\s+(?:-\w+\s+)*-s\b[^\n;&|]*\bglobstar\b`)
+
+// hiddenByGlob 报告匹配结果 m 是否经由一段不以点开头的通配符匹配了以点开头的名字：shell 不这样展开（*/* 不进 .ssh）。
+func hiddenByGlob(pat, m []string) bool {
+	if len(pat) != len(m) {
+		return false
+	}
+	for i, p := range pat {
+		if strings.ContainsAny(p, "*?[") && !strings.HasPrefix(p, ".") && strings.HasPrefix(m[i], ".") {
+			return true
+		}
+	}
+	return false
+}
+
+func (c *Check) evalFile(ctx context.Context, ev guard.Event, a guard.Action, via string) guard.Verdict {
 	env := c.Paths
 	env.Cwd = ev.Cwd
 	raw := []string{a.File.Path}
@@ -548,7 +712,8 @@ func (c *Check) evalFile(ctx context.Context, ev guard.Event, a guard.Action) gu
 	for j, p := range hitPaths {
 		shown[j] = secrets.Redact(p)
 	}
-	fileKey := map[string]string{i18n.KeyActionGuardSelf: i18n.KeyActionGuardSelfFile, i18n.KeyActionDangerous: i18n.KeyActionFileRule}
+	fileKey := map[string]string{i18n.KeyActionGuardSelf: i18n.KeyActionGuardSelfFile, i18n.KeyActionDangerous: i18n.KeyActionFileRule,
+		i18n.KeyActionDangerousLocal: i18n.KeyActionFileRule}
 	for i, rs := range v.Reasons {
 		if key, ok := fileKey[rs.Code]; ok {
 			v.Reasons[i] = guard.Reason{Code: key, Params: map[string]string{
@@ -560,7 +725,11 @@ func (c *Check) evalFile(ctx context.Context, ev guard.Event, a guard.Action) gu
 	if unresolved {
 		v.Fallbacks = appendOnce(v.Fallbacks, FallbackPathUnresolved)
 	}
-	c.explain(&v, res.Dangerous, "", "")
+	cwd := ""
+	if via != "" {
+		cwd = ev.Cwd
+	}
+	c.explain(&v, res.Dangerous, via, cwd)
 	return v
 }
 
@@ -642,7 +811,8 @@ func (c *Check) render(res Result, in Input) guard.Verdict {
 		if guardSelf {
 			add(i18n.KeyActionGuardSelf, map[string]string{"rules": rulesText})
 		} else {
-			add(i18n.KeyActionDangerous, map[string]string{"rules": rulesText})
+			// 模型关闭时不知道操作是不是用户要求的：不说「agent 自行决定」
+			add(i18n.KeyActionDangerousLocal, map[string]string{"rules": rulesText})
 		}
 	default:
 		add(i18n.KeyActionDangerous, map[string]string{"rules": rulesText})

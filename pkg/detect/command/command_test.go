@@ -506,6 +506,7 @@ func TestReadsFiles(t *testing.T) {
 		cmd   string
 		shell guard.Shell
 	}{
+		{"xargs -a .env echo", guard.ShellPOSIX},
 		{"cat .env", guard.ShellPOSIX},
 		{"head -n 20 config/prod.yaml", guard.ShellPOSIX},
 		{"sudo tail -f /var/log/app.log", guard.ShellPOSIX},
@@ -568,6 +569,76 @@ func TestReadsFiles(t *testing.T) {
 	} {
 		if command.ReadsFiles(c.cmd, c.shell) {
 			t.Errorf("%s: a file read", c.cmd)
+		}
+	}
+}
+
+// TestReadTargets：读文件命令的文件参数、输入重定向的目标与 PowerShell 的路径参数；模式参数与选项的值不算。
+func TestReadTargets(t *testing.T) {
+	for _, tc := range []struct {
+		cmd   string
+		shell guard.Shell
+		want  []string
+	}{
+		{"cat .env", guard.ShellPOSIX, []string{".env"}},
+		{"sudo cat ~/.aws/credentials | grep key", guard.ShellPOSIX, []string{"~/.aws/credentials"}},
+		{"head -n 5 config/.env.prod", guard.ShellPOSIX, []string{"config/.env.prod"}},
+		{"grep KEY .env", guard.ShellPOSIX, []string{".env"}},
+		{"grep -e KEY -- .env", guard.ShellPOSIX, []string{".env"}},
+		{"sed -n 1p ~/.ssh/id_rsa", guard.ShellPOSIX, []string{"~/.ssh/id_rsa"}},
+		{"tr a b < .env", guard.ShellPOSIX, []string{".env"}},
+		{"while read l; do echo $l; done < ~/.netrc", guard.ShellPOSIX, []string{"~/.netrc"}},
+		{"bash -c 'base64 id_rsa'", guard.ShellPOSIX, []string{"id_rsa"}},
+		{"cat <<EOF\nx\nEOF", guard.ShellPOSIX, nil},
+		{"ls -la ~/.ssh", guard.ShellPOSIX, nil},
+		{"echo .env", guard.ShellPOSIX, nil},
+		{"Get-Content -Path .env -Raw", guard.ShellPowerShell, []string{".env"}},
+		{"gc ~/.ssh/id_rsa -TotalCount 3", guard.ShellPowerShell, []string{"~/.ssh/id_rsa"}},
+		{"Select-String -Pattern key -Path .env", guard.ShellPowerShell, []string{".env"}},
+		{"[IO.File]::ReadAllText('C:\\Users\\me\\.aws\\credentials')", guard.ShellPowerShell, []string{"C:\\Users\\me\\.aws\\credentials"}},
+		{"cmd /c type .env", guard.ShellPowerShell, []string{".env"}},
+		{`Get-Content "C:\Users\Jane Doe\.ssh\config"`, guard.ShellPowerShell, []string{`C:\Users\Jane Doe\.ssh\config`}},
+		{`Write-Output "[IO.File]::ReadAllText('.env')"`, guard.ShellPowerShell, nil},
+		{`$k = [IO.File]::ReadAllText('.env')`, guard.ShellPowerShell, []string{".env"}},
+		{`gc $HOME\.aws\credentials`, guard.ShellPowerShell, []string{`~/.aws\credentials`}},
+		{`cat "$HOME/.ssh/config"`, guard.ShellPOSIX, []string{"~/.ssh/config"}},
+		{"cat ${HOME}/.netrc", guard.ShellPOSIX, []string{"~/.netrc"}},
+		{"grep -eTOKEN .env", guard.ShellPOSIX, []string{".env"}},
+		{"grep -ie token .env", guard.ShellPOSIX, []string{".env"}},
+		{"grep -i token .env", guard.ShellPOSIX, []string{".env"}},
+		{"Get-Content -Path:.env", guard.ShellPowerShell, []string{".env"}},
+		{"Get-Content -Encoding:utf8 .env", guard.ShellPowerShell, []string{".env"}},
+		{"Select-String KEY .env", guard.ShellPowerShell, []string{".env"}},
+		{"sls KEY", guard.ShellPowerShell, nil},
+		{"cd ~/.ssh && cat config", guard.ShellPOSIX, []string{"config", "~/.ssh/config"}},
+		{"cd /etc; cat /tmp/x", guard.ShellPOSIX, []string{"/tmp/x"}},
+		{"Set-Location ~/.ssh; Get-Content config", guard.ShellPowerShell, []string{"config", "~/.ssh/config"}},
+		{"Get-Content -Verbose .env", guard.ShellPowerShell, []string{".env"}},
+		{"cd ~/.ssh && cat < config", guard.ShellPOSIX, []string{"config", "~/.ssh/config"}},
+		{"column -t .env", guard.ShellPOSIX, []string{".env"}},
+		{"Get-Content README.md,.env", guard.ShellPowerShell, []string{"README.md", ".env"}},
+		{`Get-Content "a,b.txt"`, guard.ShellPowerShell, []string{"a,b.txt"}},
+		{"Get-Item .env | Get-Content", guard.ShellPowerShell, []string{".env"}},
+		{"Get-Item .env | Remove-Item", guard.ShellPowerShell, nil},
+		{"grep -f .env README.md", guard.ShellPOSIX, []string{".env", "README.md"}},
+		{"grep --file=.env README.md", guard.ShellPOSIX, []string{".env", "README.md"}},
+		{"grep -if.env README.md", guard.ShellPOSIX, []string{".env", "README.md"}},
+		{"cd ~/.ssh; (cd /tmp); cat config", guard.ShellPOSIX, []string{"config", "~/.ssh/config", "/tmp/config"}},
+		{"Get-Content -Pa .env", guard.ShellPowerShell, []string{".env"}},
+		{"Get-Content -Lit .env", guard.ShellPowerShell, []string{".env"}},
+		{"cmd /d /c type .env", guard.ShellPowerShell, []string{".env"}},
+		{"git diff --no-index README.md .env", guard.ShellPOSIX, []string{"README.md", ".env"}},
+		{"git diff HEAD -- .env", guard.ShellPOSIX, nil},
+		{"echo x | xargs cat .env", guard.ShellPOSIX, []string{".env"}},
+		{"xargs -a .env echo", guard.ShellPOSIX, []string{".env"}},
+		{"xargs --arg-file=.env echo", guard.ShellPOSIX, []string{".env"}},
+		{"xargs -a 'secret dir/.env' echo", guard.ShellPOSIX, []string{"secret dir/.env"}},
+		{"Get-Item .env; Get-Content", guard.ShellPowerShell, nil},
+		{"Import-Csv -UseCulture .env", guard.ShellPowerShell, []string{".env"}},
+		{`Microsoft.PowerShell.Management\Get-Content .env`, guard.ShellPowerShell, []string{".env"}},
+	} {
+		if got := command.ReadTargets(tc.cmd, tc.shell); !slices.Equal(got, tc.want) {
+			t.Errorf("%q: %q, want %q", tc.cmd, got, tc.want)
 		}
 	}
 }

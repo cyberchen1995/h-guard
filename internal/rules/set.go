@@ -197,7 +197,7 @@ func TierCovers(tier int, kind guard.ActionKind) bool {
 const (
 	InactiveDisabled      = "disabled"       // 已停用
 	InactiveTier          = "tier"           // 当前档位不覆盖它的动作类型
-	InactiveJudgeDisabled = "judge_disabled" // requires_judge 且模型关闭：命中只写入决策日志
+	InactiveJudgeDisabled = "judge_disabled" // requires_judge 且模型关闭（没有 local 组）：命中只写入决策日志
 )
 
 // State 是规则状态：已加载 / 已启用 / 生效。
@@ -207,7 +207,11 @@ type State struct {
 	Inactive  string // 不生效的原因；生效时为空
 }
 
-// StateOf 计算规则在当前档位与模型开关下的状态。硬规则不受档位限制。
+// HasLocal 报告规则有没有不靠模型也打断的命令形态（match.exec.local）。
+func (r *Rule) HasLocal() bool { return r.Match.Exec != nil && len(r.Match.Exec.Local) > 0 }
+
+// StateOf 计算规则在当前档位与模型开关下的状态。硬规则不受档位限制。有 local 组的 requires_judge 规则
+// 在模型关闭时仍算生效（只有这些形态打断）。
 func StateOf(r *Rule, tier int, judgeEnabled bool) State {
 	st := State{Enabled: r.enabled}
 	switch {
@@ -215,7 +219,7 @@ func StateOf(r *Rule, tier int, judgeEnabled bool) State {
 		st.Inactive = InactiveDisabled
 	case !r.Locked && !slices.ContainsFunc(r.On, func(k guard.ActionKind) bool { return TierCovers(tier, k) }):
 		st.Inactive = InactiveTier
-	case r.RequiresJudge && !judgeEnabled:
+	case r.RequiresJudge && !judgeEnabled && !r.HasLocal():
 		st.Inactive = InactiveJudgeDisabled
 	default:
 		st.Effective = true
