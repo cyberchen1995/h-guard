@@ -32,6 +32,8 @@ func Inspect(t Target, harness string) []string {
 		return inspectExt(t, harness, OMPExtension(t))
 	case "dsh":
 		return inspectDSH(t)
+	case "hermes":
+		return inspectHermes(t)
 	}
 	return nil
 }
@@ -45,11 +47,23 @@ var extHarnesses = map[string]struct {
 	"pi":       {"pi", "pi", PiWritten, 0},
 	"omp":      {"omp", "oh-my-pi", OMPWritten, 0},
 	"dsh":      {"dsh", "DeepSeek Harness", DSHWritten, 0},
+	"hermes":   {"hermes", "Hermes Agent", HermesWritten, 0},
 }
 
 // ExtNotes 返回 harness 的版本提醒（install 与 status 共用）。
 func ExtNotes(t Target, harness string) []string {
 	h := extHarnesses[harness]
+	if harness == "hermes" {
+		var notes []string
+		// 只有发布日期（YYYY.M.D）能与 HermesWritten 比较；只读到语义化的版本号时不提醒
+		if v := harnessVersion(t, h.cmd); v == "" || calver(v) {
+			notes = harnessVersionNote(t, h.cmd, h.product, h.written, h.major)
+		}
+		if hermesBusyMode(t) == "steer" {
+			notes = append(notes, hermesSteerNote)
+		}
+		return notes
+	}
 	return harnessVersionNote(t, h.cmd, h.product, h.written, h.major)
 }
 
@@ -147,8 +161,29 @@ func harnessVersion(t Target, name string) string {
 		return ""
 	case name == "codex":
 		return f[len(f)-1]
+	case name == "hermes":
+		// Hermes Agent v0.21.6+3.gabc1234 (2026.9.24) …：版本号（v 之后）是语义化版本，括号里的发布日期才能与插件按其
+		// 编写的发布（2026.9.24）比较，优先取它；Desktop 版只打印 v<版本>，退回版本号（ExtNotes 不拿它比较）
+		for _, s := range f {
+			if d := strings.TrimSuffix(strings.TrimPrefix(s, "("), ")"); len(s) > 2 && s[0] == '(' && d != "" && d[0] >= '0' && d[0] <= '9' {
+				return d
+			}
+		}
+		for _, s := range f {
+			if len(s) > 1 && s[0] == 'v' && s[1] >= '0' && s[1] <= '9' {
+				v, _, _ := strings.Cut(s[1:], "+")
+				return v
+			}
+		}
+		return ""
 	}
 	return f[0]
+}
+
+// calver 报告版本是不是 YYYY.M.D 形式的发布日期。
+func calver(v string) bool {
+	y, err := strconv.Atoi(strings.SplitN(v, ".", 2)[0])
+	return err == nil && y >= 2000
 }
 
 func installedLine(product, version string) string {

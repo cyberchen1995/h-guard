@@ -26,8 +26,9 @@ const (
 	FallbackWarnUndelivered   = "warn_undelivered"
 	FallbackInputTooLarge     = "input_too_large"
 	FallbackConfigInvalid     = "config_invalid"
-	FallbackTargetUnparsed    = "target_unparsed" // 文件工具的目标无法解析
-	FallbackToolUnknown       = "tool_unknown"    // adapter 不认识的工具，也不在 read_only_tools 里
+	FallbackTargetUnparsed    = "target_unparsed"    // 文件工具的目标无法解析
+	FallbackToolUnknown       = "tool_unknown"       // adapter 不认识的工具，也不在 read_only_tools 里
+	FallbackPromptNotBlocked  = "prompt_not_blocked" // 提示词挡不住（已交给模型），deny 改为 warn
 )
 
 // Engine 运行 Check 并产生 Outcome。字段在构造后只读。
@@ -238,6 +239,13 @@ func (e *Engine) Finish(ev guard.Event, caps harness.EventCaps, v guard.Verdict)
 	case v.Decision == guard.DecisionDeny && ev.Kind == guard.EventToolOutput && !caps.Replace:
 		v.Decision = guard.DecisionWarn
 		v.Fallbacks = appendOnce(v.Fallbacks, FallbackOutputNotReplaced)
+	}
+	if v.Decision == guard.DecisionDeny && ev.Kind == guard.EventPrompt && !caps.Block {
+		// 挡不住的提示词（Hermes 的 pre_llm_call）：已经交给了模型，改为提示；ask 降级来的「已阻止」说明不再成立
+		v.Decision = guard.DecisionWarn
+		v.Fallbacks = appendOnce(v.Fallbacks, FallbackPromptNotBlocked)
+		v.Reasons = slices.DeleteFunc(slices.Clone(v.Reasons), func(r guard.Reason) bool { return r.Code == i18n.KeyDegradeAskUnsupported })
+		v.Reasons = append(v.Reasons, guard.Reason{Code: i18n.KeyDegradePromptNotBlocked})
 	}
 	if v.Decision == guard.DecisionWarn && !caps.Warn {
 		v.Fallbacks = appendOnce(v.Fallbacks, FallbackWarnUndelivered)

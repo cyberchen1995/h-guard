@@ -156,6 +156,8 @@ version: 1
 # harnesses:
 #   codex: {shell: posix}
 #   opencode: {shell: posix}
+#   # Hermes Agent: also send blocked actions and warnings to a chat with hermes send (off by default).
+#   hermes: {notify: {enabled: true, on: [deny, warn], to: telegram}}
 
 # Decision log with the full commands (off by default; credentials h-guard recognizes are masked).
 # log: {decisions: false, retention_days: 14}

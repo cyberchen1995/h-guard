@@ -2,7 +2,8 @@
 
 [简体中文](README.zh-CN.md)
 
-**Harnesses:** Claude Code · Codex · opencode · pi · oh-my-pi · DeepSeek Harness,
+**Harnesses:** Claude Code · Codex · opencode · pi · oh-my-pi · DeepSeek Harness ·
+Hermes Agent,
 and any other agent harness through the
 [generic JSON contract](docs/guide/protocols.md#generic-harness-contract-v1).<br>
 **Intercepts:** catastrophic commands and fork bombs, recursive deletes,
@@ -102,6 +103,7 @@ h-guard install opencode --write      # opencode 1.x: writes a plugin to ~/.conf
 h-guard install pi --write            # pi: writes an extension to ~/.pi/agent/extensions
 h-guard install omp --write           # oh-my-pi: writes an extension to ~/.omp/agent/extensions
 h-guard install dsh --write           # DeepSeek Harness: mounts a plugin in ~/.dsh/cordis.patch.yml
+h-guard install hermes --write        # Hermes Agent: writes a plugin to ~/.hermes/plugins and enables it
 ```
 
 For Codex, open Codex and run `/hooks` to review and trust the h-guard hooks.
@@ -327,12 +329,16 @@ the [rule pack guide](docs/guide/rules.md) for writing rules.
 | pi | the version tested, or later | 1.3.0 (smoke test) |
 | oh-my-pi | the version tested, or later | 18.11.3 (smoke test) |
 | DeepSeek Harness | the version tested, or later | 0.2.1-rc.2 (smoke test) |
+| Hermes Agent | the version tested, or later | 2026.9.24 (plugin hooks driven directly) |
 
 The opencode, pi, oh-my-pi and DeepSeek Harness extensions were written against
 each harness's source code, are tested in CI against simulated harness APIs,
 and were smoke-tested in the real harnesses with a simulated model server
 (blocking, asking, replacing tool output, blocking prompts). There are no
-recorded sessions of them yet.
+recorded sessions of them yet. The Hermes Agent plugin was written against
+Hermes's source, is tested in CI against a simulated plugin context, and was
+loaded by Hermes's own plugin manager with its hooks driven directly; it has
+not yet been run with a model or a messaging gateway.
 
 `install` and `status` say when a harness version has not been verified; they
 do not refuse it. Other agent harnesses can call h-guard through the
@@ -355,7 +361,15 @@ on Windows.
   blocked prompt is dropped without a message in the conversation.
 - **oh-my-pi's `eval` tool asks.** h-guard cannot read Python or JavaScript
   code, so every `eval` call needs your confirmation.
-- **Unknown tools ask on pi, oh-my-pi and DeepSeek Harness.** Tools that are not on
+- **Hermes Agent cannot block prompts outside messaging platforms.** A prompt
+  typed into the CLI, TUI or Desktop that h-guard would block has already
+  reached the model; h-guard adds a warning to the turn instead
+  (`prompt_not_blocked`). Under `--yolo` or `approvals.mode: off`, h-guard's
+  confirmations become denials, and Hermes cannot show you warnings except
+  through the optional channel notifications.
+- **Hermes Agent's `execute_code` asks.** The script can start processes and
+  change files directly, so every call needs your confirmation.
+- **Unknown tools ask on pi, oh-my-pi, DeepSeek Harness and Hermes Agent.** Tools that are not on
   h-guard's list of the harness's own tools (for example ones added by an
   extension) need your confirmation until you list them in
   `harnesses.<name>.read_only_tools`.
@@ -419,7 +433,7 @@ on Windows.
 ```sh
 h-guard install claudecode --remove --write
 h-guard install codex --remove --write
-h-guard install opencode --remove --write   # likewise pi, omp, dsh
+h-guard install opencode --remove --write   # likewise pi, omp, dsh, hermes
 ```
 
 `--remove` deletes only h-guard's own entries and keeps everything else in the
