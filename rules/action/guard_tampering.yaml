@@ -68,6 +68,36 @@ match:
       # 目录里别的文件（plugins/other.js）不算
       - '(?<![\w.])(?<![^\w]-)(?<!^-)[a-z]?(?:rm|unlink|mv|cp|install|ln|truncate|tee|chmod|chown|shred|sed\s+-i|perl\s+-[a-z]*i|python[0-9.]*\s+-c|node\s+-e|jq\b[^\n;&|]*>)\b[^\n;&|]*(?:\.config/opencode(?:/plugins?)?|\.pi(?:/agent(?:/extensions)?)?|\.omp(?:/agent(?:/extensions)?)?|\.dsh)/?(?=$|[\s''"`;&|)])'
       - '(?<![\w.])(?<![^\w]-)(?<!^-)[a-z]?(?:rm|unlink|mv|cp|install|ln|truncate|tee|chmod|chown|shred|sed\s+-i|perl\s+-[a-z]*i|python[0-9.]*\s+-c|node\s+-e|jq\b[^\n;&|]*>)\b[^\n;&|]*\$\{?(?:XDG_CONFIG_HOME\}?[/\\]opencode(?:[/\\]plugins?)?|(?:PI_CODING_AGENT_DIR|DSH_HOME)\}?(?:[/\\]extensions)?|PI_CONFIG_DIR\}?(?:[/\\]agent(?:[/\\]extensions)?)?)[/\\]?(?=$|[\s''"`;&|)])'
+      # OpenClaw 的 openclaw.json（加载并启用 h-guard 的插件；含 --profile 的 ~/.openclaw-<名字>），OPENCLAW_CONFIG_PATH、
+      # OPENCLAW_STATE_DIR 指定的位置，与整个 ~/.openclaw 目录；改名前的 ~/.clawdbot 与 clawdbot.json 同样（升级来的
+      # 安装没有 ~/.openclaw 时 OpenClaw 用它们）；状态目录里同一层的 .json5 文件（$include 引入的片段）也算
+      - '(?<![\w.])(?<![^\w]-)(?<!^-)[a-z]?(?:rm|unlink|mv|cp|install|ln|truncate|tee|chmod|chown|shred|sed\s+-i|perl\s+-[a-z]*i|python[0-9.]*\s+-c|node\s+-e|jq\b[^\n;&|]*>)\b[^\n;&|]*\.(?:openclaw(?:-[^\n;&|/]+)?|clawdbot)/(?:(?:openclaw|clawdbot)\.json|[^\n;&|\s''"/]*\.json5)'
+      - '>>?\s*[^\n;&|]*\.(?:openclaw(?:-[^\n;&|/]+)?|clawdbot)/(?:(?:openclaw|clawdbot)\.json|[^\n;&|\s''"/]*\.json5)'
+      - '\.(?:openclaw(?:-[^\n;&|/]+)?|clawdbot)/(?:(?:openclaw|clawdbot)\.json|[^\n;&|\s''"/]*\.json5)[^\n;&|]*\|\s*(?:tee|sponge)\b'
+      - '(?<![\w.])(?<![^\w]-)(?<!^-)[a-z]?(?:rm|unlink|mv|cp|install|ln|truncate|tee|chmod|chown|shred|sed\s+-i|perl\s+-[a-z]*i|python[0-9.]*\s+-c|node\s+-e|jq\b[^\n;&|]*>)\b[^\n;&|]*\$\{?(?:OPENCLAW_CONFIG_PATH\}?|OPENCLAW_STATE_DIR\}?[/\\](?:(?:openclaw|clawdbot)\.json|[^\n;&|\s''"/]*\.json5))'
+      - '>>?\s*[^\n;&|]*\$\{?(?:OPENCLAW_CONFIG_PATH\}?|OPENCLAW_STATE_DIR\}?[/\\](?:(?:openclaw|clawdbot)\.json|[^\n;&|\s''"/]*\.json5))'
+      - '(?<![\w.])(?<![^\w]-)(?<!^-)[a-z]?(?:rm|unlink|mv|cp|install|ln|truncate|tee|chmod|chown|shred|sed\s+-i|perl\s+-[a-z]*i|python[0-9.]*\s+-c|node\s+-e|jq\b[^\n;&|]*>)\b[^\n;&|]*\.(?:openclaw(?:-[\w-]+)?|clawdbot)/?(?=$|[\s''"`;&|)])'
+      # OpenClaw 实际读的配置文件与它用 $include 引入的文件（按 h-guard 解析出的位置展开，可以在任何目录）
+      - '(?<![\w.])(?<![^\w]-)(?<!^-)[a-z]?(?:rm|unlink|mv|cp|install|ln|truncate|tee|chmod|chown|shred|sed\s+-i|perl\s+-[a-z]*i|python[0-9.]*\s+-c|node\s+-e|jq\b[^\n;&|]*>)\b[^\n;&|]*(?:{openclaw_config}|{openclaw_includes})(?![\w.-])'
+      - '>>?\s*[^\n;&|]*(?:{openclaw_config}|{openclaw_includes})(?![\w.-])'
+      - '(?:{openclaw_config}|{openclaw_includes})(?![\w.-])[^\n;&|]*\|\s*(?:tee|sponge)\b'
+      # OpenClaw 的命令行改插件设置、停用或卸载 h-guard 的插件（config patch 的内容看不到，一律请求确认）；命令也可以是
+      # 直接运行的入口脚本（node …/openclaw.mjs、openclaw.js）
+      - '(?<![\w.-])openclaw(?:\.[cm]?js)?\b[^\n;&|]*\bconfig\s+(?:set|unset)\b[^\n;&|]*\bplugins\b'
+      - '(?<![\w.-])openclaw(?:\.[cm]?js)?\b[^\n;&|]*\bconfig\s+patch\b'
+      - '(?<![\w.-])openclaw(?:\.[cm]?js)?\b[^\n;&|]*\bplugins\s+(?:disable|uninstall)\b[^\n;&|]*\bh-guard\b'
+      # 经 Gateway 的 RPC 改配置或停用、卸载插件（openclaw gateway call config.set、config.patch、config.apply、
+      # plugins.setEnabled、plugins.uninstall；参数看不到，一律请求确认）；config.get 等只读的方法不算
+      - '(?<![\w.-])openclaw(?:\.[cm]?js)?\b[^\n;&|]*\bgateway\s+call\b[^\n;&|]*(?<![\w.-])[''"]?(?:config\.(?:set|patch|apply)|plugins\.(?:setenabled|uninstall))(?![\w.-])'
+      # 交互式的配置向导（openclaw configure 与不带子命令的 openclaw config，含 --section plugins）改写 openclaw.json，
+      # 能停用插件；--help 与 config 的只读子命令（get、file、schema、validate）不算
+      - '(?<![\w.-])openclaw(?:\.[cm]?js)?\b(?:\s+-{1,2}\w[\w-]*(?:=\S+|\s+[^\s;&|-]\S*)?)*\s+config(?:\s+--section(?:=\S+|\s+[^\s;&|-]\S*))*\s*(?=$|[;&|)])'
+      - '(?<![\w.-])openclaw(?:\.[cm]?js)?\b(?:\s+-{1,2}\w[\w-]*(?:=\S+|\s+[^\s;&|-]\S*)?)*\s+configure\b(?![^\n;&|]*\s(?:--help|-h)\b)'
+      # 重置或卸载 OpenClaw 的配置与状态（openclaw reset、openclaw uninstall --state/--all、onboard、setup 与
+      # gateway --dev 的 --reset）同样去掉 h-guard 的插件设置；--dry-run 的用法也请求确认
+      - '(?<![\w.-])openclaw(?:\.[cm]?js)?\b(?:\s+-{1,2}\w[\w-]*(?:=\S+|\s+[^\s;&|-]\S*)?)*\s+reset\b'
+      - '(?<![\w.-])openclaw(?:\.[cm]?js)?\b(?:\s+-{1,2}\w[\w-]*(?:=\S+|\s+[^\s;&|-]\S*)?)*\s+uninstall\b[^\n;&|]*\s--(?:state|all)\b'
+      - '(?<![\w.-])openclaw(?:\.[cm]?js)?\b(?:\s+-{1,2}\w[\w-]*(?:=\S+|\s+[^\s;&|-]\S*)?)*\s+(?:onboard|setup|gateway)\b[^\n;&|]*\s--reset\b'
       # Hermes Agent：配置（plugins.enabled、plugins.disabled 决定加载哪些插件）、h-guard 的插件目录与 shell hook 的同意记录，
       # 含各配置档（profiles/<名字>）与 HERMES_HOME 指定的目录
       - '(?<![\w.])(?<![^\w]-)(?<!^-)[a-z]?(?:rm|unlink|mv|cp|install|ln|truncate|tee|chmod|chown|shred|sed\s+-i|perl\s+-[a-z]*i|python[0-9.]*\s+-c|node\s+-e|jq\b[^\n;&|]*>)\b[^\n;&|]*(?:\.hermes/(?:profiles/[^\n;&|/]+/)?(?:config\.yaml|shell-hooks-allowlist\.json|plugins/h-guard(?![\w-]))|\$\{?HERMES_HOME\}?[/\\](?:profiles[/\\][^\n;&|/\\]+[/\\])?(?:config\.yaml|shell-hooks-allowlist\.json|plugins[/\\]h-guard(?![\w-]))|/etc/hermes/config\.yaml|\$\{?HERMES_MANAGED_DIR\}?[/\\]config\.yaml)'
@@ -101,6 +131,15 @@ match:
       # 整个扩展目录（或它的上级目录），含 $env: 写法
       - '(?<![\w.-])(?:set-content|sc|add-content|ac|out-file|clear-content|clc|remove-item|rm|ri|del|erase|rd|rmdir|move-item|mi|mv|move|copy-item|cpi|cp|copy|rename-item|rni|ren|new-item|ni|set-item|si|set-itemproperty|sp|tee-object|tee)\b[^\n;&|]*(?:\.config[\\/]opencode(?:[\\/]plugins?)?|\.pi(?:[\\/]agent(?:[\\/]extensions)?)?|\.omp(?:[\\/]agent(?:[\\/]extensions)?)?|\.dsh)[\\/]?(?=$|[\s''"`;&|),])'
       - '(?<![\w.-])(?:set-content|sc|add-content|ac|out-file|clear-content|clc|remove-item|rm|ri|del|erase|rd|rmdir|move-item|mi|mv|move|copy-item|cpi|cp|copy|rename-item|rni|ren|new-item|ni|set-item|si|set-itemproperty|sp|tee-object|tee)\b[^\n;&|]*\$(?:\{env:|env:)(?:xdg_config_home\}?[\\/]opencode(?:[\\/]plugins?)?|(?:pi_coding_agent_dir|dsh_home)\}?(?:[\\/]extensions)?|pi_config_dir\}?(?:[\\/]agent(?:[\\/]extensions)?)?)[\\/]?(?=$|[\s''"`;&|),])'
+      # OpenClaw 的 openclaw.json，含 $env:OPENCLAW_CONFIG_PATH、$env:OPENCLAW_STATE_DIR 的写法，与整个 .openclaw 目录；
+      # 改名前的 .clawdbot 与 clawdbot.json、同一层的 .json5 片段同样；实际的配置文件与它引入的文件按解析出的位置
+      - '(?<![\w.-])(?:set-content|sc|add-content|ac|out-file|clear-content|clc|remove-item|rm|ri|del|erase|rd|rmdir|move-item|mi|mv|move|copy-item|cpi|cp|copy|rename-item|rni|ren|new-item|ni|set-item|si|set-itemproperty|sp|tee-object|tee)\b[^\n;&|]*(?:{openclaw_config}|{openclaw_includes})(?![\w.-])'
+      - '\[(?:system\.)?io\.file\]::(?:write|append|delete|move|copy|replace|create|open)\w*\s*\([^\n]*(?:{openclaw_config}|{openclaw_includes})(?![\w.-])'
+      - '>>?\s*[^\n;&|]*(?:{openclaw_config}|{openclaw_includes})(?![\w.-])'
+      - '(?<![\w.-])(?:set-content|sc|add-content|ac|out-file|clear-content|clc|remove-item|rm|ri|del|erase|rd|rmdir|move-item|mi|mv|move|copy-item|cpi|cp|copy|rename-item|rni|ren|new-item|ni|set-item|si|set-itemproperty|sp|tee-object|tee)\b[^\n;&|]*(?:\.(?:openclaw(?:-[^\n;&|\\/]+)?|clawdbot)[\\/](?:(?:openclaw|clawdbot)\.json|[^\n;&|\s''"\\/]*\.json5)|\$(?:\{env:|env:)(?:openclaw_config_path\}?|openclaw_state_dir\}?[\\/](?:(?:openclaw|clawdbot)\.json|[^\n;&|\s''"\\/]*\.json5)))'
+      - '\[(?:system\.)?io\.file\]::(?:write|append|delete|move|copy|replace|create|open)\w*\s*\([^\n]*(?:\.(?:openclaw(?:-[^\n;&|\\/]+)?|clawdbot)[\\/](?:(?:openclaw|clawdbot)\.json|[^\n;&|\s''"\\/]*\.json5)|\$(?:\{env:|env:)(?:openclaw_config_path\}?|openclaw_state_dir\}?[\\/](?:(?:openclaw|clawdbot)\.json|[^\n;&|\s''"\\/]*\.json5)))'
+      - '>>?\s*[^\n;&|]*(?:\.(?:openclaw(?:-[^\n;&|\\/]+)?|clawdbot)[\\/](?:(?:openclaw|clawdbot)\.json|[^\n;&|\s''"\\/]*\.json5)|\$(?:\{env:|env:)(?:openclaw_config_path\}?|openclaw_state_dir\}?[\\/](?:(?:openclaw|clawdbot)\.json|[^\n;&|\s''"\\/]*\.json5)))'
+      - '(?<![\w.-])(?:set-content|sc|add-content|ac|out-file|clear-content|clc|remove-item|rm|ri|del|erase|rd|rmdir|move-item|mi|mv|move|copy-item|cpi|cp|copy|rename-item|rni|ren|new-item|ni|set-item|si|set-itemproperty|sp|tee-object|tee)\b[^\n;&|]*\.(?:openclaw(?:-[\w-]+)?|clawdbot)[\\/]?(?=$|[\s''"`;&|),])'
       # Hermes Agent 的配置、h-guard 插件与 shell hook 的同意记录（~\.hermes、%LOCALAPPDATA%\hermes、$env:HERMES_HOME），以及整个目录
       - '(?<![\w.-])(?:set-content|sc|add-content|ac|out-file|clear-content|clc|remove-item|rm|ri|del|erase|rd|rmdir|move-item|mi|mv|move|copy-item|cpi|cp|copy|rename-item|rni|ren|new-item|ni|set-item|si|set-itemproperty|sp|tee-object|tee)\b[^\n;&|]*(?:(?:\.hermes|appdata[\\/]local[\\/]hermes|\$(?:\{env:|env:)(?:localappdata\}?[\\/]hermes|hermes_home\}?))[\\/](?:profiles[\\/][^\n;&|\\/]+[\\/])?(?:config\.yaml|shell-hooks-allowlist\.json|plugins[\\/]h-guard(?![\w-]))|\$(?:\{env:|env:)hermes_managed_dir\}?[\\/]config\.yaml)'
       - '\[(?:system\.)?io\.file\]::(?:write|append|delete|move|copy|replace|create|open)\w*\s*\([^\n]*(?:(?:\.hermes|appdata[\\/]local[\\/]hermes|\$(?:\{env:|env:)(?:localappdata\}?[\\/]hermes|hermes_home\}?))[\\/](?:profiles[\\/][^\n;&|\\/]+[\\/])?(?:config\.yaml|shell-hooks-allowlist\.json|plugins[\\/]h-guard(?![\w-]))|\$(?:\{env:|env:)hermes_managed_dir\}?[\\/]config\.yaml)'
@@ -156,6 +195,23 @@ match:
       - '{omp_config}/profiles/*/agent/config.yaml'
       - '{dsh_home}/cordis.patch.yml'
       - '{dsh_home}/profiles/*/cordis.patch.yml'
+      # OpenClaw 的 openclaw.json（插件本身在 {config} 下）：OPENCLAW_CONFIG_PATH、OPENCLAW_STATE_DIR、OPENCLAW_HOME
+      # 解析出的位置（包括改名前的 ~/.clawdbot 与 clawdbot.json），默认位置与 --profile 的配置档，以及整个 ~/.openclaw
+      # 与 ~/.clawdbot 目录
+      - '{openclaw_config}'
+      # 配置用 $include 引入的文件（逐层解析出的实际位置），与状态目录里同一层的 .json5 片段
+      - '{openclaw_includes}'
+      - '~/.openclaw/*.json5'
+      - '~/.openclaw-*/*.json5'
+      - '~/.clawdbot/*.json5'
+      - '~/.openclaw/openclaw.json'
+      - '~/.openclaw/clawdbot.json'
+      - '~/.openclaw-*/openclaw.json'
+      - '~/.openclaw-*/clawdbot.json'
+      - '~/.clawdbot/openclaw.json'
+      - '~/.clawdbot/clawdbot.json'
+      - '~/.openclaw'
+      - '~/.clawdbot'
       - '~/.config/opencode/plugins/h-guard.js'
       # 扩展所在的目录本身（改名、删除时整个目录不再被加载；目录里别的文件不受影响）
       - '~/.config/opencode/plugins'
@@ -296,6 +352,69 @@ examples:
     - {shell: powershell, command: "Move-Item ~\\.omp\\agent\\extensions C:\\x"}
     - {shell: powershell, command: "Move-Item $env:PI_CODING_AGENT_DIR\\extensions C:\\x"}
     - {action: file_rename, path: "~/.omp/agent/extensions"}
+    - {shell: posix, command: "sed -i 's/\"enabled\": true/\"enabled\": false/' ~/.openclaw/openclaw.json"}
+    - {shell: posix, command: "echo '{}' > ~/.openclaw-work/openclaw.json"}
+    - {shell: posix, command: "mv ~/.openclaw /tmp/x"}
+    - {shell: posix, command: "rm \"$OPENCLAW_CONFIG_PATH\""}
+    - {shell: posix, command: "cp /tmp/x.json \"$OPENCLAW_STATE_DIR/openclaw.json\""}
+    - {shell: posix, command: "openclaw config set plugins.entries.h-guard.enabled false"}
+    - {shell: posix, command: "openclaw config unset plugins.load.paths"}
+    - {shell: posix, command: "openclaw config patch --file ./x.json5"}
+    - {shell: posix, command: "openclaw plugins disable h-guard"}
+    - {shell: posix, command: "openclaw config"}
+    - {shell: posix, command: "node /usr/lib/node_modules/openclaw/openclaw.mjs config set plugins.entries.h-guard.enabled false"}
+    - {shell: posix, command: "node ./openclaw.mjs reset --scope config --yes"}
+    - {shell: posix, command: "node dist/openclaw.js --profile work configure"}
+    - {shell: posix, command: "node openclaw.mjs plugins disable h-guard"}
+    - {shell: posix, command: "node openclaw.mjs config --section plugins"}
+    - {shell: posix, command: "openclaw gateway call config.patch --params '{\"raw\": \"{}\"}'"}
+    - {shell: posix, command: "openclaw gateway call config.apply --params @x.json"}
+    - {shell: posix, command: "openclaw gateway call 'config.set' --params '{}'"}
+    - {shell: posix, command: "openclaw --profile work gateway call plugins.setEnabled --params '{\"id\": \"h-guard\", \"enabled\": false}'"}
+    - {shell: posix, command: "node openclaw.mjs gateway call config.patch --params '{}'"}
+    - {shell: powershell, command: "openclaw gateway call config.apply --params '{}'"}
+    - {shell: posix, command: "openclaw config --section plugins"}
+    - {shell: posix, command: "openclaw --profile work config --section plugins --section model"}
+    - {shell: posix, command: "openclaw configure"}
+    - {shell: posix, command: "openclaw --dev configure --section plugins"}
+    - {shell: posix, command: "cd ~ && openclaw config"}
+    - {shell: powershell, command: "openclaw configure --section plugins"}
+    - {shell: powershell, command: "Set-Content ~\\.openclaw\\openclaw.json -Value '{}'"}
+    - {shell: powershell, command: "Remove-Item $env:OPENCLAW_CONFIG_PATH"}
+    - {action: file_write, path: "~/.openclaw/openclaw.json"}
+    - {action: file_write, path: "~/.openclaw-dev/openclaw.json"}
+    - {action: file_rename, path: "~/.openclaw"}
+    - {action: file_write, path: "~/.config/h-guard/extensions/openclaw/index.mjs"}
+    - {shell: posix, command: "openclaw reset --scope config --yes --non-interactive"}
+    - {shell: posix, command: "openclaw --profile work reset --scope full --yes"}
+    - {shell: posix, command: "openclaw uninstall --state --yes --non-interactive"}
+    - {shell: posix, command: "openclaw uninstall --all --yes"}
+    - {shell: posix, command: "openclaw onboard --reset --reset-scope full"}
+    - {shell: posix, command: "openclaw setup --reset --non-interactive"}
+    - {shell: posix, command: "openclaw gateway run --dev --reset"}
+    - {shell: powershell, command: "openclaw reset --scope config --yes --non-interactive"}
+    # 改名前的状态目录与配置文件名
+    - {shell: posix, command: "sed -i 's/true/false/' ~/.clawdbot/clawdbot.json"}
+    - {shell: posix, command: "echo '{}' > ~/.clawdbot/openclaw.json"}
+    - {shell: posix, command: "rm ~/.openclaw/clawdbot.json"}
+    - {shell: posix, command: "mv ~/.clawdbot /tmp/x"}
+    - {shell: posix, command: "cp /tmp/x.json \"$OPENCLAW_STATE_DIR/clawdbot.json\""}
+    - {shell: powershell, command: "Set-Content ~\\.clawdbot\\clawdbot.json -Value '{}'"}
+    - {shell: powershell, command: "Remove-Item ~\\.clawdbot -Recurse"}
+    - {action: file_write, path: "~/.clawdbot/clawdbot.json"}
+    - {action: file_write, path: "~/.openclaw/clawdbot.json"}
+    - {action: file_rename, path: "~/.clawdbot"}
+    # $include 引入的片段
+    - {action: file_write, path: "~/.openclaw/plugins.json5"}
+    - {shell: posix, command: "sed -i 's/true/false/' /etc/openclaw/plugins.json"}
+    - {shell: posix, command: "echo '{}' > ~/.openclaw/conf.d/plugins.json"}
+    - {shell: posix, command: "jq . /etc/openclaw/plugins.json | sponge /etc/openclaw/plugins.json"}
+    - {shell: powershell, command: "Set-Content C:\\etc\\openclaw\\plugins.json -Value '{}'"}
+    - {shell: posix, command: "rm /srv/openclaw/openclaw.json"}
+    - {action: file_write, path: "~/.openclaw/conf.d/plugins.json"}
+    - {shell: posix, command: "sed -i 's/true/false/' ~/.openclaw/plugins.json5"}
+    - {shell: posix, command: "echo '{}' > \"$OPENCLAW_STATE_DIR/plugins.json5\""}
+    - {shell: powershell, command: "Set-Content ~\\.openclaw\\plugins.json5 -Value '{}'"}
     - {shell: posix, command: "sed -i '/h-guard/d' ~/.hermes/config.yaml"}
     - {shell: posix, command: "rm -rf ~/.hermes/plugins/h-guard"}
     - {shell: posix, command: "mv ~/.hermes/plugins /tmp/x"}
@@ -367,6 +486,37 @@ examples:
     - {shell: posix, command: "rm ~/.config/opencode/plugins/other.js"}
     - {shell: posix, command: "cat ~/.pi/agent/extensions/notes.md"}
     - {action: file_write, path: "~/.pi/agent/extensions/other.js"}
+    - {shell: posix, command: "cat ~/.openclaw/openclaw.json"}
+    - {shell: posix, command: "openclaw config get plugins.entries"}
+    - {shell: posix, command: "openclaw config file"}
+    - {shell: posix, command: "openclaw gateway call config.get"}
+    - {shell: posix, command: "openclaw gateway call config.schema.lookup --params '{}'"}
+    - {shell: posix, command: "openclaw gateway call plugins.list"}
+    - {shell: posix, command: "node openclaw.mjs config get plugins"}
+    - {shell: posix, command: "node openclaw.mjs --help"}
+    - {shell: posix, command: "cat node_modules/openclaw/openclaw.mjs"}
+    - {shell: posix, command: "openclaw config validate --json"}
+    - {shell: posix, command: "openclaw config schema"}
+    - {shell: posix, command: "openclaw config --help"}
+    - {shell: posix, command: "openclaw configure --help"}
+    - {shell: posix, command: "openclaw mcp configure docs --enable"}
+    - {shell: posix, command: "openclaw --profile work config get plugins"}
+    - {shell: posix, command: "openclaw config set agents.defaults.heartbeat.every 2h"}
+    - {shell: posix, command: "openclaw plugins disable other-plugin"}
+    - {shell: posix, command: "ls ~/.openclaw/workspace"}
+    - {shell: posix, command: "cat ~/.clawdbot/clawdbot.json"}
+    - {action: file_write, path: "~/.openclaw/workspace/tsconfig.json5"}
+    - {shell: posix, command: "cat /etc/openclaw/plugins.json"}
+    - {shell: posix, command: "sed -i 's/a/b/' /etc/openclaw/plugins.json.bak"}
+    - {shell: posix, command: "sed -i 's/a/b/' /etc/openclaw/other.json"}
+    - {action: file_write, path: "~/.openclaw/workspace/package.json"}
+    - {action: file_write, path: "~/.openclaw/workspace/notes.md"}
+    - {shell: posix, command: "openclaw uninstall --service --yes --non-interactive"}
+    - {shell: posix, command: "openclaw plugins uninstall other-plugin"}
+    - {shell: posix, command: "openclaw onboard --non-interactive"}
+    - {shell: posix, command: "openclaw sessions list --json"}
+    # 很长的选项列表不会让 openclaw 命令的模式回溯到超时（超时按命中处理）
+    - {shell: posix, command: "openclaw --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d status"}
     - {shell: posix, command: "cat ~/.hermes/config.yaml"}
     - {shell: posix, command: "hermes plugins list"}
     - {shell: posix, command: "hermes config set approvals.timeout 600"}

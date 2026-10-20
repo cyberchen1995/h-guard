@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-// TestExtensions 用 node 运行 opencode、pi/omp 与 dsh 扩展的测试（*/tests/*.test.mjs），h-guard 是这次编译的二进制，
+// TestExtensions 用 node 运行 opencode、pi/omp、dsh 与 openclaw 扩展的测试（*/tests/*.test.mjs），h-guard 是这次编译的二进制，
 // 配置与缓存目录都在临时目录里（outbound 第 2 档，扫描文件内容）。没有 node 时跳过；-short 时跳过（要编译）。
 // Claude Code 插件的测试要 claude CLI，不在这里运行。
 func TestExtensions(t *testing.T) {
@@ -21,7 +21,7 @@ func TestExtensions(t *testing.T) {
 		t.Skip("node not found")
 	}
 	var files []string
-	for _, dir := range []string{"opencode", "pi", "dsh"} {
+	for _, dir := range []string{"opencode", "pi", "dsh", "openclaw"} {
 		m, _ := filepath.Glob(filepath.Join(dir, "tests", "*.test.mjs"))
 		files = append(files, m...)
 	}

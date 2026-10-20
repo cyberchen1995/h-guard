@@ -69,6 +69,8 @@ func plan(t *testing.T, tg Target, h string, remove bool) []Step {
 		steps, err = Pi(tg, h, remove)
 	case "dsh":
 		steps, err = DSH(tg, remove)
+	case "openclaw":
+		steps, err = OpenClaw(tg, remove)
 	}
 	if err != nil {
 		t.Fatal(err)

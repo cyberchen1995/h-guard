@@ -177,3 +177,16 @@ func TestExecPlaceholderInLookbehind(t *testing.T) {
 		}
 	}
 }
+
+// TestExecPlaceholderList：有多个值的占位符（paths.Env.Lists）匹配其中任一个值；没有值时那一处不匹配；值变了缓存跟着换。
+func TestExecPlaceholderList(t *testing.T) {
+	env := paths.Env{Home: "/home/u", Lists: map[string][]string{VarOpenClawIncludes: {"/etc/openclaw/plugins.json", "/home/u/.openclaw/a b.json5", ""}}}
+	mustMatch(t, `^sed -i x {openclaw_includes}$`, env,
+		[]string{"sed -i x /etc/openclaw/plugins.json", `sed -i x \etc\openclaw\plugins.json`, `sed -i x ~/.openclaw/a\ b.json5`},
+		[]string{"sed -i x /etc/openclaw/plugins.jsonX", "sed -i x /etc/openclaw/other.json", "sed -i x "})
+	mustMatch(t, `^rm {openclaw_includes}$`, paths.Env{Lists: map[string][]string{VarOpenClawIncludes: nil}}, nil, []string{"rm /etc/openclaw/plugins.json", "rm "})
+	other := paths.Env{Home: "/home/u", Lists: map[string][]string{VarOpenClawIncludes: {"/srv/x.json"}}}
+	if templateKey(env, []string{VarOpenClawIncludes}) == templateKey(other, []string{VarOpenClawIncludes}) {
+		t.Errorf("the cache key ignores the list's values")
+	}
+}

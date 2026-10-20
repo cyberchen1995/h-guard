@@ -1,0 +1,160 @@
+package install
+
+import (
+	"encoding/json"
+	"reflect"
+	"testing"
+)
+
+// TestParseJSON5：JSON5 的写法（注释、单引号、不带引号的键、多余的逗号、十六进制与 + 号、Infinity、续行）解析成与
+// 对应 JSON 相同的值；错误的写法报错。
+func TestParseJSON5(t *testing.T) {
+	for _, tt := range []struct{ in, want string }{
+		{`{"a": [1, 2.5, -3e2], "b": {"c": null, "d": true}}`, `{"a":[1,2.5,-300],"b":{"c":null,"d":true}}`},
+		{"// head\n{\n  /* block */ a: 'x\\'y', $b_1: \"z\\u0041\",\n  c: [1, 2,],\n}\n", `{"$b_1":"zA","a":"x'y","c":[1,2]}`},
+		{`{n: 0x1F, p: +5, q: .5, r: 5., s: -Infinity, t: NaN}`, `{"n":31,"p":5,"q":0.5,"r":5,"s":null,"t":null}`},
+		{"{s: 'line \\\n continued', u: '\\x41\\n'}", `{"s":"line  continued","u":"A\n"}`},
+		{`{"dup": 1, "dup": 2}`, `{"dup":2}`},
+		{"\ufeff{}", `{}`},
+		{`"just a string"`, `"just a string"`},
+	} {
+		v, err := parseJSON5([]byte(tt.in))
+		if err != nil {
+			t.Errorf("%q: %v", tt.in, err)
+			continue
+		}
+		b, _ := toJSON(v)
+		var got, want any
+		json.Unmarshal(b, &got)
+		json.Unmarshal([]byte(tt.want), &want)
+		gb, _ := json.Marshal(got)
+		wb, _ := json.Marshal(want)
+		if string(gb) != string(wb) {
+			t.Errorf("%q: %s, want %s", tt.in, gb, wb)
+		}
+	}
+	for _, in := range []string{`{a: }`, `{a: 1`, `[1 2]`, `{'a': 'unterminated}`, `{a: 1} x`, `{a: undefined}`, ``, `{"a": "new` + "\n" + `line"}`} {
+		if _, err := parseJSON5([]byte(in)); err == nil {
+			t.Errorf("%q: no error", in)
+		}
+	}
+}
+
+// TestParseJSON5LikeOpenClaw：与 OpenClaw 2026.10.4 用的 json5 包（2.2.3）对同一组边界写法的结论一致：它接受的
+// 解析成同样的值，它拒绝的（没有结束的块注释、前导零、八进制转义、多余的内容等）同样报错。
+func TestParseJSON5LikeOpenClaw(t *testing.T) {
+	for _, tt := range []struct{ in, want string }{ // want 为空表示应当报错
+		{"{a: 1 /* open", ""},
+		{"/* only", ""},
+		{"{a: 1} /* trailing", ""},
+		{"{a: 1} // ok", "{\"a\":1}"},
+		{"{a: 01}", ""},
+		{"{a: 00}", ""},
+		{"{a: 0}", "{\"a\":0}"},
+		{"{a: -0}", "{\"a\":0}"},
+		{"{a: 1.}", "{\"a\":1}"},
+		{"{a: .1}", "{\"a\":0.1}"},
+		{"{a: +.1}", "{\"a\":0.1}"},
+		{"{a: 1e}", ""},
+		{"{a: 1e+}", ""},
+		{"{a: 0x}", ""},
+		{"{a: 0x1.5}", ""},
+		{"{a: +0x10}", "{\"a\":16}"},
+		{"{a: -0x10}", "{\"a\":-16}"},
+		{"{a: 1_000}", ""},
+		{"{a: Infinity}", "{\"a\":null}"},
+		{"{a: -NaN}", "{\"a\":null}"},
+		{"{a: infinity}", ""},
+		{"{a: undefined}", ""},
+		{"{a: 'x\ny'}", ""},
+		{"{a: 'x\\\ny'}", "{\"a\":\"xy\"}"},
+		{"{a: \"\\u00\"}", ""},
+		{"{a: \"\\x4\"}", ""},
+		{"{a: \"\\q\"}", "{\"a\":\"q\"}"},
+		{"{a: \"\\1\"}", ""},
+		{"{a: \"\\01\"}", ""},
+		{"{a: \"tab\there\"}", "{\"a\":\"tab\\there\"}"},
+		{"{a: 1,,}", ""},
+		{"{,}", ""},
+		{"[,]", ""},
+		{"[1,]", "[1]"},
+		{"{a: 1,}", "{\"a\":1}"},
+		{"{a b: 1}", ""},
+		{"{1a: 1}", ""},
+		{"{$a_b: 1}", "{\"$a_b\":1}"},
+		{"{\\u0061: 1}", "{\"a\":1}"},
+		{"{a: 1} x", ""},
+		{"{a: 1}}", ""},
+		{"", ""},
+		{"   ", ""},
+		{"{a: [1, 2}", ""},
+		{"{a: tru}", ""},
+		{"{a: nulls}", ""},
+		{"{'a': 1}", "{\"a\":1}"},
+		{"{\"a\" : 1}", "{\"a\":1}"},
+		{"{a: \"\\u{41}\"}", ""},
+	} {
+		v, err := parseJSON5([]byte(tt.in))
+		if tt.want == "" {
+			if err == nil {
+				t.Errorf("%q: accepted, the json5 package rejects it", tt.in)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("%q: %v, the json5 package accepts it", tt.in, err)
+			continue
+		}
+		b, _ := toJSON(v)
+		var got, want any
+		json.Unmarshal(b, &got)
+		json.Unmarshal([]byte(tt.want), &want)
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("%q: %s, want %s", tt.in, b, tt.want)
+		}
+	}
+}
+
+// TestParseJSON5IdentifiersLikeOpenClaw：不带引号的键按 ES5 的标识符规则（与 json5 包 2.2.3 一样）：字母、$、_ 开头，
+// 其后另可以是组合记号、数字、连接标点、ZWNJ 与 ZWJ；表情符号、开头的数字或组合记号、转义出的非法字符都报错。
+func TestParseJSON5IdentifiersLikeOpenClaw(t *testing.T) {
+	for _, tt := range []struct{ in, want string }{ // want 为空表示应当报错
+		{"{\U0001F600: 1}", ""},
+		{"{a\U0001F600: 1}", ""},
+		{"{\u00e9: 1}", "{\"\u00e9\":1}"},
+		{"{\u4e2d\u6587: 1}", "{\"\u4e2d\u6587\":1}"},
+		{"{a\u00e9: 1}", "{\"a\u00e9\":1}"},
+		{"{a\u200db: 1}", "{\"a\u200db\":1}"},
+		{"{\u200da: 1}", ""},
+		{"{a\u0301: 1}", "{\"a\u0301\":1}"},
+		{"{\u0301a: 1}", ""},
+		{"{a\u0661: 1}", "{\"a\u0661\":1}"},
+		{"{\u0661a: 1}", ""},
+		{"{a\u203fb: 1}", "{\"a\u203fb\":1}"},
+		{"{\u2177: 1}", "{\"\u2177\":1}"},
+		{"{\\u0031a: 1}", ""},
+		{"{a\\u0031: 1}", "{\"a1\":1}"},
+		{"{\\u0020: 1}", ""},
+		{"{\\u00e9: 1}", "{\"\u00e9\":1}"},
+		{"{a\\u200d: 1}", "{\"a\u200d\":1}"},
+		{"{\\uD83D\\uDE00: 1}", ""},
+		{"{a-b: 1}", ""},
+		{"{a\\x41: 1}", ""},
+		{"{\\u004: 1}", ""},
+	} {
+		v, err := parseJSON5([]byte(tt.in))
+		if tt.want == "" {
+			if err == nil {
+				t.Errorf("%q: accepted, the json5 package rejects it", tt.in)
+			}
+			continue
+		}
+		b, _ := toJSON(v)
+		var got, want any
+		json.Unmarshal(b, &got)
+		json.Unmarshal([]byte(tt.want), &want)
+		if err != nil || !reflect.DeepEqual(got, want) {
+			t.Errorf("%q: %s (%v), want %s", tt.in, b, err, tt.want)
+		}
+	}
+}

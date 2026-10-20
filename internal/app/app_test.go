@@ -39,6 +39,7 @@ type env struct {
 	tty                    bool // backend enable 是否像在终端里运行
 	bin, goos              string
 	harnessRun             func(name string, args ...string) ([]byte, error)
+	harnessQuery           func(name string, args ...string) ([]byte, error)      // QueryHarness；nil 时报告找不到
 	runEntry               func(argv, env []string, stdin []byte) ([]byte, error) // selftest 运行入口；nil 时用默认
 }
 
@@ -65,6 +66,12 @@ func (e *env) run(stdin []byte, args ...string) (stdout, stderr string, code int
 				return nil, errors.New("not found")
 			}
 			return e.harnessRun(name, args...)
+		},
+		QueryHarness: func(name string, args ...string) ([]byte, error) {
+			if e.harnessQuery == nil {
+				return nil, errors.New("not found")
+			}
+			return e.harnessQuery(name, args...)
 		},
 		RunEntry: e.runEntry,
 	})

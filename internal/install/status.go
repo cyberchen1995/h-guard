@@ -32,6 +32,8 @@ func Inspect(t Target, harness string) []string {
 		return inspectExt(t, harness, OMPExtension(t))
 	case "dsh":
 		return inspectDSH(t)
+	case "openclaw":
+		return inspectOpenClaw(t)
 	case "hermes":
 		return inspectHermes(t)
 	}
@@ -47,6 +49,7 @@ var extHarnesses = map[string]struct {
 	"pi":       {"pi", "pi", PiWritten, 0},
 	"omp":      {"omp", "oh-my-pi", OMPWritten, 0},
 	"dsh":      {"dsh", "DeepSeek Harness", DSHWritten, 0},
+	"openclaw": {"openclaw", "OpenClaw", OpenClawWritten, 0},
 	"hermes":   {"hermes", "Hermes Agent", HermesWritten, 0},
 }
 
@@ -95,6 +98,9 @@ func extProblems(t Target, harness string, b []byte) []string {
 		}
 	}
 	tmpl := map[string][]byte{"opencode": extensions.OpenCode, "pi": extensions.Pi, "omp": extensions.Pi, "dsh": extensions.DSH}[harness]
+	if harness == "openclaw" {
+		tmpl, _ = extensions.OpenClaw.ReadFile("openclaw/index.mjs")
+	}
 	want, err := renderExt(tmpl, harness, Target{Bin: bin, Timeout: timeout})
 	if !ok || err != nil || !bytes.Equal(want, b) {
 		problems = append(problems, fmt.Sprintf("problem: the extension differs from this h-guard version (edited or written by another version); run h-guard install %s --write", harness))
@@ -161,6 +167,8 @@ func harnessVersion(t Target, name string) string {
 		return ""
 	case name == "codex":
 		return f[len(f)-1]
+	case name == "openclaw" && len(f) > 1: // OpenClaw 2026.10.4 (383c124)
+		return f[1]
 	case name == "hermes":
 		// Hermes Agent v0.21.6+3.gabc1234 (2026.9.24) …：版本号（v 之后）是语义化版本，括号里的发布日期才能与插件按其
 		// 编写的发布（2026.9.24）比较，优先取它；Desktop 版只打印 v<版本>，退回版本号（ExtNotes 不拿它比较）

@@ -45,6 +45,7 @@ var eventKinds = map[string]guard.EventKind{
 	"tool.execute.before": guard.EventAction, "tool.execute.after": guard.EventToolOutput, "chat.message": guard.EventPrompt, // opencode
 	"tool_call": guard.EventAction, "tool_result": guard.EventToolOutput, "input": guard.EventPrompt, // pi、omp
 	"tools/pre-execute": guard.EventAction, "tools/post-execute": guard.EventToolOutput, "agent/pre-step": guard.EventPrompt, // dsh
+	"before_tool_call": guard.EventAction, "before_agent_run": guard.EventPrompt, "before_dispatch": guard.EventPrompt, // openclaw（工具结果是 tool_result）
 	"pre_tool_call": guard.EventAction, "transform_tool_result": guard.EventToolOutput, "transform_terminal_output": guard.EventToolOutput, // hermes
 	"pre_gateway_dispatch": guard.EventPrompt, "pre_llm_call": guard.EventPrompt,
 }

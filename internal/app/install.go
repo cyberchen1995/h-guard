@@ -73,7 +73,7 @@ func runInstall(args []string, o Options) int {
 		return 1
 	}
 	t := install.Target{Home: o.Home, ConfigDir: o.ConfigDir, CacheDir: o.CacheDir, Bin: bin, Timeout: *timeout,
-		GOOS: o.GOOS, Getenv: o.Getenv, Run: o.RunHarness, Now: o.Now}
+		GOOS: o.GOOS, Getenv: o.Getenv, Run: o.RunHarness, Query: o.QueryHarness, Now: o.Now}
 	switch harness {
 	case "codex":
 		steps, err := install.Codex(t, *remove)
@@ -90,7 +90,7 @@ func runInstall(args []string, o Options) int {
 		}
 		notes := func(t install.Target) []string { return install.ExtNotes(t, harness) }
 		return installWithShell(o, t, harness, "opencode", steps, notes, *shell, *write, *remove)
-	case "pi", "omp", "dsh", "hermes":
+	case "pi", "omp", "dsh", "openclaw", "hermes":
 		return installExt(o, t, harness, *write, *remove)
 	}
 	steps, err := install.ClaudeCode(t, *remove)
@@ -122,7 +122,7 @@ func runInstall(args []string, o Options) int {
 
 // installable 是 install 能接入的 harness；shellHarnesses 是标不出 shell、要由 harnesses.<name>.shell 给出的 harness。
 var (
-	installable    = []string{"claudecode", "codex", "opencode", "pi", "omp", "dsh", "hermes"}
+	installable    = []string{"claudecode", "codex", "opencode", "pi", "omp", "dsh", "openclaw", "hermes"}
 	shellHarnesses = map[string]bool{"codex": true, "opencode": true}
 )
 
@@ -175,13 +175,17 @@ func forgetRuns(o Options, harness string) {
 	}
 }
 
-// installExt 写出或删掉 pi、omp 的扩展，DeepSeek Harness 与 Hermes Agent 的插件。
+// installExt 写出或删掉 pi、omp 的扩展，DeepSeek Harness、OpenClaw 与 Hermes Agent 的插件。
 func installExt(o Options, t install.Target, harness string, write, remove bool) int {
 	var steps []install.Step
 	var err error
+	notes := install.ExtNotes
 	switch harness {
 	case "dsh":
 		steps, err = install.DSH(t, remove)
+	case "openclaw":
+		steps, err = install.OpenClaw(t, remove)
+		notes = func(t install.Target, _ string) []string { return install.OpenClawNotes(t) }
 	case "hermes":
 		steps, err = install.Hermes(t, remove)
 	default:
@@ -192,7 +196,7 @@ func installExt(o Options, t install.Target, harness string, write, remove bool)
 		return 1
 	}
 	if !remove {
-		for _, n := range install.ExtNotes(t, harness) {
+		for _, n := range notes(t, harness) {
 			fmt.Fprintln(o.Stdout, "note:", n)
 		}
 	}
@@ -200,6 +204,14 @@ func installExt(o Options, t install.Target, harness string, write, remove bool)
 		switch harness {
 		case "dsh":
 			fmt.Fprintln(o.Stdout, "restart DeepSeek Harness for the change to take effect; the plugin is mounted for every profile")
+		case "openclaw":
+			if !remove { // 写完之后问 OpenClaw 自己是否加载插件
+				lines, _ := install.OpenClawVerify(t, install.OpenClawHookMS(t.Timeout))
+				for _, l := range lines {
+					fmt.Fprintln(o.Stdout, l)
+				}
+			}
+			fmt.Fprintln(o.Stdout, "restart the OpenClaw Gateway (openclaw gateway restart) for the change to take effect")
 		case "hermes":
 			fmt.Fprintf(o.Stdout, "restart Hermes (hermes gateway restart, then start new sessions) for the change to take effect; other profiles under %s are not changed\n", filepath.Join(install.HermesHome(t), "profiles"))
 		default:
@@ -213,12 +225,21 @@ func installExt(o Options, t install.Target, harness string, write, remove bool)
 // 最后提示加 --write。写入成功后调用 done。
 func applySteps(o Options, steps []install.Step, write, remove bool, done func() int) int {
 	var changes []install.Step
+	manual := false
 	for _, s := range steps {
 		if s.Changes() {
 			changes = append(changes, s)
 		}
+		if s.Manual != "" {
+			manual = true
+			fmt.Fprintf(o.Stdout, "to do yourself: %s: %s\n%s", s.Summary, s.Path, s.Manual)
+		}
 	}
 	if len(changes) == 0 {
+		if manual {
+			fmt.Fprintln(o.Stdout, "h-guard's own files are in place; nothing else for h-guard to change")
+			return 0
+		}
 		if remove {
 			fmt.Fprintln(o.Stdout, "not installed; nothing to remove")
 		} else {
@@ -251,6 +272,19 @@ func applySteps(o Options, steps []install.Step, write, remove bool, done func()
 var errHarnessMissing = errors.New("not found in PATH")
 
 // runHarness 在 PATH 中查找并运行 harness 的命令行，限时 10 秒。
+// queryHarness 在 PATH 中查找并运行 harness 的只读查询命令，限时 60 秒，只取标准输出（标准错误丢弃），失败时也返回
+// 已有的输出。环境原样传下去：OpenClaw 按环境变量找配置并展开其中的 ${VAR}，换成精简的环境会得出与用户不同的结论。
+func queryHarness(name string, args ...string) ([]byte, error) {
+	path, err := exec.LookPath(name)
+	if err != nil {
+		return nil, errHarnessMissing
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, path, args...)
+	return cmd.Output()
+}
+
 func runHarness(name string, args ...string) ([]byte, error) {
 	path, err := exec.LookPath(name)
 	if err != nil {

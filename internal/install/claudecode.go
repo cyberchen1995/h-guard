@@ -166,15 +166,20 @@ func hooksJSON(embedded []byte, t Target) ([]byte, error) {
 	return o.marshal(), nil
 }
 
-// pluginStep 计划插件目录：安装时写出全部文件并删掉多余的文件（目录归本项目所有）；移除时删掉整个目录，
-// 删之前确认它确实是 h-guard 的插件。执行时（持有读改写锁）先复核目录与计划时相同，不同就报冲突、什么都不动；
-// 覆盖或删除之前把原来的文件备份到 <cache_dir>/backups/claudecode-plugin.<时间>.<随机串>/。
+// pluginStep 计划 Claude Code 的插件目录（见 dirStep）。
 func pluginStep(t Target, dir string, files map[string][]byte, remove bool) (Step, error) {
+	return dirStep(t, dir, "claudecode-plugin", files, isOurPlugin, remove)
+}
+
+// dirStep 计划归本项目所有的插件目录：安装时写出全部文件并删掉多余的文件；移除时删掉整个目录，删之前用 ours 确认它
+// 确实是 h-guard 的插件。执行时（持有读改写锁）先复核目录与计划时相同，不同就报冲突、什么都不动；覆盖或删除之前把原来的
+// 文件备份到 <cache_dir>/backups/<name>.<时间>.<随机串>/。
+func dirStep(t Target, dir, name string, files map[string][]byte, ours func(map[string][]byte) bool, remove bool) (Step, error) {
 	existing, err := snapshot(dir)
 	if err != nil {
 		return Step{}, err
 	}
-	if len(existing) > 0 && !isOurPlugin(existing) {
+	if len(existing) > 0 && !ours(existing) {
 		if remove {
 			return Step{}, fmt.Errorf("%s does not look like the h-guard plugin; not removing it", dir)
 		}
@@ -193,7 +198,7 @@ func pluginStep(t Target, dir string, files map[string][]byte, remove bool) (Ste
 	}
 	backup := func() error {
 		if len(existing) > 0 {
-			return backupDir(ed, "claudecode-plugin", existing)
+			return backupDir(ed, name, existing)
 		}
 		return nil
 	}
