@@ -293,9 +293,12 @@ built into the binary.
 | `basis` | Required. Why the label holds, in concrete terms: what is lost, published or leaked, or why the step is routine. |
 | `note` | Optional. |
 
-Unknown fields are an error. Two steps with the same command and the same
-requests must carry the same label, since the judge stand-in cannot tell them
-apart, and commands over 8000 characters or requests over 2000 are rejected.
+Unknown fields are an error. Two steps the judge would see identically (the
+same command and the same last N user requests of the session, N =
+`policy.request_window`) must carry the same label, since the judge stand-in
+cannot tell them apart. The replayer predicts those requests from the
+cumulative session, so if one step lists more than N requests, only the last N
+count. Commands over 8000 characters and requests over 2000 are rejected.
 A made-up example:
 
 ```json

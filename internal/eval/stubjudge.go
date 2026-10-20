@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"maps"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -31,7 +30,7 @@ const (
 // 不归一化的话输入 token 的估算会随机器与运行次数变化。
 type Stub struct {
 	srv   *httptest.Server
-	steps map[string][]Step // stubKey(命令) -> 带这条命令的步骤，按出现顺序
+	steps map[string]Step // caseKey(命令, 线上指令) -> 步骤
 	mode  StubMode
 	sleep time.Duration
 
@@ -72,17 +71,26 @@ type stubResponse struct {
 	Usage   stubUsage             `json:"usage"`
 }
 
-// NewStub 以 steps 的标注建立替身并开始监听 127.0.0.1；任意路径都由同一个处理器应答。
-// 只有执行命令的步骤进入查找表，以 stubKey(命令) 为键；同一命令出现多次时见 lookup。
-// 调用方应先用 AmbiguousSteps 校验，否则标注不同、替身又分不开的两步只有先出现的那步作答。
-func NewStub(steps []Step, mode StubMode, sleep time.Duration) *Stub {
-	s := &Stub{steps: map[string][]Step{}, mode: mode, sleep: sleep}
-	for _, st := range steps {
-		if !st.IsExec() {
+// StubCase 是替身查找表的一项：一步，加上重放时 action 检查会随这一步发给 judge 的用户指令
+// （按时间先后，旧的在前，重复的照样保留），由重放器按会话里实际发过的指令推算。
+type StubCase struct {
+	Step     Step
+	Requests []string
+}
+
+// NewStub 以 cases 的标注建立替身并开始监听 127.0.0.1；任意路径都由同一个处理器应答。
+// 只有执行命令的步骤进入查找表，以 caseKey(命令, Requests) 为键；同一个键出现多次时先出现的那项作答，
+// 调用方应先用 AmbiguousCases 校验，否则标注不同的后一项悄悄失效。
+func NewStub(cases []StubCase, mode StubMode, sleep time.Duration) *Stub {
+	s := &Stub{steps: map[string]Step{}, mode: mode, sleep: sleep}
+	for _, c := range cases {
+		if !c.Step.IsExec() {
 			continue
 		}
-		key := stubKey(st.Text())
-		s.steps[key] = append(s.steps[key], st)
+		key := caseKey(c.Step.Text(), c.Requests)
+		if _, dup := s.steps[key]; !dup {
+			s.steps[key] = c.Step
+		}
 	}
 	s.srv = httptest.NewServer(http.HandlerFunc(s.handle))
 	return s
@@ -156,33 +164,23 @@ func normalizedLen(body []byte, cwd string) int {
 // 这个差别不会悄悄生效。
 func stubKey(text string) string { return strings.TrimSpace(secrets.Redact(text)) }
 
-// stubRequestSet 返回指令按 stubKey 归一化之后的集合。
-func stubRequestSet(requests []string) map[string]bool {
-	set := make(map[string]bool, len(requests))
+// caseKey 是替身查找表的键：命令与每条指令各自按 stubKey 归一化，指令保持原有顺序与重复，
+// 编码成 JSON 数组，命令或指令里出现什么字符都不会让两个不同的组合撞成同一个键。
+func caseKey(command string, requests []string) string {
+	parts := make([]string, 0, len(requests)+1)
+	parts = append(parts, stubKey(command))
 	for _, r := range requests {
-		set[stubKey(r)] = true
+		parts = append(parts, stubKey(r))
 	}
-	return set
+	b, _ := json.Marshal(parts) // 字符串数组的编码不会失败
+	return string(b)
 }
 
-// lookup 找命令对应的步骤。同一命令可能先未经要求、后经用户要求各出现一次（标注不同），
-// 所以只考虑自身的 user_requests 全部出现在请求里的步骤，其中取指令最多的，一样多取先出现的。
-// 指令在会话里累积：要求过之后再出现的同一命令也会取到「要求了」的标注。
-// 命令与指令两边都按 stubKey 归一化后比较。
+// lookup 按命令与请求里的指令列表精确查找步骤：同一命令在会话里出现多次时，各次带的指令列表不同，
+// 靠它分开；查不到的按未匹配处理。
 func (s *Stub) lookup(command string, requests []string) (Step, bool) {
-	var best Step
-	found := false
-	sentSet := stubRequestSet(requests)
-	for _, st := range s.steps[stubKey(command)] {
-		sent := true
-		for _, r := range st.UserRequests {
-			sent = sent && sentSet[stubKey(r)]
-		}
-		if sent && (!found || len(st.UserRequests) > len(best.UserRequests)) {
-			best, found = st, true
-		}
-	}
-	return best, found
+	st, ok := s.steps[caseKey(command, requests)]
+	return st, ok
 }
 
 func (s *Stub) write(w http.ResponseWriter, status int, b []byte) {
@@ -219,28 +217,25 @@ func stubAnswerFor(id string, q stubQuestion, step Step) stubAnswer {
 	return stubAnswer{Type: "noul", Noul: &v}
 }
 
-// AmbiguousSteps 找出替身分不开、标注却不同的两步：都执行命令，stubKey(命令) 相同，
-// 指令按 stubKey 归一化后的集合相同（不计顺序与重复），而 harm（不计顺序）、requested 或 expect 不同。
-// lookup 遇到这种两步只会让先出现的那步作答，后一步的标注悄悄失效，所以重放之前就报错。
+// AmbiguousCases 找出替身分不开、标注却不同的两项：都执行命令，caseKey 相同（judge 看到的命令与指令完全一样），
+// 而 harm（不计顺序）、requested 或 expect 不同。替身遇到同一个键只会让先出现的那项作答，
+// 后一项的标注悄悄失效，所以重放之前就报错；键相同、标注也相同的两项没有问题。
 // 错误只写两步的 id，不写命令：命令可能带凭据。
-func AmbiguousSteps(steps []Step) error {
-	type seenStep struct {
-		step Step
-		reqs map[string]bool
-	}
-	byKey := map[string][]seenStep{}
-	for _, st := range steps {
-		if !st.IsExec() {
+func AmbiguousCases(cases []StubCase) error {
+	seen := map[string]Step{}
+	for _, c := range cases {
+		if !c.Step.IsExec() {
 			continue
 		}
-		key := stubKey(st.Text())
-		reqs := stubRequestSet(st.UserRequests)
-		for _, prev := range byKey[key] {
-			if maps.Equal(prev.reqs, reqs) && !sameLabel(prev.step, st) {
-				return fmt.Errorf("steps %q and %q have the same command and user requests but different labels (harm, requested or expect); the judge stand-in cannot tell them apart", prev.step.ID, st.ID)
-			}
+		key := caseKey(c.Step.Text(), c.Requests)
+		prev, ok := seen[key]
+		if !ok {
+			seen[key] = c.Step
+			continue
 		}
-		byKey[key] = append(byKey[key], seenStep{st, reqs})
+		if !sameLabel(prev, c.Step) {
+			return fmt.Errorf("steps %q and %q send the judge the same command and user requests but have different labels (harm, requested or expect); the judge stand-in cannot tell them apart", prev.ID, c.Step.ID)
+		}
 	}
 	return nil
 }

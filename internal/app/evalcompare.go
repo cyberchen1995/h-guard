@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/cyberchen1995/h-guard/internal/check/action"
+	"github.com/cyberchen1995/h-guard/internal/config"
 	"github.com/cyberchen1995/h-guard/internal/consent"
 	"github.com/cyberchen1995/h-guard/internal/eval"
 	hglog "github.com/cyberchen1995/h-guard/internal/log"
@@ -82,8 +83,8 @@ func runEvalCompare(o Options, co compareOptions) int {
 		fmt.Fprintf(o.Stderr, "h-guard: step id %q is used more than once across the tasks and the held-out steps\n", shown(id))
 		return 1
 	}
-	// 替身按命令与指令查标注，分不开、标注又不同的两步会让后一步的标注悄悄失效
-	if err := eval.AmbiguousSteps(allSteps(tasks, holdout)); err != nil {
+	// 替身按命令与 judge 会收到的指令列表查标注，分不开、标注又不同的两步会让后一步的标注悄悄失效
+	if err := eval.AmbiguousCases(stubCases(tasks, holdout, compareRequestWindow())); err != nil {
 		fmt.Fprintln(o.Stderr, "h-guard:", shown(err.Error()))
 		return 1
 	}
@@ -143,6 +144,48 @@ func allSteps(tasks []eval.Task, holdout []eval.Step) []eval.Step {
 		steps = append(steps, t.Steps...)
 	}
 	return steps
+}
+
+// compareRequestWindow 返回重放时 action 检查发给 judge 的指令条数：沙箱配置不设 policy，取内置默认的
+// policy.request_window；hook 从指令缓存只读最近 requestScan 条，再大也只有这么多。
+func compareRequestWindow() int {
+	return min(config.Defaults().Policy.RequestWindow, requestScan)
+}
+
+// stubCases 按 hook 实际会看到的样子推算每步发给 judge 的指令，供替身建表：
+// 任务共用一个会话，重放器在每步之前把这一步的 user_requests 依次送进指令缓存（重复的照样再送），
+// 缓存随会话累积，action 检查取其中最近 window 条（userRequests，internal/check/action/check.go）；
+// 留出步骤各自一个会话，只有自己的 user_requests，同样取最近 window 条。
+// 与 hook 一致的细节：空白指令不写入缓存（cache.Prompts.Add），也不参与选取；重放器送的都是用户本人的指令
+// （origin composer），不会被当成 automated 滤掉；缓存不去重，7 天过期与每会话 50 条上限在一次重放里碰不到。
+// 被 prompt.submit 拦下的指令不写入缓存，但那一步记为重放错误，不需要预测。
+func stubCases(tasks []eval.Task, holdout []eval.Step, window int) []eval.StubCase {
+	appendSent := func(sent []string, reqs []string) []string {
+		for _, r := range reqs {
+			if strings.TrimSpace(r) != "" {
+				sent = append(sent, r)
+			}
+		}
+		return sent
+	}
+	last := func(sent []string) []string {
+		if window <= 0 {
+			return nil
+		}
+		return slices.Clone(sent[max(0, len(sent)-window):])
+	}
+	var cases []eval.StubCase
+	for _, s := range holdout {
+		cases = append(cases, eval.StubCase{Step: s, Requests: last(appendSent(nil, s.UserRequests))})
+	}
+	for _, t := range tasks {
+		var sent []string
+		for _, s := range t.Steps {
+			sent = appendSent(sent, s.UserRequests)
+			cases = append(cases, eval.StubCase{Step: s, Requests: last(sent)})
+		}
+	}
+	return cases
 }
 
 // duplicateStepID 返回全部任务与留出集里第一个重复出现的步骤 id。
@@ -247,7 +290,7 @@ func (r *compareRunner) Run(ctx context.Context, cfg eval.Config, tasks []eval.T
 	if mode, ok := map[eval.Config]eval.StubMode{
 		eval.ConfigJudge: eval.StubAnswer, eval.ConfigJudgeTimeout: eval.StubTimeout, eval.ConfigJudgeError: eval.StubError,
 	}[cfg]; ok {
-		stub = eval.NewStub(allSteps(tasks, holdout), mode, compareStubSleep)
+		stub = eval.NewStub(stubCases(tasks, holdout, compareRequestWindow()), mode, compareStubSleep)
 		defer stub.Close() // 出错返回时关闭；正常结束时下面已先关闭，再关一次无妨
 		// 只有超时一行用短超时；retries: 0：超时一行每次调用只等一次超时
 		timeoutMS := compareJudgeTimeoutMS

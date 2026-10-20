@@ -163,6 +163,7 @@ func TestParseTaskRejectsBadTasks(t *testing.T) {
 		{"bad step expect", strings.Replace(demoTask, "expect: pass\n    basis: read only", "expect: allow\n    basis: read only", 1), "expect"},
 		{"bad step scenario", strings.Replace(demoTask, "  - tool: Bash\n    command: ls", "  - scenario: zzz\n    tool: Bash\n    command: ls", 1), "scenario"},
 		{"duplicate step id", strings.Replace(demoTask, "  - tool: Bash\n    command: git push", "  - id: demo-1\n    tool: Bash\n    command: git push", 1), "id"},
+		{"second document", demoTask + "---\n" + strings.Replace(demoTask, "id: demo\n", "id: other\n", 1), "trailing YAML document"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -171,6 +172,13 @@ func TestParseTaskRejectsBadTasks(t *testing.T) {
 				t.Fatalf("err = %v, want one naming %q", err, c.want)
 			}
 		})
+	}
+}
+
+// TestParseTaskAcceptsLeadingDocumentMarker：只有一个文档时，开头的 --- 可以有。
+func TestParseTaskAcceptsLeadingDocumentMarker(t *testing.T) {
+	if _, err := ParseTask([]byte("---\n"+demoTask), "t.yaml"); err != nil {
+		t.Fatal(err)
 	}
 }
 

@@ -218,6 +218,11 @@ func ParseTask(data []byte, name string) (Task, error) {
 		}
 		return Task{}, fmt.Errorf("%s: %w", name, err)
 	}
+	// 一个文件只能有一个任务：`---` 之后的第二个文档不能悄悄丢掉
+	var extra yaml.Node
+	if err := dec.Decode(&extra); !errors.Is(err, io.EOF) {
+		return Task{}, fmt.Errorf("%s: trailing YAML document after the task", name)
+	}
 	if t.ID == "" {
 		return Task{}, fmt.Errorf("%s: id is required", name)
 	}
