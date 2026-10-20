@@ -82,7 +82,7 @@ examples:
 | `impact` | none | What the operation would cause, by locale (`en` required when given). Shown after the reason as "Impact: …" when the rule interrupts. |
 | `advice` | none | A safer way to continue, by locale (`en` required when given). Shown as "Safer way: …". |
 | `match` | required | `match.exec` for `exec`, `match.file` for file actions. |
-| `requires_judge` | `false` | The rule interrupts only when the judge is on; with the judge off its hits are only logged. Needs a `question`. |
+| `requires_judge` | `false` | The rule interrupts only when the judge is on; with the judge off its hits are only logged, except hits of `match.exec.local`. Needs a `question`. |
 | `question` | none | Question sent to the judge (`exec` rules only), see below. |
 | `radius_floor` | `0` | With the judge on, a hit is dangerous only when the judge rates the blast radius (`0`..`3`) at or above this. |
 | `bypassable_by_request` | `true` | Whether your explicit request (judged by the model) lets a hit pass. |
@@ -97,7 +97,8 @@ How a hit becomes a verdict:
 
 1. A `deny` rule that matches denies, without asking the judge.
 2. With the judge off, `ask` rules that match ask, except rules with
-   `requires_judge: true`, which are only logged.
+   `requires_judge: true`, which are only logged unless one of their
+   `match.exec.local` patterns matched.
 3. With the judge on but unavailable (no consent, error, timeout), every
    matching rule asks.
 4. With the judge answering, a match is withdrawn when the judge is confidently
@@ -134,6 +135,7 @@ Options:
 | `command_position` | Match only the text at command positions, not arguments of other commands. Use it for `deny` rules. |
 | `strip_quotes` | Blank out quoted text before matching. |
 | `redirects` | Patterns matched against redirections (POSIX), each written as `command fd-operator target`, for example `dd 2>/dev/sda`. |
+| `local` | Patterns for all shells that interrupt even with the judge off, in `requires_judge` rules only. Keep them to forms whose impact is high and that are almost never false positives (`git reset --hard`, `npm publish`); the other patterns still need the judge. They are matched at each command position, after environment assignments and `sudo`, so anchor them with `^`; the same text inside quotes does not count. |
 | `encoded` | Also hit when encoded content (base64, `-EncodedCommand` and similar) is handed to an interpreter. A rule with `encoded: true` needs no patterns. |
 
 An `exec` rule needs at least one pattern or `encoded: true`.
@@ -145,9 +147,12 @@ placeholder becomes the directory or file h-guard sees, matched literally
 `/` and `\` both accepted as separators and a space optionally preceded by
 `\`. When the value is under your home directory, the home part may also be
 written `~`, `$HOME`, `${HOME}`, `$env:HOME`, `$env:USERPROFILE` or
-`%USERPROFILE%`. A placeholder without a value (the variable is unset) never
-matches, so the part of the pattern that needs it does not match; the rest of
-the pattern and the rule still work. Write `\{name}` for literal braces; other
+`%USERPROFILE%`. A relative value is resolved against h-guard's working
+directory, which it inherits from the harness, as the harness resolves it. Placeholders also work inside a
+lookbehind, which need not be fixed-length in this dialect. A placeholder
+without a value (the variable is unset) never matches, so the part of the
+pattern that needs it does not match; the rest of the pattern and the rule
+still work. Write `\{name}` for literal braces; other
 names in braces are left as they are.
 
 ```yaml
@@ -201,6 +206,8 @@ write patterns with `**/` or `~/` (not a drive letter). Placeholders:
 | `{dsh_home}` | `$DSH_HOME`, with a leading `~` expanded (no match when unset) |
 | `{openclaw_config}` | the `openclaw.json` OpenClaw reads (see the OpenClaw section of the harness guide) |
 | `{openclaw_includes}` | each file OpenClaw's configuration pulls in with `$include`, as h-guard resolves them; a pattern with it matches any of them (no match when there are none) |
+| `{hermes_managed}` | Hermes Agent's managed-scope directory: `$HERMES_MANAGED_DIR`, otherwise `/etc/hermes` (unset on Windows) |
+| `{hermes_home}` | Hermes Agent's home: `$HERMES_HOME` with environment variables and a leading `~` expanded as Hermes does, otherwise the default `~/.hermes` (`%LOCALAPPDATA%\hermes` on Windows); always set |
 
 Relative targets are resolved against the working directory and symbolic links
 are resolved, so a link to a protected file matches too. `exclude` patterns are
@@ -218,9 +225,10 @@ file system, with the home directory `/home/user`, the working directory
 `/home/user/project`, `{config}` = `/xdg/config/h-guard`, `{cache}` =
 `/xdg/cache/h-guard`, `{extra_config}` = `/etc/guard/extra.yaml`,
 `{pi_agent_dir}` = `/opt/pi/agent`, `{dsh_home}` = `/home/user/my dsh`,
-`{openclaw_config}` = `/srv/openclaw/openclaw.json` and `{openclaw_includes}` =
+`{openclaw_config}` = `/srv/openclaw/openclaw.json`, `{openclaw_includes}` =
 `/home/user/.openclaw/conf.d/plugins.json`, `/etc/openclaw/plugins.json` and
-`C:\etc\openclaw\plugins.json`; the other placeholders are unset. Command examples use the same values for
+`C:\etc\openclaw\plugins.json`, `{hermes_home}` = `/opt/hermes` and
+`{hermes_managed}` = `/srv/hermes-policy`; the other placeholders are unset. Command examples use the same values for
 placeholders in `exec` patterns.
 
 ### `question`

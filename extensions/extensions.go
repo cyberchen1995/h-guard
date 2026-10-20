@@ -27,3 +27,8 @@ var DSH []byte
 //
 //go:embed openclaw/openclaw.plugin.json openclaw/package.json openclaw/index.mjs
 var OpenClaw embed.FS
+
+// Hermes 是 Hermes Agent 的 Python 插件（plugin.yaml 与 __init__.py），根目录为 hermes/。
+//
+//go:embed hermes/plugin.yaml hermes/__init__.py
+var Hermes embed.FS

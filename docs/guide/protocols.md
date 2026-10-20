@@ -229,7 +229,7 @@ same `session_id`.
 
 Some harnesses deliver events only to code running inside them (Claude Code's
 mods, opencode's plugins, pi's and oh-my-pi's extensions, DeepSeek Harness's
-Cordis plugins and OpenClaw's native plugins are the built-in cases). A thin extension inside the harness forwards each
+Cordis plugins, OpenClaw's native plugins and Hermes Agent's Python plugins are the built-in cases). A thin extension inside the harness forwards each
 event to h-guard and turns the reply into the harness's own return value. It
 makes no decisions itself; the harness-specific parsing lives in h-guard's
 adapter for that harness.
@@ -248,7 +248,7 @@ the reply is valid. Requests are limited to 16 MiB.
 | Field | Meaning |
 |---|---|
 | `protocol` | `h-guard.ext/v1`. |
-| `harness` | Harness name, matching an adapter registered in h-guard (`claudecode`, `opencode`, `pi`, `omp`, `dsh`, `openclaw`). |
+| `harness` | Harness name, matching an adapter registered in h-guard (`claudecode`, `opencode`, `pi`, `omp`, `dsh`, `openclaw`, `hermes`). |
 | `harness_version` | The version string the harness reports, passed on as is. Optional. |
 | `hook` | The harness's hook name (table below). |
 | `session` | `{"id": ..., "cwd": ...}`; `id` is required. |
@@ -261,7 +261,7 @@ The built-in extensions send these hooks:
 | Harness | `hook` | `data` | `result` |
 |---|---|---|---|
 | `claudecode` | `tool.result`, `prompt.submit` | the mod's event | the tool result (`tool.result`) |
-| `opencode` | `tool.execute.before`, `tool.execute.after` | `{tool, sessionID, callID, args}` | `{output, content}` (`tool.execute.after`) |
+| `opencode` | `tool.execute.before`, `tool.execute.after` | `{tool, sessionID, callID, args}`; `tool.execute.before` adds `source`: `mcp`, `opencode` (built-in, custom and plugin tools) or `?` (lookup failed) | `{output, content}` (`tool.execute.after`) |
 | `opencode` | `chat.message` | `{sessionID, agent, parts, parentID}` | |
 | `pi`, `omp` | `tool_call`, `tool_result` | `{toolCallId, toolName, input}` | `{content}` (`tool_result`) |
 | `pi`, `omp` | `input` | `{text, source}`; oh-my-pi also sends prompts found on its `context` event, with `source: "context"` | |
@@ -270,6 +270,9 @@ The built-in extensions send these hooks:
 | `openclaw` | `before_tool_call` | `{toolName, params, toolKind, toolInputKind, toolCallId, derivedPaths, platform, execHost}` | |
 | `openclaw` | `tool_result` (the tool result middleware) | `{toolName, toolCallId, args, isError, platform}` | `{content}` |
 | `openclaw` | `before_agent_run` | `{prompt, trigger, provenance, sessionKey, channel}` | |
+| `hermes` | `pre_tool_call` | `{tool_name, args, tool_call_id, approval, backend}`; `approval` is how Hermes would handle an approval request (`prompt`, `blocked`, `auto`, or empty when unknown) | |
+| `hermes` | `transform_tool_result`, `transform_terminal_output` | `{tool_name, args, tool_call_id, status}`, or `{command, returncode, env_type}` for background process output | `{content}`: the result string |
+| `hermes` | `pre_gateway_dispatch`, `pre_llm_call` | `{text, platform, is_bot}`, or `{text, platform, parent_session_id, is_bot, kanban_task}`; for `pre_llm_call` the plugin takes `is_bot` from what it recorded on `pre_gateway_dispatch`, and `kanban_task` is the task of a Kanban worker process (empty otherwise) | |
 
 Only text content blocks are passed on; images are left out.
 
@@ -280,9 +283,11 @@ with the credentials h-guard recognizes masked, which some adapters (OpenClaw)
 add to `ask` so the extension can show it to a person instead of the raw
 arguments. Every
 reply other than `pass` carries a non-empty `message`; a reply without one is
-not valid. There is no `allow`. Every request that h-guard understands gets a
-reply, `pass` included; a tool call that has nothing to check (such as an MCP
-tool) gets `pass`. A request h-guard does not understand gets no output, which
+not valid. There is no `allow`. Replies to `hermes` may also carry
+`"notify": {"to": "..."}` when `harnesses.hermes.notify` asks for a channel
+notification; other extensions ignore unknown fields. Every request that h-guard understands gets a
+reply, `pass` included; a tool call that has nothing to check (such as a `glob`
+search) gets `pass`. A request h-guard does not understand gets no output, which
 the extension treats as a failure.
 
 ```console
@@ -297,7 +302,7 @@ through and tell the user. It must also apply `deny` and `ask` even if
 `message` is somehow empty, using a fixed text.
 
 The stock binary has adapters for `claudecode`, `codex`, `opencode`, `pi`,
-`omp`, `dsh`, `openclaw` and `generic`; all but `codex` and `generic` read extension
+`omp`, `dsh`, `openclaw`, `hermes` and `generic`; all but `codex` and `generic` read extension
 requests. Connecting a new harness this way needs
 an adapter for it, written against `pkg/harness` and `pkg/harness/extproto` and
 registered in your own build of h-guard (see

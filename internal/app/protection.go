@@ -67,6 +67,17 @@ func statusProtection(s setup, o Options) {
 			fmt.Fprintln(o.Stdout, "  opencode: cannot ask either, so every ask blocks; one-time approvals are only offered on Codex")
 		}
 	}
+	if o.Home != "" {
+		t := install.Target{Home: o.Home, ConfigDir: o.ConfigDir, CacheDir: o.CacheDir, GOOS: o.GOOS, Getenv: o.Getenv, Now: o.Now}
+		if lines := install.Inspect(t, "hermes"); len(lines) > 0 && !strings.HasPrefix(lines[0], "not installed") {
+			// Hermes 能请求确认，但自动批准时（YOLO 等）不能；挡不住 CLI 里的提示词
+			what := "every ask in a session that Hermes would approve without asking (--yolo, approvals.mode: off) blocks"
+			if guard.Decision(s.cfg.Policy.WhenAskUnsupported) == guard.DecisionPass {
+				what = "every ask in a session that Hermes would approve without asking (--yolo, approvals.mode: off) lets the operation run (policy.when_ask_unsupported is pass)"
+			}
+			fmt.Fprintf(o.Stdout, "  hermes: asks go to Hermes's own approval; %s; prompts typed into the CLI, TUI or Desktop cannot be blocked, only flagged to the model\n", what)
+		}
+	}
 }
 
 // configWritten 是「配置已写入」这一层：install 报告了问题时注明。
@@ -164,11 +175,20 @@ func ruleCoverage(s setup) (interrupts, logged, off []string) {
 		default:
 			var notes []string
 			notes = append(notes, string(r.Action))
-			if r.RequiresJudge {
+			switch {
+			case r.RequiresJudge && !s.cfg.Judge.Enabled:
+				// 模型关闭时生效的 requires_judge 规则只有 local 组打断（StateOf）
+				notes = append(notes, "only its high-impact forms while the judge is off")
+			case r.RequiresJudge:
 				notes = append(notes, "when the agent chose it on its own")
 			}
 			if !r.AppliesTo(guard.ActionExec) {
-				notes = append(notes, "file tools only")
+				if r.AppliesTo(guard.ActionFileRead) && (r.Locked || rules.TierCovers(s.cfg.Action.Tier, guard.ActionFileRead)) {
+					// 命令读取的文件也按读文件的规则检查（action 检查的 ReadTargets）
+					notes = append(notes, "file tools and common shell reads")
+				} else {
+					notes = append(notes, "file tools only")
+				}
 			} else if !r.Locked && slices.ContainsFunc(r.On, func(k guard.ActionKind) bool { return !rules.TierCovers(s.cfg.Action.Tier, k) }) {
 				// 规则也写了文件动作、但当前档位不检查它们：只有命令那一半生效
 				notes = append(notes, fmt.Sprintf("commands only; its file actions are off at action tier %d", s.cfg.Action.Tier))
@@ -215,29 +235,46 @@ func outboundCoverage(s setup, judgeUsable, piiConsent bool) []string {
 			entry += " (tool output only)"
 		}
 		if a == guard.DecisionWarn {
-			entry += " (not shown on Codex or DeepSeek Harness)" // 这两个 harness 显示不了提示
+			entry += " (not shown on Codex or DeepSeek Harness, nor for tool output on Hermes Agent)" // 这几处显示不了提示
 		}
 		out = append(out, entry)
 	}
-	// 只有类别题、没有本地规则的类别由模型检查，命中只提示；Codex 与 DeepSeek Harness 显示不了提示，在那里不检查
+	// 只有类别题、没有本地规则的类别由模型检查，命中只提示；Codex 与 DeepSeek Harness 显示不了提示，在那里不检查，
+	// Hermes Agent 的工具输出同样不检查
 	if judgeUsable && s.cfg.OutboundJudge() {
 		for _, name := range slices.Sorted(maps.Keys(s.cfg.Outbound.Categories)) {
 			if c := s.cfg.Category(name); c.Enabled && c.Question != nil && active[name] == nil && (name != "pii" || piiConsent) {
-				out = append(out, name+" warn (judge only, not on Codex or DeepSeek Harness)")
+				out = append(out, name+" warn (judge only, not on Codex or DeepSeek Harness, nor for tool output on Hermes Agent)")
 			}
 		}
 	}
 	return out
 }
 
+// readRuleEnabled 报告有没有启用的读文件规则（sensitive_read 等）。
+func readRuleEnabled(set *rules.Set) bool {
+	if set == nil {
+		return false
+	}
+	return slices.ContainsFunc(set.All(), func(r *rules.Rule) bool { return r.Enabled() && r.AppliesTo(guard.ActionFileRead) })
+}
+
 // coverageGaps 是护栏照不到的地方（与 README 的已知限制一致），按当前配置写。
 // judgeUsable 是判断后端真的能用（开启、后端构造得出、同意有效）：只是开启、还没同意时照样没有模型兜底。
 func coverageGaps(s setup, judgeUsable bool) []string {
 	var gaps []string
+	// 读文件的命令：常见写法（cat、grep、head、< 文件……）在运行前按路径规则检查；其余写法只能靠事后扫描输出
+	before := "secret files read in ways h-guard does not recognize as reading (python -c, a script, files passed through xargs or to a remote host) are not stopped before they run"
+	switch {
+	case !rules.TierCovers(s.cfg.Action.Tier, guard.ActionFileRead):
+		before = "file reads, by file tools or shell commands (cat ~/.ssh/id_rsa), are not checked before they run below action.tier 2"
+	case !readRuleEnabled(s.rules):
+		before = "file reads, by file tools or shell commands (cat ~/.ssh/id_rsa), are not checked before they run: no file-read rule is enabled"
+	}
 	if s.cfg.Outbound.Tier < 2 {
-		gaps = append(gaps, "shell commands that read secret files (cat ~/.ssh/id_rsa): path rules only see file tools, and their output is not scanned below outbound.tier 2")
+		gaps = append(gaps, before+", and their output is not scanned below outbound.tier 2")
 	} else {
-		gaps = append(gaps, "shell commands that read secret files (cat ~/.ssh/id_rsa) are not stopped before they run; afterwards only the output of commands recognized as reading files is scanned (not, for example, python -c reading a file)")
+		gaps = append(gaps, before+"; afterwards only the output of commands recognized as reading files is scanned")
 	}
 	gaps = append(gaps, "MCP and other tool calls have no built-in rules")
 	switch {

@@ -1098,14 +1098,16 @@ func TestEvalShellSelectsTheCorpus(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	out, stderr, code := e.run(nil, "eval", "--shell", "powershell", "--yes", "--sweep")
+	// 只看选中了哪个语料与建议档案的注释，不做 bootstrap（整套扫描重跑上百次，是这个测试原来 90% 的耗时）
+	out, stderr, code := e.run(nil, "eval", "--shell", "powershell", "--yes", "--sweep", "--bootstrap", "0")
 	if code != 0 || !strings.Contains(stderr, fmt.Sprintf("sends %d cases from the built-in PowerShell corpus", len(ps))) ||
 		!strings.Contains(out, "# Fitted on the built-in PowerShell corpus") {
 		t.Errorf("--shell powershell: exit %d\nstderr %q\nstdout:\n%s", code, stderr, out)
 	}
+	// POSIX 语料只看发送前的说明选中了哪个语料：没有终端又没有 --yes 时说明已经打印、随即拒绝发送，不必跑完整个语料
 	for _, args := range [][]string{{"--shell", "posix"}, nil} {
-		_, stderr, code := e.run(nil, append([]string{"eval", "--yes"}, args...)...)
-		if code != 0 || !strings.Contains(stderr, "sends 113 cases from the built-in corpus") {
+		_, stderr, code := e.run(nil, append([]string{"eval"}, args...)...)
+		if code != 1 || !strings.Contains(stderr, "sends 113 cases from the built-in corpus") {
 			t.Errorf("eval %v: exit %d, stderr %q", args, code, stderr)
 		}
 	}

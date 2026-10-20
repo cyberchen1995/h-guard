@@ -30,6 +30,7 @@ import (
 	_ "github.com/cyberchen1995/h-guard/pkg/harness/codex"
 	_ "github.com/cyberchen1995/h-guard/pkg/harness/dsh"
 	_ "github.com/cyberchen1995/h-guard/pkg/harness/generic"
+	_ "github.com/cyberchen1995/h-guard/pkg/harness/hermes"
 	_ "github.com/cyberchen1995/h-guard/pkg/harness/openclaw"
 	_ "github.com/cyberchen1995/h-guard/pkg/harness/opencode"
 	_ "github.com/cyberchen1995/h-guard/pkg/harness/pi"
@@ -169,7 +170,7 @@ const usage = `usage:
   h-guard eval [--backend <name>] [--sweep] [--shell posix|powershell | --cases <file>] [--repeat <K>] [--bootstrap <N>] [--seed <n>] [--yes] [--config <file>]
   h-guard eval --outbound [--backend <name>] [--sweep] [--threshold <t>] [--cases <file>] [--yes] [--config <file>]
   h-guard init
-  h-guard install claudecode|codex|opencode|pi|omp|dsh|openclaw [--write] [--remove] [--timeout <seconds>] [--shell posix|powershell]
+  h-guard install claudecode|codex|opencode|pi|omp|dsh|openclaw|hermes [--write] [--remove] [--timeout <seconds>] [--shell posix|powershell]
   h-guard migrate <questions.json> [--write]
   h-guard config validate [--rules <dir>] | show | init [--config <file>]
   h-guard version
@@ -345,15 +346,50 @@ func openclawIncludes(o Options) []string {
 	return files
 }
 
+// hermesHome 是 Hermes Agent 的主目录（install hermes 写插件的目录）：$HERMES_HOME，默认 ~/.hermes（Windows 上是
+// %LOCALAPPDATA%\hermes）；没有主目录时为空。
+func hermesHome(o Options) string {
+	if o.Home == "" {
+		return ""
+	}
+	return install.HermesHome(install.Target{Home: o.Home, GOOS: o.GOOS, Getenv: o.Getenv})
+}
+
+// hermesManaged 是 Hermes Agent 的托管范围目录：$HERMES_MANAGED_DIR，默认 /etc/hermes（Windows 上没有默认位置）。
+// 目录不存在时 Hermes 不读它，这里照样保护：之后建起来的托管配置同样能停用 h-guard。
+func hermesManaged(o Options) string {
+	if d := strings.TrimSpace(o.Getenv("HERMES_MANAGED_DIR")); d != "" {
+		return d
+	}
+	if o.GOOS == "windows" {
+		return ""
+	}
+	return install.HermesManagedDefault
+}
+
+// absVars 把占位符的相对值按 h-guard 的工作目录解析成绝对路径：harness 按它自己的工作目录解析这些环境变量，
+// h-guard 由它启动、继承同一个目录。不能按事件里某次工具调用的目录解析，那是命令的目录，不是 harness 的。
+func absVars(vars map[string]string) map[string]string {
+	for k, v := range vars {
+		// Windows 上不带盘符的 \agent 相对当前盘，同样解析（补上盘符）；命令里省略盘符的写法由 exec 展开另认
+		if v != "" && !filepath.IsAbs(v) {
+			if abs, err := filepath.Abs(v); err == nil {
+				vars[k] = abs
+			}
+		}
+	}
+	return vars
+}
+
 // newEngine 组装 Engine：action 检查与 outbound 检查。文件动作的保护路径用主目录、h-guard 实际的配置与缓存目录，
 // 以及这次 --config 加载的文件展开。
 func (s setup) newEngine(o Options, j action.Judge, oj outbound.Judge) *engine.Engine {
 	c := &action.Check{Rules: s.rules, Config: s.cfg, Catalog: s.catalog, Locale: s.locale, Judge: j,
 		Paths: paths.Env{Home: o.Home, FoldCase: paths.FoldCaseDefault, Windows: paths.WindowsDefault,
-			Vars: map[string]string{rules.VarConfig: o.ConfigDir, rules.VarCache: o.CacheDir, rules.VarExtraConfig: s.extra,
+			Vars: absVars(map[string]string{rules.VarConfig: o.ConfigDir, rules.VarCache: o.CacheDir, rules.VarExtraConfig: s.extra,
 				rules.VarClaudeConfig: o.Getenv("CLAUDE_CONFIG_DIR"), rules.VarCodexHome: o.Getenv("CODEX_HOME"),
 				rules.VarXDGConfig: o.Getenv("XDG_CONFIG_HOME"), rules.VarPiAgentDir: piAgentDir(o), rules.VarDSHHome: install.ExpandDSHHome(o.Home, o.Getenv("DSH_HOME")), rules.VarOMPConfig: ompConfig(o),
-				rules.VarOpenClawConfig: openclawConfig(o)},
+				rules.VarOpenClawConfig: openclawConfig(o), rules.VarHermesHome: hermesHome(o), rules.VarHermesManaged: hermesManaged(o)}),
 			Lists: map[string][]string{rules.VarOpenClawIncludes: openclawIncludes(o)}}}
 	o2 := &outbound.Check{Rules: s.rules, Config: s.cfg, Judge: oj}
 	return &engine.Engine{

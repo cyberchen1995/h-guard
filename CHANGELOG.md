@@ -39,6 +39,28 @@ minor releases. Every such change is recorded in this file.
   they cannot be replayed. An approval is bound to the exact tool input, and
   only shell commands get one: tool calls with file actions, partly unparsed
   operations and commands too long to show in full get no approval. Records keep only a digest and a redacted copy of the operation.
+- Three protection scenarios work with the model off
+  ([docs/guide/scenarios.md](docs/guide/scenarios.md)):
+  - keeping your work: `git reset --hard`, `git clean`, `git checkout .`,
+    `git stash clear`, a force push without lease, `git filter-branch` /
+    `filter-repo` and recursive deletes under `~`, `..` or of `.git` ask;
+  - stopping unasked publishing: `npm`/`pnpm`/`yarn publish`, `cargo publish`,
+    `twine upload`, `uv publish`, `gem push`, `docker`/`podman push`,
+    `gh release create`/`upload`/`delete`, `Publish-Module` and `nuget push`
+    ask (dry runs do not);
+  - keeping credentials in: `sensitive_read` also checks the files that common
+    shell reads name (`cat`, `head`, `grep`, `sed`, `base64`, `< file`,
+    PowerShell's `Get-Content`), not only the harness's file tools.
+- Action rules can mark such forms with `match.exec.local`: patterns matched
+  at each command position that interrupt even with the judge off, in
+  `requires_judge` rules. The rest of the rule still needs the judge.
+
+### Changed
+
+- With the judge off, `recursive_delete`, `destructive_git`, `branch_ops` and
+  `publish` interrupt their high-impact forms instead of only logging every
+  match. The interruption no longer says that the agent chose the operation on
+  its own, which h-guard cannot tell without the judge.
 
 ### Harnesses
 
@@ -55,6 +77,12 @@ minor releases. Every such change is recorded in this file.
   loosen the checks on tools h-guard knows.
 - opencode cannot ask, so `ask` becomes `deny` there; `install opencode` takes
   `--shell` and writes `harnesses.opencode.shell`, as for Codex.
+- opencode: the plugin marks MCP tools by the MCP servers opencode reports, and
+  h-guard treats them as tools it does not know, so they are blocked unless
+  listed in `harnesses.opencode.read_only_tools`. Custom and plugin tools
+  still pass. When the servers cannot be looked up, or the plugin predates
+  this, any tool that is not one of opencode's own is treated the same way;
+  run `h-guard install opencode --write` again after upgrading.
 - The locked `guard_tampering` rule also protects the new extensions and the
   settings that can turn them off (oh-my-pi's `config.yml`, pi's and oh-my-pi's
   `settings.json`, DeepSeek Harness's patches), also under `XDG_CONFIG_HOME`,
@@ -105,11 +133,38 @@ minor releases. Every such change is recorded in this file.
   (`openclaw reset`, `openclaw uninstall --state`/`--all`, `--reset` on
   `onboard`, `setup` and `gateway`). Path and `exec` patterns can use `{openclaw_config}` and
   `{openclaw_includes}` (matching any included file).
+- `h-guard install hermes` connects Hermes Agent through a Python plugin in
+  `$HERMES_HOME/plugins/h-guard`, enabled in `plugins.enabled`. Tool calls are
+  checked on `pre_tool_call` (`ask` goes to Hermes's own approval, keyed to the
+  one call; it becomes `deny` when Hermes would approve without asking), tool
+  results and background process output are replaced on `deny`, prompts from
+  messaging platforms are blocked when the gateway receives them
+  (`pre_gateway_dispatch`), and other prompts get a
+  warning on `pre_llm_call`, since they cannot be blocked there. The plugin
+  was written against Hermes 2026.9.24 and smoke-tested by driving its hooks
+  through Hermes's plugin manager, not yet with a model.
+- `harnesses.hermes.notify` (off by default) sends h-guard's masked reason for
+  chosen decisions to the originating chat, or a configured `hermes send`
+  target, as a best-effort notification.
+- New degradation `prompt_not_blocked`: a `deny` on a prompt the harness cannot
+  hold back becomes a `warn` that says the prompt has already reached the model.
+- The locked `guard_tampering` rule also protects Hermes Agent's
+  `config.yaml`, h-guard's plugin directory and the shell-hook allowlist (also
+  per profile, under `HERMES_HOME` and on Windows), and the `hermes plugins
+  disable|remove` and `hermes config set plugins.*` commands. Path patterns, and
+  `exec` patterns, can use `{hermes_home}`, so a command naming the real path of
+  a custom `HERMES_HOME` is covered as well; `{hermes_managed}` (Hermes's
+  managed scope, `$HERMES_MANAGED_DIR` or `/etc/hermes`) protects the managed
+  `config.yaml` the same way. `install hermes` and `status` take the managed
+  scope's `plugins` settings into account.
 
 ### Public packages
 
+- `pkg/detect/command` adds `ReadTargets`: the files a command reads locally
+  (file operands of common read commands, input redirections and PowerShell's
+  `Get-Content` paths).
 - New adapters `pkg/harness/opencode`, `pkg/harness/pi` (registers `pi` and
-  `omp`), `pkg/harness/dsh` and `pkg/harness/openclaw`.
+  `omp`), `pkg/harness/dsh`, `pkg/harness/openclaw` and `pkg/harness/hermes`.
 - `pkg/harness` adds `UnknownToolError` for tools an adapter does not know.
 - `pkg/harness/extproto`: `Reply` has an optional `Subject`, a summary of the
   call with recognized credentials masked, for extensions that show the call to

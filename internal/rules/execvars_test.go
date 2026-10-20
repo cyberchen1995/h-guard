@@ -40,8 +40,9 @@ func TestExecPlaceholderExpansion(t *testing.T) {
 			"rm ${HOME}/my dsh/cordis.patch.yml", `rm $env:USERPROFILE\my dsh\cordis.patch.yml`, `rm %USERPROFILE%\my dsh\cordis.patch.yml`},
 		[]string{"rm /home/u/mydsh/cordis.patch.yml", "rm ~/other/cordis.patch.yml", "rm $HOMEDIR/my dsh/cordis.patch.yml"})
 	mustMatch(t, `^rm {codex_home}[/\\]+hooks\.json$`, env,
-		[]string{`rm C:\Users\Me\codex\hooks.json`, "rm c:/users/me/codex/hooks.json"},
-		[]string{`rm D:\Users\Me\codex\hooks.json`})
+		// 省略盘符（相对当前盘）的写法也认
+		[]string{`rm C:\Users\Me\codex\hooks.json`, "rm c:/users/me/codex/hooks.json", `rm \Users\Me\codex\hooks.json`},
+		[]string{`rm D:\Users\Me\codex\hooks.json`, `rm x\Users\Me\codex\hooks.json`})
 	// 值就是主目录
 	home := paths.Env{Home: "/home/u", Vars: map[string]string{VarDSHHome: "/home/u/"}}
 	mustMatch(t, `^rm {dsh_home}[/\\]+x$`, home, []string{"rm ~/x", "rm /home/u/x"}, []string{"rm /home/x"})
@@ -105,7 +106,7 @@ func TestExecPlaceholderCache(t *testing.T) {
 	if r3 == r1 {
 		t.Fatal("a changed environment reused the old patterns")
 	}
-	if ok, _ := r3.any[1].MatchString("rm /b"); !ok {
+	if ok, _ := r3.any[0].MatchString("rm /b"); !ok {
 		t.Error("the re-expanded pattern does not match the new value")
 	}
 	static, err := compileExec(&ExecMatch{Any: []string{`^static$`}})
@@ -114,6 +115,66 @@ func TestExecPlaceholderCache(t *testing.T) {
 	}
 	if static.resolve(a) != &static.base {
 		t.Error("patterns without placeholders are not the precompiled ones")
+	}
+	// 工作目录不影响展开（相对的值由调用方事先解析），换目录不重新编译
+	a.Cwd = "/w1"
+	r4 := c.resolve(a)
+	a.Cwd = "/w2"
+	if c.resolve(a) != r4 {
+		t.Error("a new working directory recompiled the placeholders")
+	}
+}
+
+// TestExecPlaceholderRoot：值是根目录时展开为不占字符的「这里开始一个路径」：不能变成匹配任何位置的空串，
+// 也不能让模式里紧跟的分隔符变成要求两个。
+func TestExecPlaceholderRoot(t *testing.T) {
+	root := paths.Env{Home: "/home/u", Vars: map[string]string{VarDSHHome: "/"}}
+	mustMatch(t, `{dsh_home}[/\\]+cordis\.patch\.yml`, root,
+		[]string{"rm /cordis.patch.yml", `rm "/cordis.patch.yml"`, "echo x >/cordis.patch.yml",
+			"Remove-Item other,/cordis.patch.yml", "Remove-Item -Path:/cordis.patch.yml"},
+		[]string{"rm /tmp/cordis.patch.yml", "rm cordis.patch.yml"})
+	mustMatch(t, `rm {dsh_home}[/\\]?(?=$|\s)`, root, []string{"rm /", "rm / x"}, []string{"rm /tmp/x", "rm x"})
+	mustMatch(t, `^rm {dsh_home}$`, root, []string{"rm /", "rm //"}, []string{"rm /tmp", "rm x/"})
+	// 盘的根目录同样：盘符可写可省略，不能变成只匹配「C:」
+	for _, v := range []string{`C:\`, "c:/"} {
+		drive := paths.Env{Home: "/home/u", Vars: map[string]string{VarDSHHome: v}}
+		mustMatch(t, `{dsh_home}[/\\]+cordis\.patch\.yml`, drive,
+			[]string{`rm C:\cordis.patch.yml`, "rm c:/cordis.patch.yml", `rm \cordis.patch.yml`, "rm /cordis.patch.yml"},
+			[]string{`rm C:\tmp\cordis.patch.yml`, "rm cordis.patch.yml", "rm C:cordis.patch.yml"})
+	}
+}
+
+// TestExecPlaceholderOrder：展开后的模式保持规则里的顺序（含占位符的与不含的交错）。
+func TestExecPlaceholderOrder(t *testing.T) {
+	c, err := compileExec(&ExecMatch{Any: []string{`a`, `b{dsh_home}`, `c`}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := c.resolve(paths.Env{Vars: map[string]string{VarDSHHome: "/d"}})
+	var got []string
+	for _, re := range r.any {
+		got = append(got, re.String()[:1])
+	}
+	if !slices.Equal(got, []string{"a", "b", "c"}) {
+		t.Errorf("order = %v", got)
+	}
+}
+
+// TestExecPlaceholderInLookbehind：regexp2 的后向断言不要求定长，占位符写在里面也能加载、照常匹配
+// （主目录的几种写法长短不一）。
+func TestExecPlaceholderInLookbehind(t *testing.T) {
+	c, err := compileExec(&ExecMatch{Any: []string{`(?<={config}[/\\]+)x\.yaml`}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, env := range []paths.Env{{Home: "/home/u", Vars: map[string]string{VarConfig: "/etc/hg"}}, {Home: "/home/u", Vars: map[string]string{VarConfig: "/home/u/.config/hg"}}} {
+		r := c.resolve(env)
+		for _, s := range []string{env.Vars[VarConfig] + "/x.yaml", "~/.config/hg/x.yaml"} {
+			ok, _ := r.any[0].MatchString(s)
+			if want := s[0] == '/' || env.Vars[VarConfig][:7] == "/home/u"; ok != want {
+				t.Errorf("%v: %q matched = %v", env.Vars, s, ok)
+			}
+		}
 	}
 }
 

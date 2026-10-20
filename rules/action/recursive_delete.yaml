@@ -32,6 +32,11 @@ match:
       - '\[(?:system\.)?io\.directory\]::delete\s*\([^\n)]*,\s*\$true'
       - '\.delete\s*\(\s*\$true\s*\)'
       - '\b(?:get-childitem|gci|ls|dir)\b[^\n;&|]*\s-r(?:e(?:c(?:u(?:r(?:s(?:e)?)?)?)?)?)?\b[^\n;&]*\|\s*(?:remove-item|rm|del|erase|ri)\b'
+    # 模型关闭时也打断的形态：递归删除工作区之外（主目录下、上一级目录）或仓库的 .git（维护者决定，2026-10-19）
+    local:
+      - '^rm(?:\.exe)?\s+(?=(?:[^\n;&|]*\s)?(?:-[a-z]*r[a-z]*|--recursive)(?:\s|$))(?:[^\n;&|]*\s)?[''\"]?(?:~/|\$HOME/|\$\{HOME\}/|\.\./)'
+      - '^rm(?:\.exe)?\s+(?=(?:[^\n;&|]*\s)?(?:-[a-z]*r[a-z]*|--recursive)(?:\s|$))(?:[^\n;&|]*\s)?[''\"]?(?:[^\s;&|''\"]*/)?\.git/?[''\"]?(?:\s|$|[;&|])'
+      - '^(?:remove-item|ri|rm|del|erase|rd|rmdir)\b(?=[^\n;&|]*\s-r(?:e(?:c(?:u(?:r(?:s(?:e)?)?)?)?)?)?(?::\$true)?(?:\s|$))(?![^\n;&|]*\s-w(?:hatif|hati|hat|ha|h|i)?(?::\$true)?(?:\s|$))[^\n;&|]*[\s:][''\"]?(?:~[/\\]|\$home[/\\]|\$env:(?:userprofile|home)[/\\]|\.\.[/\\]|(?:\.[/\\])?\.git[/\\]?[''\"]?(?:\s|$))'
 radius_floor: 1.25
 question:
   kind: probability

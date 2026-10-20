@@ -103,15 +103,10 @@ func TestFixtureExemption(t *testing.T) {
 	}
 }
 
-// commitHits 读提交的完整说明，返回命中的片段。
-func commitHits(t *testing.T, dir, rev string) []string {
-	t.Helper()
-	out, err := gitCmd(dir, "log", "-1", "--format=%B", rev)
-	if err != nil {
-		t.Fatalf("git log %s: %v\n%s", rev, err, out)
-	}
+// textHits 返回说明文字里逐行命中的私有引用片段。
+func textHits(text string) []string {
 	var hits []string
-	for _, line := range strings.Split(string(out), "\n") {
+	for _, line := range strings.Split(text, "\n") {
 		for _, re := range privateRef {
 			if m := re.FindString(line); m != "" {
 				hits = append(hits, fmt.Sprintf("%q in %q", m, line))
@@ -121,6 +116,16 @@ func commitHits(t *testing.T, dir, rev string) []string {
 	return hits
 }
 
+// commitHits 读提交的完整说明，返回命中的片段。
+func commitHits(t *testing.T, dir, rev string) []string {
+	t.Helper()
+	out, err := gitCmd(dir, "log", "-1", "--format=%B", rev)
+	if err != nil {
+		t.Fatalf("git log %s: %v\n%s", rev, err, out)
+	}
+	return textHits(string(out))
+}
+
 func TestCommitMetadata(t *testing.T) {
 	rev := os.Getenv("HG_COMMIT")
 	if rev == "" {
@@ -128,6 +133,22 @@ func TestCommitMetadata(t *testing.T) {
 	}
 	if h := commitHits(t, repoRoot(t), rev); len(h) > 0 {
 		t.Errorf("commit %s message has private references:\n%s", rev, strings.Join(h, "\n"))
+	}
+}
+
+// TestPullRequestMetadata 检查 PR 的标题与描述（HG_PR_TEXT_FILE 指向的文件）：PR 是 squash 合并的，
+// 进 main 的提交说明来自这两处，不是分支上的提交。
+func TestPullRequestMetadata(t *testing.T) {
+	path := os.Getenv("HG_PR_TEXT_FILE")
+	if path == "" {
+		t.Skip("HG_PR_TEXT_FILE not set")
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h := textHits(string(b)); len(h) > 0 {
+		t.Errorf("pull request title or description has private references:\n%s", strings.Join(h, "\n"))
 	}
 }
 
@@ -155,6 +176,9 @@ func TestCommitMetadataPatterns(t *testing.T) {
 	}
 	if h := commitHits(t, dir, good); len(h) > 0 {
 		t.Errorf("clean message reported: %v", h)
+	}
+	if h := textHits("feat: 接入 X\n\n见 docs/superpowers/plans/x.md"); len(h) != 1 {
+		t.Errorf("pull request text with a private path: %v", h)
 	}
 }
 

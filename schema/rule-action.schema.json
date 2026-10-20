@@ -140,7 +140,8 @@
         "command_position": {"description": "Match only at command positions (required for deny rules).", "type": "boolean", "default": false},
         "strip_quotes": {"description": "Blank out quoted text before matching.", "type": "boolean", "default": false},
         "redirects": {"description": "Patterns matched against redirections, written as \"command fd-operator target\" (POSIX).", "$ref": "#/$defs/patterns"},
-        "encoded": {"description": "Also hit when encoded content is handed to an interpreter.", "type": "boolean", "default": false}
+        "encoded": {"description": "Also hit when encoded content is handed to an interpreter.", "type": "boolean", "default": false},
+        "local": {"description": "Patterns for all shells that interrupt even with the judge off (requires_judge rules only): high-impact forms that are almost never false positives. Matched at each command position (anchor with ^).", "$ref": "#/$defs/patterns"}
       }
     },
     "fileMatch": {

@@ -26,6 +26,11 @@ match:
       - '\bgit(?:\.exe)?\b[^\n;&|]*\b(?:filter-branch|filter-repo)\b'
       - '\bgit(?:\.exe)?\b[^\n;&|]*\breflog\s+expire\b'
       - '\bgit(?:\.exe)?\b[^\n;&|]*\bgc\b[^\n;&|]*--prune=now\b'
+    # 模型关闭时也打断的形态：不带 lease 的强制推送（覆盖远端别人的提交）与整段改写历史的工具（维护者决定，2026-10-19）
+    local:
+      - '^git(?:\.exe)?(?:\s+(?:-[Cc]\s+(?:\"[^\"]*\"|''[^'']*''|\S+)|--(?:git-dir|work-tree|namespace|config-env|super-prefix)\s+(?:\"[^\"]*\"|''[^'']*''|\S+)|--?[\w-]+(?:=\S+)?))*\s+push\b(?![^\n;&|]*(?:\s--dry-run\b|\s-[a-z]*n[a-z]*(?:\s|$)))(?=[^\n;&|]*(?:\s-[a-z]*f[a-z]*(?:\s|$)|\s--force(?![-\w])|\s--mirror\b|\s\+[\w./-]))'
+      - '^git(?:\.exe)?(?:\s+(?:-[Cc]\s+(?:\"[^\"]*\"|''[^'']*''|\S+)|--(?:git-dir|work-tree|namespace|config-env|super-prefix)\s+(?:\"[^\"]*\"|''[^'']*''|\S+)|--?[\w-]+(?:=\S+)?))*\s+(?:filter-branch|filter-repo)\b'
+      - '^(?:(?:python[\d.]*|py)\s+)?(?:\S*/)?git-filter-repo(?:\.py)?(?=\s|$)(?![^\n;&|]*\s--(?:analyze|dry-run)(?:\s|$))'
 question:
   kind: probability
   instructions:

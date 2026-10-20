@@ -2,7 +2,7 @@
 
 [English](README.md)
 
-**支持的 harness：** Claude Code · Codex · opencode · pi · oh-my-pi · DeepSeek Harness · OpenClaw，其他 agent harness 可以通过 [generic JSON 契约](docs/guide/protocols.md#generic-harness-contract-v1)接入。<br>
+**支持的 harness：** Claude Code · Codex · opencode · pi · oh-my-pi · DeepSeek Harness · OpenClaw · Hermes Agent，其他 agent harness 可以通过 [generic JSON 契约](docs/guide/protocols.md#generic-harness-contract-v1)接入。<br>
 **拦截范围：** 灾难性命令与 fork 炸弹、递归删除、破坏性 git 与分支操作、发布、绕过检查、执行编码内容、篡改护栏与读取秘密文件，以及提示词和工具输出里的凭据、私钥和个人信息（需开启）；由本地规则与判断模型共同把关，取决于你是否要求过的情况交给模型判断（[详见](#检查什么)）。
 
 h-guard 是 agent harness 的安全护栏。它检查 agent 将要执行的操作（shell 命令与文件操作）和经过它的内容（你的提示词与工具输出），在破坏性操作执行或秘密外泄之前拒绝、请求确认或提示。
@@ -16,10 +16,11 @@ h-guard 是 agent harness 的安全护栏。它检查 agent 将要执行的操�
 > - 灾难性命令（删除 `/` 或主目录、覆写块设备、格式化文件系统）与 fork 炸弹直接拒绝；
 > - 改动 h-guard 自身配置或 harness 的 hook 设置请求确认（护栏自我保护）；
 > - 执行经过编码的内容（例如 `base64 -d | sh`）请求确认；
-> - 用 harness 的文件工具读取通常存放秘密的文件（`.env`、私钥、`~/.ssh`、云服务凭据）请求确认；
+> - 读取通常存放秘密的文件（`.env`、私钥、`~/.ssh`、云服务凭据）请求确认，不论用 harness 的文件工具，还是 shell 里常见的读法（`cat`、`grep`、`head`、`< 文件`）；
+> - 丢失工作成果与发布中后果最大的写法请求确认：`git reset --hard`、`git clean`、`git checkout .`、不带 lease 的强制推送、`git filter-repo`、递归删除 `~`、`..` 下的内容或 `.git`、`npm`/`cargo` 发布、`twine upload`、`docker push`、`gh release create`；
 > - 提示词里的凭据与私钥被拦下。
 >
-> 模型关闭时，有六类危险操作**不做判断**。`recursive_delete`、`destructive_git`、`branch_ops`、`publish`、`verify_bypass` 完全不打断：没有模型，h-guard 判断不了这个操作是不是你要求的、会造成多大损失，所以它们的本地命中只写入日志。`guard_tampering` 的本地命中仍然一律请求确认，但正则漏掉的改动没有人再看。运行 `h-guard init` 选择后端并开启模型。
+> 这些规则命中的其余写法，模型关闭时**不做判断**：没有模型，h-guard 判断不了这个操作是不是你要求的、会造成多大损失，所以其他递归删除、`git push`、rebase 与 `verify_bypass` 的本地命中只写入日志。`guard_tampering` 的本地命中仍然一律请求确认，但正则漏掉的改动没有人再看。运行 `h-guard init` 选择后端并开启模型。
 
 ## 安装
 
@@ -67,6 +68,7 @@ h-guard install pi --write            # pi：把扩展写到 ~/.pi/agent/extensi
 h-guard install omp --write           # oh-my-pi：把扩展写到 ~/.omp/agent/extensions
 h-guard install dsh --write           # DeepSeek Harness：在 ~/.dsh/cordis.patch.yml 中挂载插件
 h-guard install openclaw --write      # OpenClaw：在 ~/.openclaw/openclaw.json 中加载插件
+h-guard install hermes --write        # Hermes Agent：把插件写到 ~/.hermes/plugins 并启用
 ```
 
 Codex 用户需要打开 Codex，运行 `/hooks` 检查并信任 h-guard 的 hook。新增或改动过的 hook 在信任之前不会运行。
@@ -84,10 +86,10 @@ h-guard status    # 开头是保护摘要
 protection:
   claudecode: config written: yes | hook running: yes, last 2 min ago (PreToolUse, prompt.submit, tool.result) | self-test: passed 3 min ago
   codex: config written: yes | hook running: unverified (Codex has not run the hooks since they were installed; trust them with /hooks in Codex) | self-test: passed 3 min ago
-  interrupts: catastrophic (deny), fork_bomb (deny), guard_tampering (ask), obfuscated_exec (ask), sensitive_read (ask, file tools only)
-  matched but not interrupting, and not recorded (log.decisions is off) (judge off; h-guard init turns it on): branch_ops, destructive_git, publish, recursive_delete, verify_bypass
+  interrupts: branch_ops (ask, only its high-impact forms while the judge is off), catastrophic (deny), destructive_git (ask, only its high-impact forms while the judge is off), …
+  matched but not interrupting, and not recorded (log.decisions is off) (judge off; h-guard init turns it on): verify_bypass
   prompts and tool output: credentials deny, private_key deny (scans prompts)
-  not covered: shell commands that read secret files (cat ~/.ssh/id_rsa): ...
+  not covered: secret files read in ways h-guard does not recognize as reading (python -c, a script, …) …
 ```
 
 开启模型：
@@ -113,7 +115,7 @@ finding: publish (local)
 signals: {"action":{"judge":"off","judge_disabled_hits":["publish"]}}
 ```
 
-第二条命令命中了 `publish`，但模型关闭时这条规则不打断。模型开启后，同一条命令会请求确认，除非你最近的提示词里要求过推送（用 `--request 'push this to origin'` 模拟）。原因与提示的语言依次取自配置的 `locale`、环境变量 `LC_ALL` 与 `LANG`，上面是英文环境下的输出；中文环境下 `reason` 与 `hint` 显示为中文。
+第二条命令命中了 `publish`，但模型关闭时这条规则只有后果最大的写法（发布包或 release）打断，普通的推送不打断。模型开启后，同一条命令会请求确认，除非你最近的提示词里要求过推送（用 `--request 'push this to origin'` 模拟）。原因与提示的语言依次取自配置的 `locale`、环境变量 `LC_ALL` 与 `LANG`，上面是英文环境下的输出；中文环境下 `reason` 与 `hint` 显示为中文。
 
 ## 拦下之后
 
@@ -145,11 +147,11 @@ h-guard: agent 自行决定的危险操作需要确认：丢弃未提交改动�
 | `fork_bomb` | fork 炸弹 | deny | 否（锁定） |
 | `guard_tampering` | 改动 h-guard 的配置、同意记录、缓存或 harness 的 hook 设置 | ask | 否（锁定）；模型可以补报 |
 | `obfuscated_exec` | 把编码内容交给解释器执行 | ask | 否 |
-| `sensitive_read` | 用 harness 的文件工具读取 `.env`、`*.pem`、`*.key`、`id_rsa*`、`~/.ssh`、`~/.aws`、`~/.gnupg`、`~/.netrc` 等（shell 里的 `cat` 不算） | ask | 否 |
-| `recursive_delete` | 递归删除文件或目录 | ask | 是 |
-| `destructive_git` | 丢弃未提交改动或未跟踪文件的 git 操作 | ask | 是 |
-| `branch_ops` | 改写历史、强制删除分支、改动上游 | ask | 是 |
-| `publish` | push、PR/MR、release、发布包、修改远端的 API 调用 | ask | 是 |
+| `sensitive_read` | 读取 `.env`、`*.pem`、`*.key`、`id_rsa*`、`~/.ssh`、`~/.aws`、`~/.gnupg`、`~/.netrc` 等，用 harness 的文件工具或 shell 里常见的读法（`cat`、`grep`、`head`、`< 文件`） | ask | 否 |
+| `recursive_delete` | 递归删除文件或目录 | ask | 是，`~`、`..` 下与 `.git` 除外 |
+| `destructive_git` | 丢弃未提交改动或未跟踪文件的 git 操作 | ask | 是，`reset --hard`、`clean`、`checkout .`、`stash clear` 除外 |
+| `branch_ops` | 改写历史、强制删除分支、改动上游 | ask | 是，不带 lease 的强制推送与 `filter-branch`/`filter-repo` 除外 |
+| `publish` | push、PR/MR、release、发布包、修改远端的 API 调用 | ask | 是，发布包、镜像或 release 除外 |
 | `verify_bypass` | 绕过 git hook、检查或签名 | ask | 是 |
 
 模型开启后，需要模型的规则只在 agent 自作主张时打断：模型判断你最近的提示词里有没有明确要求这个操作，以及它会造成多大损失。锁定规则与 `obfuscated_exec` 不能因为你的要求而放行。
@@ -230,8 +232,9 @@ rules:
 | oh-my-pi | 测试过的版本及以上 | 18.11.3（冒烟测试） |
 | DeepSeek Harness | 测试过的版本及以上 | 0.2.1-rc.2（冒烟测试） |
 | OpenClaw | 测试过的版本及以上 | 2026.10.4（冒烟测试） |
+| Hermes Agent | 测试过的版本及以上 | 2026.9.24（直接调用插件 hook） |
 
-opencode、pi、oh-my-pi、DeepSeek Harness 与 OpenClaw 的扩展按各 harness 的源码编写，在 CI 里用模拟的 harness API 测试，并在真实 harness 里配合模拟的模型服务做过冒烟测试（拒绝、请求确认、替换工具输出、拦下提示词）。它们还没有录制会话。
+opencode、pi、oh-my-pi、DeepSeek Harness 与 OpenClaw 的扩展按各 harness 的源码编写，在 CI 里用模拟的 harness API 测试，并在真实 harness 里配合模拟的模型服务做过冒烟测试（拒绝、请求确认、替换工具输出、拦下提示词）。它们还没有录制会话。Hermes Agent 的插件按 Hermes 的源码编写，在 CI 里用模拟的插件上下文测试，并由 Hermes 自己的插件管理器加载、直接调用各个 hook 验证过；还没有配合模型或消息网关运行过。
 
 harness 版本未经验证时，`install` 与 `status` 会说明，但不拒绝。其他 agent harness 可以通过 [generic 契约](docs/guide/protocols.md#generic-harness-contract-v1)调用 h-guard。各 harness 的接入方式、能做与不能做的事见 [harness 指南](docs/guide/harnesses.md)。
 
@@ -246,10 +249,13 @@ harness 版本未经验证时，`install` 与 `status` 会说明，但不拒绝�
 - **DeepSeek Harness 显示不了提示。** 提示只写进它的日志；被拦下的提示词直接丢弃，对话里没有说明。
 - **OpenClaw 在对话里显示不了提示。** 提示写进 Gateway 的日志，开启插件的频道通知后也会发到聊天里。不经过 Gateway 的运行（`openclaw agent exec`）不受检查；`openclaw.json` 必须是普通 JSON，`install` 才能改写它。
 - **oh-my-pi 的 `eval` 工具一律请求确认。** h-guard 读不懂 Python 与 JavaScript 代码，所以每次 `eval` 调用都需要你确认。
-- **pi、oh-my-pi、DeepSeek Harness 与 OpenClaw 上不认识的工具请求确认。** 不在 h-guard 对这几个 harness 自带工具的名单里的工具（比如扩展添加的）需要你确认，直到你把它列进 `harnesses.<name>.read_only_tools`。
+- **Hermes Agent 在消息平台以外拦不下提示词。** 在 CLI、TUI 或 Desktop 里输入、h-guard 本应拦下的提示词已经交给了模型；h-guard 改为在这一轮里加一段提示（`prompt_not_blocked`）。`--yolo` 或 `approvals.mode: off` 时 h-guard 的请求确认变成拒绝；除了可选的渠道通知，Hermes 没有向你显示提示的办法。
+- **Hermes Agent 的 `execute_code` 一律请求确认。** 脚本能直接启动进程、改动文件，所以每次调用都需要你确认。
+- **pi、oh-my-pi、DeepSeek Harness、OpenClaw 与 Hermes Agent 上不认识的工具请求确认。** 不在 h-guard 对这几个 harness 自带工具的名单里的工具（比如扩展添加的）需要你确认，直到你把它列进 `harnesses.<name>.read_only_tools`。
+- **opencode 上的 MCP 工具被阻止。** opencode 不支持请求确认，所以 MCP 工具在你把它列进 `harnesses.opencode.read_only_tools` 之前一律阻止；自定义工具与插件提供的工具照常放行。
 - **提示词的来源靠推断。** Claude Code 会标出自动消息（定时任务、子 agent 回报）；Codex 不标，h-guard 按已知格式识别它的自动消息。识别不出的自动消息算作你本人的话，模型开启时可能被当作你对某个操作的要求。
 - **Windows 没有经过实机验证。** Windows 上的路径处理、PowerShell 的 hook 外包脚本与 Codex 的命令形式只在 CI 与交叉编译中测试过。
-- **路径规则只看文件工具。** `sensitive_read` 等文件规则检查的是 harness 的文件工具（Claude Code 的 Read、Codex 的补丁、generic 的文件动作）。在 shell 里读同一个文件的命令（如 `cat ~/.ssh/id_rsa`）不会被它们拦下。`outbound.tier: 2`（默认是 1）时，被识别为读文件的 shell 命令的输出会在读取之后扫描其中的凭据与私钥。
+- **shell 里的读文件靠识别，不是隔离。** `sensitive_read` 检查 harness 的文件工具，以及 shell 里常见读法（`cat`、`grep`、`head`、`base64`、`< 文件`、PowerShell 的 `Get-Content`）写明的文件。其他读文件的方式（`python -c`、脚本、经 `xargs` 或远程主机传过去的文件名）运行前拦不住。`outbound.tier: 2`（默认是 1）时，被识别为读文件的 shell 命令的输出会在读取之后扫描其中的凭据与私钥。
 - **个人信息检测有误报。** 开发工作中邮箱与公网 IP 很常见，所以 `pii` 默认关闭。可以用类别的 `ignore` 列表或单独停用规则。
 - **被拦下的内容可能留在 harness 自己的记录里。** 被拦下的提示词可能留在 harness 的本地历史中；即使 h-guard 替换了给模型看的工具输出，Codex 仍会把原输出写进它的 transcript。h-guard 无法清除这些记录。
 - **副作用已经发生。** 工具输出的检查发生在工具运行之后；替换输出只改变模型看到的内容。
@@ -260,7 +266,7 @@ harness 版本未经验证时，`install` 与 `status` 会说明，但不拒绝�
 ```sh
 h-guard install claudecode --remove --write
 h-guard install codex --remove --write
-h-guard install opencode --remove --write   # pi、omp、dsh、openclaw 同理
+h-guard install opencode --remove --write   # pi、omp、dsh、openclaw、hermes 同理
 ```
 
 `--remove` 只删除 h-guard 自己的条目，harness 配置里的其他内容保持不变。之后删除程序（`brew uninstall h-guard` 或直接删除文件），如有需要再删除 h-guard 的配置目录。
@@ -268,6 +274,7 @@ h-guard install opencode --remove --write   # pi、omp、dsh、openclaw 同理
 ## 文档
 
 - [配置](docs/guide/configuration.md)：全部字段、合并顺序、后端与校准档案。
+- [保护场景](docs/guide/scenarios.md)：保住工作成果、阻止擅自发布、减少凭据泄露，各附一个演示。
 - [规则包](docs/guide/rules.md)：编写 action 与 outbound 规则。
 - [协议](docs/guide/protocols.md)：判断 exec 协议、generic harness 契约与扩展接入协议。
 - [Harness](docs/guide/harnesses.md)：各 harness 的接入方式及各自的能力。

@@ -9,14 +9,15 @@ import { fake, guard, haveGuard, load, missing, recorded } from '../../testing/h
 const file = join(dirname(fileURLToPath(import.meta.url)), '..', 'h-guard.js')
 const KEY = 'deploy with aws_access_key_id = AKIAIOSFODNN7EXAMPL0'
 
-// plugin 加载插件并返回它的 hooks；toasts 收集 client.tui.showToast 的参数
-async function plugin(command, { parentID = '' } = {}) {
+// plugin 加载插件并返回它的 hooks；toasts 收集 client.tui.showToast 的参数；mcp 是 client.mcp.status 返回的 MCP 服务
+async function plugin(command, { parentID = '', mcp = { 'my.github': { status: 'connected' } } } = {}) {
   const mod = await load(file, 'opencode', command)
   assert.deepEqual(Object.keys(mod), ['HGuard'], 'opencode requires every export to be a plugin function')
   const toasts = []
   const client = {
     tui: { showToast: async (o) => toasts.push(o.body) },
     session: { get: async () => ({ data: { id: 'ses_1', parentID } }) },
+    mcp: { status: async () => ({ data: mcp }) },
   }
   const hooks = await mod.HGuard({ client, directory: '/w', worktree: '/w', project: {}, $: null })
   return { hooks, toasts }
@@ -33,6 +34,31 @@ test('tool.execute.before: ordinary commands and tools without actions pass', { 
   const { hooks } = await plugin(guard('opencode'))
   await before(hooks, 'bash', { command: 'ls' })
   await before(hooks, 'glob', { pattern: '**/*.go' })
+  await before(hooks, 'notes_search', { query: 'x' })
+})
+
+test('tool.execute.before: an MCP tool is blocked until it is listed as read-only', { skip: !haveGuard }, async () => {
+  const { hooks } = await plugin(guard('opencode'))
+  await assert.rejects(before(hooks, 'my_github_create_issue', { title: 'x' }), /harnesses\.opencode\.read_only_tools/)
+})
+
+test('request: the tool\'s source comes from the MCP servers opencode reports', async () => {
+  const { command, record } = await fake({ action: 'pass' })
+  const { hooks } = await plugin(command)
+  await before(hooks, 'my_github_create_issue', {})
+  await before(hooks, 'notes_search', {})
+  const { hooks: failed } = await plugin(command, { mcp: null })
+  await before(failed, 'notes_search', {})
+  const mod = await load(file, 'opencode', command)
+  const thrown = await mod.HGuard({ client: { mcp: { status: async () => { throw new Error('server down') } } }, directory: '/w' })
+  await before(thrown, 'notes_search', {})
+  const errored = await mod.HGuard({ client: { mcp: { status: async () => ({ error: { name: 'x' } }) } }, directory: '/w' })
+  await before(errored, 'notes_search', {})
+  const short = await load(file, 'opencode', command, 1000)
+  const stalled = await short.HGuard({ client: { mcp: { status: () => new Promise(() => {}) } }, directory: '/w' })
+  await before(stalled, 'notes_search', {})
+  const got = (await recorded(record)).map((r) => r.request.data.source)
+  assert.deepEqual(got, ['mcp', 'opencode', '?', '?', '?', '?'])
 })
 
 test('tool.execute.before: a guard that cannot run blocks the call', async () => {
@@ -70,7 +96,7 @@ test('request: protocol, harness, session and the hook arguments', async () => {
   assert.deepEqual(pre.argv.slice(-2), ['--event', 'tool.execute.before'])
   assert.deepEqual(pre.request, {
     protocol: 'h-guard.ext/v1', harness: 'opencode', hook: 'tool.execute.before', session: { id: 'ses_1', cwd: '/w' },
-    data: { tool: 'bash', sessionID: 'ses_1', callID: 'call_1', args: { command: 'ls', workdir: 'sub' } },
+    data: { tool: 'bash', sessionID: 'ses_1', callID: 'call_1', args: { command: 'ls', workdir: 'sub' }, source: 'opencode' },
   })
   assert.equal(msg.request.data.parentID, 'ses_parent')
   assert.deepEqual(msg.request.data.parts, [{ type: 'text', text: 'hi', synthetic: false }, { type: 'file', synthetic: false }])

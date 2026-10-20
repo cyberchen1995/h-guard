@@ -21,6 +21,11 @@ import (
 //   - 值在主目录之下时，主目录的部分另可写成 ~、$HOME、${HOME}、$env:HOME、$env:USERPROFILE、%USERPROFILE%
 //     （路径模式解析目标时会展开 ~，命令文本不会，这几种写法在这里补上）。
 //
+// 相对的值由调用方事先解析成绝对路径（harness 按自己的工作目录解析，h-guard 继承同一个目录）。值是根目录时展开为
+// 从参数开头起的分隔符（也可以不占字符，让模式里紧跟的分隔符匹配那个 /）；值带盘符时命令里也可以省略盘符。
+//
+// 占位符也可以写在后向断言里：regexp2 的后向断言不要求定长。
+//
 // 值为空（环境变量没有设置、没有 --config）时，占位符换成永不匹配的 (?!)：用到它的那一处不匹配，不会变成匹配一切，
 // 规则照常加载；与路径模式里「没有值的模式不匹配」一致。占位符写在可选的位置（(?:{x})?）时，那一处退化为不写它。
 var execPlaceholder = regexp.MustCompile(`(\\*)\{([a-z_]+)\}`)
@@ -65,13 +70,28 @@ func expandExec(p string, env paths.Env) string {
 	})
 }
 
+// pathStart 要求路径从一个参数的开头起：前面是行首、空白、引号、=、shell 的分隔符，或 PowerShell 数组的逗号与
+// -Path:x 的冒号。根目录展开时用它，否则会匹配任何一个 /。
+const pathStart = "(?<![^\\s'\"`=(<>|;&,:])"
+
 // execLiteral 是匹配目录 v 的正则（见 execPlaceholder 的说明）；v 为空时永不匹配。
 func execLiteral(v, home string) string {
 	if v == "" {
 		return neverMatch
 	}
 	n := normDir(v)
+	if n == "/" {
+		// 根目录：吞掉分隔符（模式里单独用 {x} 时），或不占字符、留给模式里紧跟的 [/\\]+（不会要求两个分隔符）
+		return pathStart + `(?:[/\\]+|(?=[/\\]))`
+	}
 	lit := literalSegments(n)
+	if d := driveLetter.FindString(n); d != "" && len(n) == len(d) {
+		// 盘的根目录（C:\ 规范化成 C:；Windows 上 / 经 absVars 也成了它）：与根目录相同，盘符可省略
+		return "(?i:(?:" + regexp.QuoteMeta(d) + "|" + pathStart + "))" + `(?:[/\\]+|(?=[/\\]))`
+	} else if d != "" && n[len(d)] == '/' {
+		// Windows 的盘符路径：命令里也可能省略盘符（\agent、/agent 相对当前盘），省略时须从参数开头起
+		lit = "(?:" + regexp.QuoteMeta(d) + "|" + pathStart + ")" + literalSegments(n[len(d):])
+	}
 	if h := normDir(home); h != "" {
 		switch {
 		case strings.EqualFold(n, h):
@@ -83,12 +103,18 @@ func execLiteral(v, home string) string {
 	return "(?i:" + lit + ")"
 }
 
-// normDir 把 \ 换成 /，规范化并去掉末尾的 /（根目录为空）。
+var driveLetter = regexp.MustCompile(`^[A-Za-z]:`)
+
+// normDir 把 \ 换成 /，规范化并去掉末尾的 /；根目录保留为 /，不能变成空（空的字面量匹配任何位置）。
 func normDir(v string) string {
 	if v == "" {
 		return ""
 	}
-	return strings.TrimSuffix(pathpkg.Clean(strings.ReplaceAll(v, `\`, "/")), "/")
+	n := pathpkg.Clean(strings.ReplaceAll(v, `\`, "/"))
+	if n == "/" {
+		return n
+	}
+	return strings.TrimSuffix(n, "/")
 }
 
 // literalSegments 把 / 分隔的路径换成正则：各段转义，分隔符匹配 [/\\]+，空格前可有反斜杠。
@@ -100,16 +126,29 @@ func literalSegments(n string) string {
 	return strings.Join(segs, `[/\\]+`)
 }
 
-// execGroup 是一组 exec 模式：不含占位符的在加载时编译，含占位符的匹配时按环境展开编译（结果缓存）。
-type execGroup struct {
-	static    []*regexp2.Regexp
-	templates []string
+// execGroup 是一组 exec 模式，按规则里的顺序：不含占位符的在加载时编译（re），含占位符的匹配时按环境展开编译
+// （tpl，结果缓存）。顺序要保留：每次匹配都有超时，预算也按顺序耗尽，先写的模式先得出结论。
+type execGroup []execPattern
+
+type execPattern struct {
+	re  *regexp2.Regexp
+	tpl string
+}
+
+// static 是不含占位符时的全部模式。
+func (g execGroup) static() []*regexp2.Regexp {
+	out := make([]*regexp2.Regexp, 0, len(g))
+	for _, p := range g {
+		out = append(out, p.re)
+	}
+	return out
 }
 
 // resolvedExec 是按某个环境展开后的全部模式。
 type resolvedExec struct {
 	key                              string
 	any, posix, powershell, redirect []*regexp2.Regexp
+	local                            []*regexp2.Regexp
 	broken                           bool // 有模式展开后编译失败：按命中处理（只收紧）
 }
 
@@ -150,10 +189,13 @@ func (c *compiledExec) resolve(env paths.Env) *resolvedExec {
 	for _, g := range []struct {
 		src *execGroup
 		dst *[]*regexp2.Regexp
-	}{{&c.any, &r.any}, {&c.posix, &r.posix}, {&c.powershell, &r.powershell}, {&c.redirects, &r.redirect}} {
-		*g.dst = append(*g.dst, g.src.static...)
-		for _, p := range g.src.templates {
-			re, err := compileTemplate(p, env)
+	}{{&c.any, &r.any}, {&c.posix, &r.posix}, {&c.powershell, &r.powershell}, {&c.redirects, &r.redirect}, {&c.local, &r.local}} {
+		for _, p := range *g.src {
+			if p.tpl == "" {
+				*g.dst = append(*g.dst, p.re)
+				continue
+			}
+			re, err := compileTemplate(p.tpl, env)
 			if err != nil {
 				r.broken = true
 				continue

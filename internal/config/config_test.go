@@ -213,6 +213,9 @@ func TestLoadRejects(t *testing.T) {
 		"empty profile":        "version: 1\nprofiles: {jev: {}}\n",
 		"second document":      "version: 1\n---\nversion: 1\njudge: {enabled: true}\n",
 		"trailing garbage doc": "version: 1\n---\n: : :\n",
+		"notify elsewhere":     "version: 1\nharnesses: {codex: {notify: {enabled: true}}}\n",
+		"bad notify decision":  "version: 1\nharnesses: {hermes: {notify: {enabled: true, on: [pass]}}}\n",
+		"bad notify target":    "version: 1\nharnesses: {hermes: {notify: {enabled: true, to: 'telegram -x'}}}\n",
 	}
 	for name, body := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -221,6 +224,28 @@ func TestLoadRejects(t *testing.T) {
 				t.Errorf("Load accepted:\n%s", body)
 			}
 		})
+	}
+}
+
+// TestNotifyFor：harnesses.hermes.notify 开启时默认对 deny 与 warn 发通知；没有开启时不发。
+func TestNotifyFor(t *testing.T) {
+	p := write(t, t.TempDir(), "c.yaml", "version: 1\nharnesses:\n  hermes: {notify: {enabled: true, to: 'telegram:-100123:7'}}\n  dsh: {}\n")
+	c, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if on, to, ok := c.NotifyFor("hermes"); !ok || to != "telegram:-100123:7" || len(on) != 2 || on[0] != guard.DecisionDeny || on[1] != guard.DecisionWarn {
+		t.Errorf("hermes: %v %q %v", on, to, ok)
+	}
+	if _, _, ok := c.NotifyFor("dsh"); ok {
+		t.Error("dsh notifies")
+	}
+	p = write(t, t.TempDir(), "c.yaml", "version: 1\nharnesses: {hermes: {notify: {enabled: true, on: [ask]}}}\n")
+	if c, err = Load(p); err != nil {
+		t.Fatal(err)
+	}
+	if on, to, ok := c.NotifyFor("hermes"); !ok || to != "" || len(on) != 1 || on[0] != guard.DecisionAsk {
+		t.Errorf("on [ask]: %v %q %v", on, to, ok)
 	}
 }
 

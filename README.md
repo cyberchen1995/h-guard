@@ -3,7 +3,7 @@
 [简体中文](README.zh-CN.md)
 
 **Harnesses:** Claude Code · Codex · opencode · pi · oh-my-pi · DeepSeek Harness ·
-OpenClaw, and any other agent harness through the
+OpenClaw · Hermes Agent, and any other agent harness through the
 [generic JSON contract](docs/guide/protocols.md#generic-harness-contract-v1).<br>
 **Intercepts:** catastrophic commands and fork bombs, recursive deletes,
 destructive git and branch operations, publishing, bypassed checks, encoded
@@ -36,14 +36,18 @@ and choose `claude-haiku` (recommended: fast and calibrated) or `gemma4-local`
 >   for confirmation (guard self-protection);
 > - running encoded content (for example `base64 -d | sh`) asks;
 > - reading files that usually hold secrets (`.env`, private keys, `~/.ssh`,
->   cloud credentials) with the harness's file tools asks;
+>   cloud credentials) asks, with the harness's file tools and with common
+>   shell reads (`cat`, `grep`, `head`, `< file`);
+> - the high-impact forms of losing work and publishing ask: `git reset
+>   --hard`, `git clean`, `git checkout .`, a force push without lease,
+>   `git filter-repo`, recursive deletes under `~`, `..` or of `.git`,
+>   `npm`/`cargo` publish, `twine upload`, `docker push`, `gh release create`;
 > - credentials and private keys in your prompts are blocked.
 >
-> Six categories of dangerous operation are **not judged** with the model off.
-> `recursive_delete`, `destructive_git`, `branch_ops`, `publish` and
-> `verify_bypass` do not interrupt at all: without the model h-guard cannot
-> tell whether you asked for the operation or how much it would destroy, so
-> their local matches are only logged. `guard_tampering` still asks on every
+> Everything else those rules match is **not judged** with the model off:
+> without the model h-guard cannot tell whether you asked for the operation or
+> how much it would destroy, so other recursive deletes, `git push`, a rebase
+> and `verify_bypass` are only logged. `guard_tampering` still asks on every
 > local match, but nothing looks for tampering that its patterns miss. Run
 > `h-guard init` to choose a backend and turn the model on.
 
@@ -99,6 +103,7 @@ h-guard install pi --write            # pi: writes an extension to ~/.pi/agent/e
 h-guard install omp --write           # oh-my-pi: writes an extension to ~/.omp/agent/extensions
 h-guard install dsh --write           # DeepSeek Harness: mounts a plugin in ~/.dsh/cordis.patch.yml
 h-guard install openclaw --write      # OpenClaw: loads a plugin from ~/.openclaw/openclaw.json
+h-guard install hermes --write        # Hermes Agent: writes a plugin to ~/.hermes/plugins and enables it
 ```
 
 For Codex, open Codex and run `/hooks` to review and trust the h-guard hooks.
@@ -123,10 +128,10 @@ which rules interrupt, which only log, which are off, and what is not covered:
 protection:
   claudecode: config written: yes | hook running: yes, last 2 min ago (PreToolUse, prompt.submit, tool.result) | self-test: passed 3 min ago
   codex: config written: yes | hook running: unverified (Codex has not run the hooks since they were installed; trust them with /hooks in Codex) | self-test: passed 3 min ago
-  interrupts: catastrophic (deny), fork_bomb (deny), guard_tampering (ask), obfuscated_exec (ask), sensitive_read (ask, file tools only)
-  matched but not interrupting, and not recorded (log.decisions is off) (judge off; h-guard init turns it on): branch_ops, destructive_git, publish, recursive_delete, verify_bypass
+  interrupts: branch_ops (ask, only its high-impact forms while the judge is off), catastrophic (deny), destructive_git (ask, only its high-impact forms while the judge is off), …
+  matched but not interrupting, and not recorded (log.decisions is off) (judge off; h-guard init turns it on): verify_bypass
   prompts and tool output: credentials deny, private_key deny (scans prompts)
-  not covered: shell commands that read secret files (cat ~/.ssh/id_rsa): ...
+  not covered: secret files read in ways h-guard does not recognize as reading (python -c, a script, …) …
 ```
 
 Turn on the model:
@@ -153,9 +158,10 @@ finding: publish (local)
 signals: {"action":{"judge":"off","judge_disabled_hits":["publish"]}}
 ```
 
-The second command matches `publish`, but with the model off that rule does not
-interrupt. With the model on, the same command asks for confirmation unless one
-of your recent prompts asked for the push (`--request 'push this to origin'`
+The second command matches `publish`, but with the model off only that rule's
+high-impact forms interrupt (publishing a package or a release), not a plain
+push. With the model on, the same command asks for confirmation unless one of
+your recent prompts asked for the push (`--request 'push this to origin'`
 simulates that).
 
 ## When it interrupts
@@ -206,11 +212,11 @@ built-in rules:
 | `fork_bomb` | fork bombs | deny | no (locked) |
 | `guard_tampering` | changes to h-guard's configuration, consent, cache or the harness's hook settings | ask | no (locked); the model can add hits |
 | `obfuscated_exec` | encoded content handed to an interpreter | ask | no |
-| `sensitive_read` | reading `.env`, `*.pem`, `*.key`, `id_rsa*`, `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.netrc` and similar through the harness's file tools (not `cat` in a shell) | ask | no |
-| `recursive_delete` | deleting files or directories recursively | ask | yes |
-| `destructive_git` | git operations that discard uncommitted changes or untracked files | ask | yes |
-| `branch_ops` | rewriting history, force-deleting a branch, changing an upstream | ask | yes |
-| `publish` | push, pull/merge requests, releases, package publishing, mutating API calls | ask | yes |
+| `sensitive_read` | reading `.env`, `*.pem`, `*.key`, `id_rsa*`, `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.netrc` and similar, through the harness's file tools or common shell reads (`cat`, `grep`, `head`, `< file`) | ask | no |
+| `recursive_delete` | deleting files or directories recursively | ask | yes, except under `~`, `..` or of `.git` |
+| `destructive_git` | git operations that discard uncommitted changes or untracked files | ask | yes, except `reset --hard`, `clean`, `checkout .`, `stash clear` |
+| `branch_ops` | rewriting history, force-deleting a branch, changing an upstream | ask | yes, except a force push without lease and `filter-branch`/`filter-repo` |
+| `publish` | push, pull/merge requests, releases, package publishing, mutating API calls | ask | yes, except publishing a package, an image or a release |
 | `verify_bypass` | bypassing git hooks, checks or signing | ask | yes |
 
 With the model on, a rule that needs the model interrupts only when the agent
@@ -324,12 +330,16 @@ the [rule pack guide](docs/guide/rules.md) for writing rules.
 | oh-my-pi | the version tested, or later | 18.11.3 (smoke test) |
 | DeepSeek Harness | the version tested, or later | 0.2.1-rc.2 (smoke test) |
 | OpenClaw | the version tested, or later | 2026.10.4 (smoke test) |
+| Hermes Agent | the version tested, or later | 2026.9.24 (plugin hooks driven directly) |
 
 The opencode, pi, oh-my-pi, DeepSeek Harness and OpenClaw extensions were written against
 each harness's source code, are tested in CI against simulated harness APIs,
 and were smoke-tested in the real harnesses with a simulated model server
 (blocking, asking, replacing tool output, blocking prompts). There are no
-recorded sessions of them yet.
+recorded sessions of them yet. The Hermes Agent plugin was written against
+Hermes's source, is tested in CI against a simulated plugin context, and was
+loaded by Hermes's own plugin manager with its hooks driven directly; it has
+not yet been run with a model or a messaging gateway.
 
 `install` and `status` say when a harness version has not been verified; they
 do not refuse it. Other agent harnesses can call h-guard through the
@@ -356,10 +366,21 @@ on Windows.
   checked, and `openclaw.json` must be plain JSON for `install` to edit it.
 - **oh-my-pi's `eval` tool asks.** h-guard cannot read Python or JavaScript
   code, so every `eval` call needs your confirmation.
-- **Unknown tools ask on pi, oh-my-pi, DeepSeek Harness and OpenClaw.** Tools that are not on
+- **Hermes Agent cannot block prompts outside messaging platforms.** A prompt
+  typed into the CLI, TUI or Desktop that h-guard would block has already
+  reached the model; h-guard adds a warning to the turn instead
+  (`prompt_not_blocked`). Under `--yolo` or `approvals.mode: off`, h-guard's
+  confirmations become denials, and Hermes cannot show you warnings except
+  through the optional channel notifications.
+- **Hermes Agent's `execute_code` asks.** The script can start processes and
+  change files directly, so every call needs your confirmation.
+- **Unknown tools ask on pi, oh-my-pi, DeepSeek Harness, OpenClaw and Hermes Agent.** Tools that are not on
   h-guard's list of the harness's own tools (for example ones added by an
   extension) need your confirmation until you list them in
   `harnesses.<name>.read_only_tools`.
+- **MCP tools are blocked on opencode.** opencode cannot ask, so MCP tools are
+  blocked until you list them in `harnesses.opencode.read_only_tools`; custom
+  tools and plugin tools pass.
 - **Codex hooks must be trusted.** After `install codex --write` you have to
   trust the hooks with `/hooks` in Codex; until then they do not run. h-guard
   cannot read Codex's trust state: `h-guard status` shows the hooks as
@@ -392,12 +413,13 @@ on Windows.
 - **Windows is not verified on real hardware.** Path handling, the PowerShell
   hook wrapper and Codex's command forms on Windows are tested only in CI and
   by cross-compilation.
-- **Path rules only see file tools.** `sensitive_read` and other file rules
-  check the harness's file tools (Claude Code's Read, Codex's patches, generic
-  file actions). A shell command that reads the same file, such as
-  `cat ~/.ssh/id_rsa`, is not caught by them. At `outbound.tier: 2` (default
-  1) the output of shell commands recognized as reading files is scanned for
-  credentials and keys after the read.
+- **Shell reads are recognized, not isolated.** `sensitive_read` checks the
+  harness's file tools and the files that common shell reads name (`cat`,
+  `grep`, `head`, `base64`, `< file`, PowerShell's `Get-Content`). Other ways
+  of reading a file, such as `python -c`, a script, or names passed through
+  `xargs` or to a remote host, are not caught before they run. At
+  `outbound.tier: 2` (default 1) the output of shell commands recognized as
+  reading files is scanned for credentials and keys after the read.
 - **Personal-data detection has false positives.** Email addresses and public
   IP addresses are common in development work, which is why `pii` is off by
   default. Use a category's `ignore` list or turn off single rules.
@@ -416,7 +438,7 @@ on Windows.
 ```sh
 h-guard install claudecode --remove --write
 h-guard install codex --remove --write
-h-guard install opencode --remove --write   # likewise pi, omp, dsh, openclaw
+h-guard install opencode --remove --write   # likewise pi, omp, dsh, openclaw, hermes
 ```
 
 `--remove` deletes only h-guard's own entries and keeps everything else in the
@@ -427,6 +449,8 @@ delete the file) and, if you like, h-guard's configuration directory.
 
 - [Configuration](docs/guide/configuration.md): every field, merge order,
   backends and calibration profiles.
+- [Protection scenarios](docs/guide/scenarios.md): keeping your work, stopping
+  unasked publishing and keeping credentials in, with a demo for each.
 - [Rule packs](docs/guide/rules.md): writing action and outbound rules.
 - [Protocols](docs/guide/protocols.md): the judge exec protocol, the generic
   harness contract and the extension protocol.
