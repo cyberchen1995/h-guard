@@ -15,6 +15,7 @@ import (
 
 // TestBootstrapIsReproducible：同一 seed 两次结果相同；不调用后端；每个阈值都有稳定性；B 与 OOBRuns 记录在结果里。
 func TestBootstrapIsReproducible(t *testing.T) {
+	t.Parallel()
 	cases := corpus(t)
 	b := newOracle(cases)
 	env := newEnv(t, b, config.ConservativeThresholds)
@@ -63,6 +64,7 @@ func TestBootstrapIsReproducible(t *testing.T) {
 // 注明 unsettled，但建议阈值本身不被改动（改了就不是袋外数字描述的那套流程）。
 // 另外用噪声后端钉住 seed 的传递：不同 seed 必须给出不同结果。
 func TestBootstrapReportsStabilityAndOptimism(t *testing.T) {
+	t.Parallel()
 	cases := corpus(t)
 	b := newOracle(cases)
 	b.reqYes, b.hitYes = 0.62, 0.58 // 贴着网格点，重采样时阈值来回跳
