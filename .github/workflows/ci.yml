@@ -4,13 +4,16 @@ on:
   push:
     branches: [main]
   pull_request:
+    # edited：标题或描述改了要重查（squash 合并时它们就是进 main 的提交说明）；这时只跑 commits。
+    types: [opened, synchronize, reopened, edited]
 
 permissions:
   contents: read
 
-# 同一个 PR 再推送时取消还在跑的上一轮；main 上的推送不取消，每个提交都要有完整结果。
+# 同一个 PR 再推送时取消还在跑的上一轮。main 上的推送各自一组：同组只保留一个排队的 run，
+# 连续推送会把中间的提交挤掉，而每个提交都要有完整结果。
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 defaults:
@@ -19,6 +22,7 @@ defaults:
 
 jobs:
   lint:
+    if: github.event.action != 'edited'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -53,6 +57,7 @@ jobs:
 
   # -race 只在 ubuntu 上开：它让 CPU 密集的测试慢一个数量级，而平台差异在路径与文件系统，不在数据竞争。
   test:
+    if: github.event.action != 'edited'
     strategy:
       fail-fast: false
       matrix:
