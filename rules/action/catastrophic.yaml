@@ -80,6 +80,12 @@ examples:
     - {shell: posix, command: "rm -rf \"$HOME\""}
     - {shell: posix, command: "/bin/rm -rf /"}
     - {shell: posix, command: "timeout 5 rm -rf /"}
+    - {shell: posix, command: "setsid rm -rf /"}
+    - {shell: posix, command: "eval \"rm -rf /\""}
+    - {shell: posix, command: "bash <<< \"rm -rf /\""}
+    - {shell: posix, command: "echo \"rm -rf /\" | sh"}
+    - {shell: posix, command: "rm${IFS}-rf${IFS}/"}
+    - {shell: posix, command: "{rm,-rf,/}"}
   miss:
     - {shell: powershell, command: "Remove-Item -Recurse -Force .\\build"}
     - {shell: powershell, command: "Remove-Item -Recurse C:\\proj\\dist"}
@@ -102,3 +108,5 @@ examples:
     - {shell: posix, command: "git commit -m \"docs: why not rm -rf /\""}
     - {shell: posix, command: "cat > README.md <<'EOF'\nrm -rf /\nEOF"}
     - {shell: posix, command: "python3 -c \"print('rm -rf /')\""}
+    - {shell: posix, command: "echo \"rm -rf /\" | bash -c cat"}
+    - {shell: posix, command: "cat <<< \"rm -rf /\""}

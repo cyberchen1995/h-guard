@@ -318,6 +318,35 @@ func TestNestedShells(t *testing.T) {
 		{`bash script.sh`, nil},
 		{`python3 -c "` + MARK + `"`, nil},
 		{`echo "bash -c ` + MARK + `"`, nil},
+		{`eval "` + MARK + `"`, []string{MARK}},
+		{`bash <<< '` + MARK + `'`, []string{MARK}},
+		{`echo -n "` + MARK + `" | sh`, []string{MARK}},
+		{`printf '` + MARK + `' | bash -s`, []string{MARK}},
+		{`echo "` + MARK + `" | bash -c cat`, []string{"cat"}},
+		{`echo "` + MARK + `" | bash script.sh`, nil},
+		{`cat <<< '` + MARK + `'`, nil},
+	}
+	for _, tt := range tests {
+		if got := inner(expand(t, tt.cmd)); !slices.Equal(got, tt.inner) {
+			t.Errorf("%q: inner = %q, want %q", tt.cmd, got, tt.inner)
+		}
+	}
+}
+
+// TestRewritten：$IFS 与独立成词的花括号列表另按展开后的写法检查一次；其余命令不多出单元。
+func TestRewritten(t *testing.T) {
+	tests := []struct {
+		cmd   string
+		inner []string
+	}{
+		{`touch${IFS}/tmp/hg-mark`, []string{MARK}},
+		{`touch$IFS/tmp/hg-mark`, []string{MARK}},
+		{`touch${IFS:0:1}/tmp/hg-mark`, []string{MARK}},
+		{`{touch,/tmp/hg-mark}`, []string{MARK}},
+		{`cd x; {touch,/tmp/hg-mark}`, []string{`cd x; ` + MARK}},
+		{`echo $IFSX`, nil},
+		{`cp a.{txt,bak}`, nil},
+		{`{ touch /tmp/hg-mark; }`, nil},
 	}
 	for _, tt := range tests {
 		if got := inner(expand(t, tt.cmd)); !slices.Equal(got, tt.inner) {
