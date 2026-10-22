@@ -134,6 +134,13 @@ func TestCommitMetadata(t *testing.T) {
 	if h := commitHits(t, repoRoot(t), rev); len(h) > 0 {
 		t.Errorf("commit %s message has private references:\n%s", rev, strings.Join(h, "\n"))
 	}
+	out, err := gitCmd(repoRoot(t), "log", "-1", "--format=%B", rev)
+	if err != nil {
+		t.Fatalf("git log %s: %v\n%s", rev, err, out)
+	}
+	if p := messageProblems(string(out), true); len(p) > 0 {
+		t.Errorf("commit %s message breaks the convention in CONTRIBUTING.md:\n%s", rev, strings.Join(p, "\n"))
+	}
 }
 
 // TestPullRequestMetadata 检查 PR 的标题与描述（HG_PR_TEXT_FILE 指向的文件）：PR 是 squash 合并的，
@@ -149,6 +156,9 @@ func TestPullRequestMetadata(t *testing.T) {
 	}
 	if h := textHits(string(b)); len(h) > 0 {
 		t.Errorf("pull request title or description has private references:\n%s", strings.Join(h, "\n"))
+	}
+	if p := messageProblems(string(b), false); len(p) > 0 {
+		t.Errorf("pull request title or description breaks the convention in CONTRIBUTING.md:\n%s", strings.Join(p, "\n"))
 	}
 }
 
