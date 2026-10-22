@@ -205,7 +205,8 @@ write patterns with `**/` or `~/` (not a drive letter). Placeholders:
 | `{omp_config}` | `$PI_CONFIG_DIR` under the home directory (no match when unset) |
 | `{dsh_home}` | `$DSH_HOME`, with a leading `~` expanded (no match when unset) |
 | `{openclaw_config}` | the `openclaw.json` OpenClaw reads (see the OpenClaw section of the harness guide) |
-| `{openclaw_includes}` | each file OpenClaw's configuration pulls in with `$include`, as h-guard resolves them; a pattern with it matches any of them (no match when there are none) |
+| `{openclaw_includes}` | each file OpenClaw's configuration pulls in with `$include`, as h-guard resolves them, listed both as written and with symbolic links resolved; a pattern with it matches any of them (no match when there are none) |
+| `{openclaw_state_dir}` | OpenClaw's state directory: `$OPENCLAW_STATE_DIR`, otherwise `.openclaw` under `$OPENCLAW_HOME` or the home directory (see the OpenClaw section of the harness guide) |
 | `{hermes_managed}` | Hermes Agent's managed-scope directory: `$HERMES_MANAGED_DIR`, otherwise `/etc/hermes` (unset on Windows) |
 | `{hermes_home}` | Hermes Agent's home: `$HERMES_HOME` with environment variables and a leading `~` expanded as Hermes does, otherwise the default `~/.hermes` (`%LOCALAPPDATA%\hermes` on Windows); always set |
 
@@ -227,7 +228,7 @@ file system, with the home directory `/home/user`, the working directory
 `{pi_agent_dir}` = `/opt/pi/agent`, `{dsh_home}` = `/home/user/my dsh`,
 `{openclaw_config}` = `/srv/openclaw/openclaw.json`, `{openclaw_includes}` =
 `/home/user/.openclaw/conf.d/plugins.json`, `/etc/openclaw/plugins.json` and
-`C:\etc\openclaw\plugins.json`, `{hermes_home}` = `/opt/hermes` and
+`C:\etc\openclaw\plugins.json`, `{openclaw_state_dir}` = `/srv/openclaw`, `{hermes_home}` = `/opt/hermes` and
 `{hermes_managed}` = `/srv/hermes-policy`; the other placeholders are unset. Command examples use the same values for
 placeholders in `exec` patterns.
 

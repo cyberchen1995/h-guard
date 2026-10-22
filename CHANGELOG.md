@@ -145,8 +145,12 @@ minor releases. Every such change is recorded in this file.
   call` with `config.set`, `config.patch` or `config.apply`) or disable
   the plugin, reset or uninstall OpenClaw's configuration and state
   (`openclaw reset`, `openclaw uninstall --state`/`--all`, `--reset` on
-  `onboard`, `setup` and `gateway`). Path and `exec` patterns can use `{openclaw_config}` and
-  `{openclaw_includes}` (matching any included file).
+  `onboard`, `setup` and `gateway`), and the `openclaw secrets configure`
+  wizard. The state directory OpenClaw really uses (`OPENCLAW_STATE_DIR`
+  anywhere) is protected like `~/.openclaw`: the directory itself and the
+  `.json5` files in it. Path and `exec` patterns can use `{openclaw_config}`,
+  `{openclaw_state_dir}` and `{openclaw_includes}` (matching any included
+  file, both the path as written and with symbolic links resolved).
 - `h-guard install hermes` connects Hermes Agent through a Python plugin in
   `$HERMES_HOME/plugins/h-guard`, enabled in `plugins.enabled`. Tool calls are
   checked on `pre_tool_call` (`ask` goes to Hermes's own approval, keyed to the

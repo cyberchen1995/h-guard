@@ -539,8 +539,7 @@ func TestOpenClawIncludes(t *testing.T) {
 	writeFile(t, filepath.Join(dir, "conf.d", "b.json5"), "{ $include: './nested.json5' }")
 	writeFile(t, filepath.Join(dir, "conf.d", "nested.json5"), "{}")
 	files, unresolved := OpenClawIncludes(tg)
-	want := []string{filepath.Join(dir, "plugins.json5"), filepath.Join(dir, "conf.d", "a.json"), filepath.Join(dir, "conf.d", "b.json5"), filepath.Join(dir, "conf.d", "nested.json5")}
-	slices.Sort(want)
+	want := withReal(filepath.Join(dir, "plugins.json5"), filepath.Join(dir, "conf.d", "a.json"), filepath.Join(dir, "conf.d", "b.json5"), filepath.Join(dir, "conf.d", "nested.json5"))
 	if unresolved || strings.Join(files, "\n") != strings.Join(want, "\n") {
 		t.Errorf("includes %v (unresolved %v), want %v", files, unresolved, want)
 	}
@@ -562,6 +561,47 @@ func TestOpenClawIncludes(t *testing.T) {
 	apply(t, plan(t, tg, "openclaw", true))
 	if _, err := os.Stat(OpenClawPluginDir(tg)); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("the plugin was not removed once no file mentions it: %v", err)
+	}
+}
+
+// withReal 返回 files 加上它们解析符号链接之后不同的写法（临时目录本身可以在链接之下，如 macOS 的 /var），排好序。
+func withReal(files ...string) []string {
+	out := slices.Clone(files)
+	for _, f := range files {
+		if r, err := filepath.EvalSymlinks(f); err == nil && !slices.Contains(out, r) {
+			out = append(out, r)
+		}
+	}
+	slices.Sort(out)
+	return out
+}
+
+// TestOpenClawIncludesSymlinks：引入的文件是符号链接（或在链接的目录里）时，链接的写法与实际位置都列出。
+func TestOpenClawIncludesSymlinks(t *testing.T) {
+	tg := target(t, "linux")
+	config := OpenClawConfig(tg)
+	dir := filepath.Dir(config)
+	real := filepath.Join(t.TempDir(), "shared")
+	writeFile(t, filepath.Join(real, "plugins.json5"), "{}")
+	writeFile(t, filepath.Join(real, "conf.d", "a.json"), "{}")
+	if err := os.Symlink(filepath.Join(real, "plugins.json5"), filepath.Join(dir, "plugins.json5")); err != nil {
+		t.Skipf("symlinks: %v", err)
+	}
+	if err := os.Symlink(filepath.Join(real, "conf.d"), filepath.Join(dir, "conf.d")); err != nil {
+		t.Skipf("symlinks: %v", err)
+	}
+	writeFile(t, config, `{"plugins": {"$include": "./plugins.json5"}, "agents": {"$include": "conf.d/a.json"}}`)
+	files, unresolved := OpenClawIncludes(tg)
+	links := []string{filepath.Join(dir, "plugins.json5"), filepath.Join(dir, "conf.d", "a.json")}
+	want := withReal(links...)
+	if unresolved || strings.Join(files, "\n") != strings.Join(want, "\n") {
+		t.Errorf("includes %v (unresolved %v), want %v", files, unresolved, want)
+	}
+	for _, f := range append(links, filepath.Join(real, "plugins.json5"), filepath.Join(real, "conf.d", "a.json")) {
+		r, _ := filepath.EvalSymlinks(f)
+		if !slices.Contains(files, f) && !slices.Contains(files, r) {
+			t.Errorf("%s is not listed: %v", f, files)
+		}
 	}
 }
 
