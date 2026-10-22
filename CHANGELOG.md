@@ -9,6 +9,10 @@ minor releases. Every such change is recorded in this file.
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-10-22
+
+First public release.
+
 ### Added
 
 - `h-guard status` starts with a protection summary. For each harness it shows
@@ -237,10 +241,6 @@ minor releases. Every such change is recorded in this file.
   adapter that answers every request (extension protocol) replies `pass` to a
   tool call with nothing to check, so an empty reply always means h-guard could
   not run.
-
-## [0.1.0] - unreleased
-
-First public release.
 
 ### Action checks
 
