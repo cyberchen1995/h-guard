@@ -9,8 +9,10 @@
 //   - tool_result（工具结果 middleware）：{toolName, toolCallId, args, isError, platform}，result 是 {content}；
 //   - before_agent_run：{prompt, trigger, provenance, sessionKey, channel}，trigger 是这一轮的起因（user、cron、
 //     heartbeat 等），provenance 是用户消息的来源（external_user、inter_session、internal_system）；
-//   - before_dispatch：{prompt, sessionKey, channel}，渠道收到的消息在分派给 agent 之前（包括默认的 steer 队列模式下
-//     插进正在进行的运行、不经过 before_agent_run 的消息），按外部用户的输入检查。
+//   - before_dispatch：{prompt, request, sessionKey, channel}，渠道收到的消息在分派给 agent 之前（包括默认的 steer 队列模式下
+//     插进正在进行的运行、不经过 before_agent_run 的消息），按外部用户的输入检查；prompt 是消息的 content 与 body（body
+//     另有渠道的信封、引用的消息），request 是发送者自己写的 content，只有它记为用户指令；
+//   - before_agent_run 另有 dispatched：这一轮的输入是 before_dispatch 已经记过的渠道消息，不再记为指令。
 //
 // 导入本包即注册名为 openclaw 的 adapter。
 package openclaw
@@ -170,6 +172,11 @@ type runData struct {
 	Trigger    string `json:"trigger"`
 	Provenance string `json:"provenance"`
 	SessionKey string `json:"sessionKey"`
+	// Request 是 before_dispatch 里发送者自己写的内容（消息的 content）：prompt 另有 body 里渠道的信封与引用的消息，
+	// 只检查，不记为用户指令。没有这个字段（旧插件）时整个 prompt 记为指令。
+	Request *string `json:"request"`
+	// Dispatched 表示 before_agent_run 的这一轮输入是 before_dispatch 已经记为指令的渠道消息：照常检查，不再记一次。
+	Dispatched bool `json:"dispatched"`
 }
 
 type resultPayload struct {
@@ -248,8 +255,18 @@ func (Adapter) Parse(raw []byte) (guard.Event, error) {
 			d.Trigger, d.Provenance = "user", "external_user"
 		}
 		ev.Kind, ev.Text = guard.EventPrompt, d.Prompt
-		if strings.TrimSpace(d.Prompt) != "" {
-			ev.Requests = []guard.Request{{Text: d.Prompt, Source: SourceOf(d.Trigger, d.Provenance, d.SessionKey)}}
+		request := d.Prompt
+		switch {
+		case req.Hook == "before_agent_run" && d.Dispatched:
+			request = ""
+		case req.Hook == "before_dispatch" && d.Request != nil:
+			// 只记 prompt 里确实有的那一段（指令缓存按位置遮蔽凭据）
+			if request = *d.Request; !strings.Contains(d.Prompt, request) {
+				request = ""
+			}
+		}
+		if strings.TrimSpace(request) != "" {
+			ev.Requests = []guard.Request{{Text: request, Source: SourceOf(d.Trigger, d.Provenance, d.SessionKey)}}
 		}
 	default:
 		return guard.Event{}, fmt.Errorf("openclaw: unsupported hook %q", req.Hook)

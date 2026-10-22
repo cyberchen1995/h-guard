@@ -121,7 +121,9 @@ minor releases. Every such change is recorded in this file.
   calls are checked in `before_tool_call` (`ask` becomes a
   plugin approval), tool output in the tool result middleware and prompts in
   `before_agent_run` and, for channel messages (including those steered into
-  a running turn), `before_dispatch`. OpenClaw's own tools are classified like pi's, and for
+  a running turn), `before_dispatch`. A channel message counts as the user's
+  instruction once, and only the sender's own text does (the channel envelope
+  and quoted messages are checked but never authorize). OpenClaw's own tools are classified like pi's, and for
   `browser`, `message`, `sessions`, `transcripts` and `canvas` by action (only
   observing the browser, reading and sending messages pass). Local files that
   tools send away (message attachments, PDFs, reference media, `MEDIA:` lines)

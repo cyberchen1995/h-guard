@@ -212,10 +212,33 @@ test('before_dispatch: content and body are both checked; a guard that cannot ru
   await hooks.before_dispatch({ content: 'hi', body: '[Telegram] hi\nquoted: x', channel: 'telegram' }, { channelId: 'telegram', sessionKey: 'agent:main:main' })
   const [r] = await recorded(record)
   assert.deepEqual(r.argv, ['--event', 'before_dispatch'])
-  assert.deepEqual(r.request.data, { prompt: 'hi\n[Telegram] hi\nquoted: x', sessionKey: 'agent:main:main', channel: 'telegram' })
+  // 检查 content 与 body，只有发送者自己写的 content 作为用户指令（request）
+  assert.deepEqual(r.request.data, { prompt: 'hi\n[Telegram] hi\nquoted: x', request: 'hi', sessionKey: 'agent:main:main', channel: 'telegram' })
   const { hooks: h2, logs } = await plugin(missing)
   assert.equal(await h2.before_dispatch({ content: KEY }, {}), undefined)
   assert.match(logs[0], /could not finish its check/)
+})
+
+test('before_agent_run: a channel message before_dispatch already recorded is marked, once, in the same session', async () => {
+  const { command, record } = await fake({ action: 'pass' })
+  const { hooks } = await plugin(command)
+  const c = ctx({ trigger: 'user' })
+  await hooks.before_dispatch({ content: 'fix the test', body: '[Telegram] fix the test' }, c)
+  await hooks.before_agent_run({ prompt: '[Telegram] fix the test', messages: [] }, c)
+  await hooks.before_agent_run({ prompt: '[Telegram] fix the test', messages: [] }, c) // 只抵消一次
+  // 另一个会话 id、不同的输入、before_dispatch 拦下的消息都不标记
+  await hooks.before_dispatch({ content: 'deploy' }, c)
+  await hooks.before_agent_run({ prompt: 'deploy', messages: [] }, ctx({ trigger: 'user', sessionId: 'ses-2' }))
+  await hooks.before_dispatch({ content: 'deploy' }, c)
+  await hooks.before_agent_run({ prompt: 'something else', messages: [] }, c)
+  const runs = (await recorded(record)).filter((r) => r.request.hook === 'before_agent_run').map((r) => r.request.data.dispatched)
+  assert.deepEqual(runs, [true, undefined, undefined, undefined])
+  const denied = await fake({ action: 'deny', message: 'no' })
+  const { hooks: h2 } = await plugin(denied.command)
+  await h2.before_dispatch({ content: 'deploy' }, c)
+  await h2.before_agent_run({ prompt: 'deploy', messages: [] }, c)
+  const [, run] = await recorded(denied.record)
+  assert.equal(run.request.data.dispatched, undefined)
 })
 
 test('before_agent_run: a guard that cannot run lets the prompt through and logs', async () => {
