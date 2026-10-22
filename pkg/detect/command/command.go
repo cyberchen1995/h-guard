@@ -126,6 +126,9 @@ func (e *Expansion) expand(ctx context.Context, text string, shell guard.Shell, 
 			inner = append(inner, nested{text: s, shell: shell})
 		}
 		inner = append(inner, nestedScripts(stripped)...)
+		if r := rewritten(stripped); r != "" {
+			inner = append(inner, nested{text: r, shell: shell})
+		}
 	}
 	for _, n := range inner {
 		if strings.TrimSpace(n.text) == "" {

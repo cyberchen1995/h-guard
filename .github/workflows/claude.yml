@@ -1,0 +1,63 @@
+name: Claude Code
+
+on:
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+  pull_request_review:
+    types: [submitted]
+
+jobs:
+  claude:
+    # 只响应仓库成员的 @claude，避免外部用户消耗额度
+    if: |
+      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude') && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)) ||
+      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude') && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)) ||
+      (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude') && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.review.author_association))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+      id-token: write # WIF 换取 Anthropic 令牌 + action 自身 OIDC 所需
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Fetch GitHub OIDC token
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const token = await core.getIDToken('https://api.anthropic.com');
+            core.setSecret(token);
+            core.exportVariable('JWT', token);
+      - name: Debug OIDC claims
+        # 临时排障：只打印 claims，不含签名；定位 match_subject_prefix 后删除
+        run: |
+          echo "$JWT" | cut -d. -f2 | tr '_-' '/+' | { read -r p; printf '%s%s' "$p" "$(printf '%*s' $(( (4 - ${#p} % 4) % 4 )) '' | tr ' ' '=')"; } \
+            | base64 -d | jq '{iss, sub, aud, repository, repository_owner, ref, event_name, workflow}'
+      - name: Exchange for an Anthropic access token
+        id: exchange
+        run: |
+          set -euo pipefail
+          token=$(curl -sSf https://api.anthropic.com/v1/oauth/token \
+            -H "content-type: application/json" \
+            --data @- <<JSON | jq -r .access_token
+          {
+            "grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer",
+            "assertion": "$JWT",
+            "federation_rule_id": "fdrl_01WrWAeWn5XEJkesReosRJyu",
+            "organization_id": "ad6d3c9d-e295-4006-a95e-200fef450033",
+            "service_account_id": "svac_018N8fKFoTbmazrz9CkVbB63",
+            "workspace_id": "wrkspc_01LMoAdBnxgTiqzBNUZ9MXZp"
+          }
+          JSON
+          )
+          echo "::add-mask::$token"
+          echo "token=$token" >> "$GITHUB_OUTPUT"
+      - uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ steps.exchange.outputs.token }}
+          show_full_output: true # 临时：查看模型调用被拒的真实报错

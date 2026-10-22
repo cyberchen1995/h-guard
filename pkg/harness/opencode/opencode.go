@@ -206,9 +206,10 @@ var builtinNoAction = map[string]bool{
 }
 
 // actions 把工具映射为动作：bash 执行命令；read、grep 读文件；write、edit 写文件；apply_patch 的补丁逐个文件转成
-// 文件动作，读不懂时返回 applypatch.ErrUnparsed（调用方请求确认）。其余自带的工具与自定义工具、插件提供的工具不产生动作。
-// MCP 工具（名字是 <服务>_<工具>，与自定义工具的 <文件>_<导出> 分不开，由插件按 MCP 服务的名字标出 source）与看不出来源
-// 的工具返回 errUnknownTool（调用方请求确认，opencode 上阻止，harnesses.opencode.read_only_tools 列出的放行）。
+// 文件动作，读不懂时返回 applypatch.ErrUnparsed（调用方请求确认）。builtinNoAction 列出的自带工具不产生动作。
+// 其余工具返回 errUnknownTool（调用方请求确认，opencode 上阻止，harnesses.opencode.read_only_tools 列出的放行）：MCP 工具
+// （名字是 <服务>_<工具>，与自定义工具的 <文件>_<导出> 分不开，由插件按 MCP 服务的名字标出 source）、看不出来源的工具，
+// 以及自定义工具、插件提供的工具与新版 opencode 的自带工具（如实验性的 batch）：它们可能执行命令或改动文件。
 func (a Adapter) actions(tool, source string, in args) ([]guard.Action, error) {
 	one := func(act guard.Action, ok bool) ([]guard.Action, error) {
 		if !ok {
@@ -233,7 +234,7 @@ func (a Adapter) actions(tool, source string, in args) ([]guard.Action, error) {
 	case "apply_patch":
 		return applypatch.Actions(in.PatchText)
 	}
-	if builtinNoAction[tool] || source == "opencode" {
+	if builtinNoAction[tool] {
 		return nil, ErrNoAction
 	}
 	return nil, errUnknownTool

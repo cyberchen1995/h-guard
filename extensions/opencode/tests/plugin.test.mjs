@@ -34,7 +34,11 @@ test('tool.execute.before: ordinary commands and tools without actions pass', { 
   const { hooks } = await plugin(guard('opencode'))
   await before(hooks, 'bash', { command: 'ls' })
   await before(hooks, 'glob', { pattern: '**/*.go' })
-  await before(hooks, 'notes_search', { query: 'x' })
+})
+
+test('tool.execute.before: a custom tool is blocked until it is listed as read-only', { skip: !haveGuard }, async () => {
+  const { hooks } = await plugin(guard('opencode'))
+  await assert.rejects(before(hooks, 'notes_search', { query: 'x' }), /harnesses\.opencode\.read_only_tools/)
 })
 
 test('tool.execute.before: an MCP tool is blocked until it is listed as read-only', { skip: !haveGuard }, async () => {

@@ -89,6 +89,19 @@ minor releases. Every such change is recorded in this file.
 - `h-guard eval` uses a 10 s regex match timeout instead of the hook's
   100 ms, so replaying the same corpus gives the same verdicts on a loaded
   machine. Hooks and `check` keep 100 ms, and a timeout still counts as a hit.
+- opencode: custom tools, tools added by plugins and opencode tools h-guard
+  has no mapping for (such as the experimental `batch`) no longer pass
+  unchecked. They are blocked like MCP tools until listed in
+  `harnesses.opencode.read_only_tools`.
+
+### Security
+
+- Rules that match commands now also see the command run by `eval`, by a
+  here-string or an `echo`/`printf` pipe into a shell (`bash <<< '…'`,
+  `echo '…' | sh`), the command written with `$IFS` for spaces or as a brace
+  list (`rm${IFS}-rf${IFS}/`, `{rm,-rf,/}`), and the command after `setsid`,
+  `stdbuf` and `unbuffer`. Before, these forms of `rm -rf /` passed the locked
+  `catastrophic` rule.
 
 ### Harnesses
 

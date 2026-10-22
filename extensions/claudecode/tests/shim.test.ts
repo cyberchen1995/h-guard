@@ -9,7 +9,7 @@ const CONFIG = JSON.stringify({
 })
 
 // guard 注册接入层用到的全部 API 桩；reply 为 null 时让 $.process.run 失败，模拟 h-guard 无法运行。
-// calls、logs、paths 分别收集 $.process.run、$.ui.log、$.fs.read 的参数。
+// calls、logs、paths 分别收集 $.process.run、$.ui.log、$.fs.read 的参数；logs 为 null 时让 $.ui.log 失败。
 function guard(on, reply, calls = [], logs = [], paths = []) {
   on('fs.read', ($, e) => {
     paths.push(e)
@@ -20,6 +20,7 @@ function guard(on, reply, calls = [], logs = [], paths = []) {
   // 与真实 API 一致：session.version() 返回对象
   on('session.version', () => ({ value: { version: '2.1.296', base: '2.1.296' } }))
   on('ui.log', ($, e) => {
+    if (logs === null) throw new Error('no ui')
     logs.push(e)
     return { value: undefined }
   })
@@ -111,31 +112,48 @@ test('tool.result: an errored result is checked like any other', async ($, on) =
   expect(calls.length).toBe(1)
 })
 
-test('tool.result: when the hook fails the user is told the result was not checked', async ($, on) => {
+test('tool.result: when the tool fails the user is told and the tool is not run again', async ($, on) => {
   const logs = []
+  let runs = 0
   guard(on, { action: 'pass' }, [], logs)
   on('tool.call', () => {
+    runs++
     throw new Error('core failed')
   })
   try {
-    await $.tool.call({ tool: 'Bash', command: 'ls' })
+    await $.tool.call({ tool: 'Bash', command: 'git push' })
   } catch (err) {
-    // 下层自身的错误照常传出；这里只关心用户是否得到提示
+    // 下层自身的错误照常传出；这里只关心工具没有再执行一次、用户得到提示
   }
+  expect(runs).toBe(1)
   expect(JSON.stringify(logs)).toContain('could not finish')
 })
 
-test('prompt.submit: when the hook fails the user is told the prompt was not checked', async ($, on) => {
+test('tool.result: when logging fails the tool still runs once and its result is not lost', async ($, on) => {
+  let runs = 0
+  guard(on, { action: 'warn', message: 'careful' }, [], null)
+  on('tool.call', () => {
+    runs++
+    return { result: 'ordinary', text: 'ordinary' }
+  })
+  expect(await $.tool.call({ tool: 'Bash', command: 'ls' })).toEqual({ result: 'ordinary', text: 'ordinary' })
+  expect(runs).toBe(1)
+})
+
+test('prompt.submit: when the hook fails the user is told and the prompt is not sent again', async ($, on) => {
   const logs = []
+  let sends = 0
   guard(on, { action: 'pass' }, [], logs)
   on('prompt.submit', () => {
+    sends++
     throw new Error('core failed')
   })
   try {
     await $.prompt.submit({ text: 'hello', origin: { kind: 'composer' } })
   } catch (err) {
-    // 同上
+    // 下层自身的错误照常传出
   }
+  expect(sends).toBe(1)
   expect(JSON.stringify(logs)).toContain('could not finish')
 })
 
