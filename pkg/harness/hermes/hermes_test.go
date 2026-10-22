@@ -227,6 +227,17 @@ func TestToolOutput(t *testing.T) {
 	if ev.Text != "alice@example.com\naccount\n4111111111111111\nok\ntrue" {
 		t.Errorf("keys and scalars: %q", ev.Text)
 	}
+	// 重复的键：每一次出现的值都扫描（解码成 map 只留下最后一个，前面的凭据模型照样读得到）
+	ev, _ = a.Parse(post("web_extract", map[string]any{}, `{"b":[{"token":"ghp_first","token":"x"}],"a":1,"b":"last"}`))
+	if ev.Text != "a\n1\nb\ntoken\nghp_first\ntoken\nx\nb\nlast" {
+		t.Errorf("duplicate keys: %q", ev.Text)
+	}
+	// 不是一个完整的 JSON 值时原样
+	for _, s := range []string{`{"a":1}{"b":2}`, `{"a":1,}`, `"just a string"`} {
+		if ev, _ := a.Parse(post("web_extract", map[string]any{}, s)); ev.Text != s {
+			t.Errorf("%s: %q", s, ev.Text)
+		}
+	}
 	ev, err = a.Parse(post("web_extract", map[string]any{"urls": []string{"https://example.com"}}, "plain page"))
 	if err != nil || ev.FileContent || ev.Text != "plain page" {
 		t.Fatalf("%+v %v", ev, err)
