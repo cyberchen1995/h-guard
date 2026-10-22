@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -59,8 +60,8 @@ func TestGlobReadUnreadable(t *testing.T) {
 			t.Errorf("%s: %q %+v %v", p, m, bad, err)
 		}
 	}
-	if os.Geteuid() == 0 {
-		return // root 读得了权限不够的目录
+	if os.Geteuid() == 0 || runtime.GOOS == "windows" {
+		return // root 读得了权限不够的目录；Windows 上 chmod 不收回目录的读权限
 	}
 	locked := filepath.Join(dir, "locked")
 	if err := os.Mkdir(locked, 0o700); err != nil {
