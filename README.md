@@ -378,9 +378,10 @@ on Windows.
   h-guard's list of the harness's own tools (for example ones added by an
   extension) need your confirmation until you list them in
   `harnesses.<name>.read_only_tools`.
-- **MCP tools are blocked on opencode.** opencode cannot ask, so MCP tools are
-  blocked until you list them in `harnesses.opencode.read_only_tools`; custom
-  tools and plugin tools pass.
+- **MCP, custom and plugin tools are blocked on opencode.** opencode cannot
+  ask, so tools h-guard cannot read (MCP tools, custom tools, tools added by
+  plugins) are blocked until you list them in
+  `harnesses.opencode.read_only_tools`.
 - **Codex hooks must be trusted.** After `install codex --write` you have to
   trust the hooks with `/hooks` in Codex; until then they do not run. h-guard
   cannot read Codex's trust state: `h-guard status` shows the hooks as

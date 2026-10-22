@@ -113,6 +113,8 @@ var prefixWords = map[string][]string{
 	"xargs": {"-I", "-L", "-n", "-P", "-s", "-d", "-E", "-a", "--max-args", "--max-procs", "--max-chars", "--delimiter",
 		"--arg-file", "--replace", "--max-lines", "--eof"},
 	"busybox": nil,
+	// 在新会话、改了缓冲方式或包上伪终端后运行它后面的命令
+	"setsid": {"-w", "--wait"}, "stdbuf": {"-i", "-o", "-e", "--input", "--output", "--error"}, "unbuffer": nil,
 	// 保留字：if rm …、do rm …、{ rm …; }、! rm …
 	"!": nil, "{": nil, "}": nil, "if": nil, "then": nil, "else": nil, "elif": nil, "do": nil, "while": nil, "until": nil,
 }
@@ -361,7 +363,8 @@ func substitutions(body string) []string {
 
 var shells = map[string]bool{"bash": true, "sh": true, "zsh": true, "dash": true, "ksh": true, "ash": true}
 
-// nestedScripts 取出嵌套调用的脚本：bash -c '…'、sh -lc "…" 等按 POSIX 检查，
+// nestedScripts 取出嵌套调用的脚本：bash -c '…'、sh -lc "…"、eval 的参数、交给 shell 的 here-string
+// （bash <<< '…'）与管道里 echo、printf 交给 shell 的文本（echo '…' | sh）按 POSIX 检查，
 // pwsh、powershell 的 -Command、-EncodedCommand 与按位置给出的命令按 PowerShell 检查（见 pwshScripts）。
 func nestedScripts(cmd string) []nested {
 	var out []nested
@@ -371,8 +374,13 @@ func nestedScripts(cmd string) []nested {
 			continue
 		}
 		switch name := strings.TrimSuffix(strings.ToLower(path.Base(words[0])), ".exe"); {
+		case name == "eval":
+			out = append(out, nested{text: strings.Join(words[1:], " "), shell: guard.ShellPOSIX})
 		case shells[name]:
 			for _, s := range shellScripts(words[1:]) {
+				out = append(out, nested{text: s, shell: guard.ShellPOSIX})
+			}
+			for _, s := range hereStrings(pos) {
 				out = append(out, nested{text: s, shell: guard.ShellPOSIX})
 			}
 		case name == "pwsh" || name == "powershell":
@@ -381,6 +389,96 @@ func nestedScripts(cmd string) []nested {
 				out = append(out, nested{text: s, shell: guard.ShellPowerShell, encoded: enc})
 			}
 		}
+	}
+	for _, s := range pipedScripts(cmd) {
+		out = append(out, nested{text: s, shell: guard.ShellPOSIX})
+	}
+	return out
+}
+
+// hereStrings 返回一段命令里 here-string（<<< 后的词，去掉引号）的取值。
+func hereStrings(pos string) []string {
+	var out []string
+	toks := lex(pos).tokens
+	for i := 0; i+1 < len(toks); i++ {
+		if toks[i].kind == tokRedir && toks[i].op == "<<<" && toks[i+1].kind == tokWord {
+			out = append(out, toks[i+1].value)
+		}
+	}
+	return out
+}
+
+// pipedScripts 返回管道里 echo、printf 交给 shell 的文本（echo 'rm -rf /' | sh）：下一段是不带脚本参数的
+// shell（sh、bash -s，不是 bash -c … 或 bash file.sh）。echo 的选项（-n、-e）不算文本。
+func pipedScripts(cmd string) []string {
+	var out []string
+	for _, pipe := range Pipelines(cmd) {
+		for i := 1; i < len(pipe); i++ {
+			src, dst := pipe[i-1], pipe[i]
+			if !shells[strings.ToLower(path.Base(dst[0]))] || !readsStdin(dst[1:]) {
+				continue
+			}
+			args := src[1:]
+			switch path.Base(src[0]) {
+			case "echo":
+				for len(args) > 0 && len(args[0]) > 1 && args[0][0] == '-' && strings.Trim(args[0][1:], "neE") == "" {
+					args = args[1:]
+				}
+			case "printf":
+			default:
+				continue
+			}
+			if len(args) > 0 {
+				out = append(out, strings.Join(args, " "))
+			}
+		}
+	}
+	return out
+}
+
+// readsStdin 报告 shell 的参数是否让它从标准输入读脚本：只有选项（-x、-s、-o 名字），没有 -c 与脚本文件。
+func readsStdin(args []string) bool {
+	for j := 0; j < len(args); j++ {
+		w := args[j]
+		switch {
+		case w == "-o" || w == "+o":
+			j++
+		case w == "-s" || w == "--":
+			return true
+		case len(w) > 1 && (w[0] == '-' || w[0] == '+'):
+			if w[0] == '-' && !strings.HasPrefix(w, "--") && strings.ContainsRune(w[1:], 'c') {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+var (
+	// ifsWord 是 $IFS、${IFS} 及其取子串的写法（${IFS:0:1}）：不加引号时展开成空白，rm${IFS}-rf${IFS}/ 即 rm -rf /
+	ifsWord = regexp.MustCompile(`\$IFS\b|\$\{IFS(?:[:#%][^}]*)?\}`)
+	// braceList 是独立成词、不加引号的花括号列表：{rm,-rf,/} 展开成 rm -rf /
+	braceList = regexp.MustCompile(`(^|[\s;&|()])\{([^{}\s,'"]*(?:,[^{}\s,'"]*)+)\}`)
+)
+
+// rewritten 返回把 $IFS 换成空格、把花括号列表展开后的命令；没有这两种写法时返回空串。只多检查一种读法：
+// 引号里的同样写法也会被替换，替换后至多多出命中，不会少。
+func rewritten(cmd string) string {
+	out := ifsWord.ReplaceAllString(cmd, " ")
+	for {
+		next := braceList.ReplaceAllStringFunc(out, func(m string) string {
+			sub := braceList.FindStringSubmatch(m)
+			return sub[1] + strings.Join(strings.Split(sub[2], ","), " ")
+		})
+		if next == out {
+			break
+		}
+		out = next
+	}
+	if out == cmd {
+		return ""
 	}
 	return out
 }

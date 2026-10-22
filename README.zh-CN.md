@@ -252,7 +252,7 @@ harness 版本未经验证时，`install` 与 `status` 会说明，但不拒绝�
 - **Hermes Agent 在消息平台以外拦不下提示词。** 在 CLI、TUI 或 Desktop 里输入、h-guard 本应拦下的提示词已经交给了模型；h-guard 改为在这一轮里加一段提示（`prompt_not_blocked`）。`--yolo` 或 `approvals.mode: off` 时 h-guard 的请求确认变成拒绝；除了可选的渠道通知，Hermes 没有向你显示提示的办法。
 - **Hermes Agent 的 `execute_code` 一律请求确认。** 脚本能直接启动进程、改动文件，所以每次调用都需要你确认。
 - **pi、oh-my-pi、DeepSeek Harness、OpenClaw 与 Hermes Agent 上不认识的工具请求确认。** 不在 h-guard 对这几个 harness 自带工具的名单里的工具（比如扩展添加的）需要你确认，直到你把它列进 `harnesses.<name>.read_only_tools`。
-- **opencode 上的 MCP 工具被阻止。** opencode 不支持请求确认，所以 MCP 工具在你把它列进 `harnesses.opencode.read_only_tools` 之前一律阻止；自定义工具与插件提供的工具照常放行。
+- **opencode 上的 MCP 工具、自定义工具与插件提供的工具被阻止。** opencode 不支持请求确认，所以这些工具（h-guard 读不出它们会做什么）在你把它们列进 `harnesses.opencode.read_only_tools` 之前一律阻止。
 - **提示词的来源靠推断。** Claude Code 会标出自动消息（定时任务、子 agent 回报）；Codex 不标，h-guard 按已知格式识别它的自动消息。识别不出的自动消息算作你本人的话，模型开启时可能被当作你对某个操作的要求。
 - **Windows 没有经过实机验证。** Windows 上的路径处理、PowerShell 的 hook 外包脚本与 Codex 的命令形式只在 CI 与交叉编译中测试过。
 - **shell 里的读文件靠识别，不是隔离。** `sensitive_read` 检查 harness 的文件工具，以及 shell 里常见读法（`cat`、`grep`、`head`、`base64`、`< 文件`、PowerShell 的 `Get-Content`）写明的文件。其他读文件的方式（`python -c`、脚本、经 `xargs` 或远程主机传过去的文件名）运行前拦不住。`outbound.tier: 2`（默认是 1）时，被识别为读文件的 shell 命令的输出会在读取之后扫描其中的凭据与私钥。

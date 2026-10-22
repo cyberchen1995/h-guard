@@ -109,7 +109,6 @@ func TestNoAction(t *testing.T) {
 	for _, in := range [][]byte{
 		before("glob", map[string]string{"pattern": "**/*.go"}),
 		before("webfetch", map[string]string{"url": "https://example.com"}),
-		before("notes_search", map[string]string{"query": "x"}), // 自定义工具
 		before("bash", map[string]string{"command": "  "}),
 		beforeFrom("task", "?", map[string]string{"prompt": "x"}),
 		beforeFrom("read_mcp_resource", "opencode", map[string]string{"server": "s", "uri": "x://y"}),
@@ -132,6 +131,16 @@ func TestUnknownTool(t *testing.T) {
 		var ut *harness.UnknownToolError
 		if !errors.As(err, &ut) || ut.Event.Tool != "github_create_issue" || ut.Event.Kind != guard.EventAction || ut.Event.SessionID != "ses_1" {
 			t.Errorf("source %q: %v", source, err)
+		}
+	}
+	// 自定义工具、插件提供的工具与 builtinNoAction 之外的自带工具（batch 里的 bash 不经过检查）同样如此
+	for _, in := range [][]byte{
+		beforeFrom("notes_search", "opencode", map[string]string{"query": "x"}),
+		beforeFrom("batch", "opencode", map[string]any{"tool_calls": []map[string]any{{"tool": "bash", "parameters": map[string]string{"command": "rm -rf ~"}}}}),
+	} {
+		var ut *harness.UnknownToolError
+		if _, err := a.Parse(in); !errors.As(err, &ut) {
+			t.Errorf("%s: %v, want UnknownToolError", in, err)
 		}
 	}
 	// MCP 工具的名字与自带工具相同时（服务 plan 的工具 exit）按 MCP 工具处理；来源查不到时自带工具照常放行

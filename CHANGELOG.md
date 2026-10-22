@@ -70,6 +70,19 @@ minor releases. Every such change is recorded in this file.
   `publish` interrupt their high-impact forms instead of only logging every
   match. The interruption no longer says that the agent chose the operation on
   its own, which h-guard cannot tell without the judge.
+- opencode: custom tools, tools added by plugins and opencode tools h-guard
+  has no mapping for (such as the experimental `batch`) no longer pass
+  unchecked. They are blocked like MCP tools until listed in
+  `harnesses.opencode.read_only_tools`.
+
+### Security
+
+- Rules that match commands now also see the command run by `eval`, by a
+  here-string or an `echo`/`printf` pipe into a shell (`bash <<< '…'`,
+  `echo '…' | sh`), the command written with `$IFS` for spaces or as a brace
+  list (`rm${IFS}-rf${IFS}/`, `{rm,-rf,/}`), and the command after `setsid`,
+  `stdbuf` and `unbuffer`. Before, these forms of `rm -rf /` passed the locked
+  `catastrophic` rule.
 
 ### Harnesses
 

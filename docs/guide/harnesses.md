@@ -209,8 +209,10 @@ opencode differences:
   name matches one of opencode's own tools (an MCP tool replaces a built-in of
   the same name). If the lookup fails or takes longer than 5 seconds, any tool
   that is not one of opencode's own is treated the same way.
-  Custom tools and tools added by plugins pass, as before; one whose name
-  starts with an MCP server's name counts as an MCP tool.
+  Custom tools, tools added by plugins and opencode tools h-guard has no
+  mapping for (such as the experimental `batch`) are treated the same way too,
+  since they can run commands or change files: list the read-only ones in
+  `harnesses.opencode.read_only_tools`.
 - **Not covered.** Commands you type with `!` and terminal sessions do not go
   through tool hooks.
 
@@ -848,9 +850,9 @@ harnesses:
 The list only applies to tools h-guard does not know: a shell or file tool
 named there is still checked.
 
-For opencode, h-guard knows opencode's own tools; custom tools and tools added
-by plugins pass, and MCP tools count as tools it does not know. opencode
-cannot ask, so an MCP tool is blocked (`policy.when_ask_unsupported`) until
+For opencode, h-guard knows opencode's own tools; MCP tools, custom tools and
+tools added by plugins count as tools it does not know. opencode cannot ask,
+so such a tool is blocked (`policy.when_ask_unsupported`) until
 you list it:
 
 ```yaml
