@@ -21,6 +21,8 @@ type Target struct {
 	Timeout   int    // 秒：harness 的 hook 超时，同一值以 --timeout 传给 h-guard
 	GOOS      string
 	Getenv    func(string) string
+	// LookupEnv 与 os.LookupEnv 一样区分设置为空与没有设置；nil 时按 Getenv，空值当作没有设置
+	LookupEnv func(string) (string, bool)
 	Run       func(name string, args ...string) ([]byte, error)
 	// Query 运行 harness 的只读查询命令，只取标准输出（命令失败时也返回已有的输出），nil 表示不可用
 	Query func(name string, args ...string) ([]byte, error)
@@ -29,6 +31,21 @@ type Target struct {
 
 func (t Target) editor() Editor {
 	return Editor{LockDir: filepath.Join(t.CacheDir, "install"), BackupDir: filepath.Join(t.CacheDir, "backups"), Now: t.Now}
+}
+
+// lookupEnv 查环境变量，设置为空的变量也算设置了（与 Python 的 os.environ 相同）；没有 LookupEnv 时按 Getenv，
+// 空值当作没有设置。名字为空时总是没有设置。
+func (t Target) lookupEnv(name string) (string, bool) {
+	switch {
+	case name == "":
+		return "", false
+	case t.LookupEnv != nil:
+		return t.LookupEnv(name)
+	case t.Getenv != nil:
+		v := t.Getenv(name)
+		return v, v != ""
+	}
+	return "", false
 }
 
 // listSep 是目标平台的路径列表分隔符。

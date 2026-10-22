@@ -229,7 +229,7 @@ func runSelftest(args []string, o Options) int {
 		fmt.Fprintln(o.Stderr, "h-guard: the cache directory is unavailable")
 		return 1
 	}
-	t := install.Target{Home: o.Home, ConfigDir: o.ConfigDir, CacheDir: o.CacheDir, GOOS: o.GOOS, Getenv: o.Getenv, Run: o.RunHarness, Now: o.Now}
+	t := install.Target{Home: o.Home, ConfigDir: o.ConfigDir, CacheDir: o.CacheDir, GOOS: o.GOOS, Getenv: o.Getenv, LookupEnv: o.LookupEnv, Run: o.RunHarness, Now: o.Now}
 	cwd, _ := os.Getwd()
 	tested, failed := 0, 0
 	deadline := time.Now().Add(selftestBudget)
