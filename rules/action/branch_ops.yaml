@@ -24,13 +24,15 @@ match:
       - '\bgit(?:\.exe)?\b[^\n;&|]*\b(?:checkout\s+-b|switch\s+-c)\b[^\n;&|]*(?:\borigin/|--track\b)'
       - '\bgit(?:\.exe)?\b[^\n;&|]*\bpush\b[^\n;&|]*(?:\s-f\b|--force\b|--force-with-lease\b|\s-u\b|--set-upstream\b)'
       - '\bgit(?:\.exe)?\b[^\n;&|]*\b(?:filter-branch|filter-repo)\b'
+      - '\b(?:python[\d.]*|py)(?:\.exe)?\b[^\n;&|]*\s-m\s*git_filter_repo\b'
       - '\bgit(?:\.exe)?\b[^\n;&|]*\breflog\s+expire\b'
       - '\bgit(?:\.exe)?\b[^\n;&|]*\bgc\b[^\n;&|]*--prune=now\b'
-    # 模型关闭时也打断的形态：不带 lease 的强制推送（覆盖远端别人的提交）与整段改写历史的工具（维护者决定，2026-10-19）
+    # 模型关闭时也打断的形态：不带 lease 的强制推送（覆盖远端别人的提交）与整段改写历史的工具（维护者决定，2026-10-19）；
+    # git filter-repo、git-filter-repo 与 python -m git_filter_repo 的 --analyze、--dry-run 只读，不打断
     local:
       - '^git(?:\.exe)?(?:\s+(?:-[Cc]\s+(?:\"[^\"]*\"|''[^'']*''|\S+)|--(?:git-dir|work-tree|namespace|config-env|super-prefix)\s+(?:\"[^\"]*\"|''[^'']*''|\S+)|--?[\w-]+(?:=\S+)?))*\s+push\b(?![^\n;&|]*(?:\s--dry-run\b|\s-[a-z]*n[a-z]*(?:\s|$)))(?=[^\n;&|]*(?:\s-[a-z]*f[a-z]*(?:\s|$)|\s--force(?![-\w])|\s--mirror\b|\s\+[\w./-]))'
-      - '^git(?:\.exe)?(?:\s+(?:-[Cc]\s+(?:\"[^\"]*\"|''[^'']*''|\S+)|--(?:git-dir|work-tree|namespace|config-env|super-prefix)\s+(?:\"[^\"]*\"|''[^'']*''|\S+)|--?[\w-]+(?:=\S+)?))*\s+(?:filter-branch|filter-repo)\b'
-      - '^(?:(?:python[\d.]*|py)\s+)?(?:\S*/)?git-filter-repo(?:\.py)?(?=\s|$)(?![^\n;&|]*\s--(?:analyze|dry-run)(?:\s|$))'
+      - '^git(?:\.exe)?(?:\s+(?:-[Cc]\s+(?:\"[^\"]*\"|''[^'']*''|\S+)|--(?:git-dir|work-tree|namespace|config-env|super-prefix)\s+(?:\"[^\"]*\"|''[^'']*''|\S+)|--?[\w-]+(?:=\S+)?))*\s+(?:filter-branch\b|filter-repo\b(?![^\n;&|]*\s--(?:analyze|dry-run)(?:\s|$)))'
+      - '^(?:(?:(?:python[\d.]*|py)(?:\.exe)?\s+)?(?:\S*/)?git-filter-repo(?:\.py)?|(?:python[\d.]*|py)(?:\.exe)?(?:\s+(?:-[WX]\s+\S+|-[^\sm]\S*))*\s+-m\s*git_filter_repo)(?=\s|$)(?![^\n;&|]*\s--(?:analyze|dry-run)(?:\s|$))'
 question:
   kind: probability
   instructions:
@@ -48,6 +50,8 @@ examples:
     - {shell: posix, command: "git checkout -b fix origin/fix"}
     - {shell: posix, command: "git switch -c x --track origin/x"}
     - {shell: posix, command: "git push --force-with-lease"}
+    - {shell: posix, command: "watch python3 -m git_filter_repo --force"}
+    - {shell: posix, command: "python3 -m git_filter_repo --path secrets"}
   miss:
     - {shell: posix, command: "git branch -d merged"}
     - {shell: posix, command: "git branch"}

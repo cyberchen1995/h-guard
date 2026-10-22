@@ -278,6 +278,7 @@ func approveID(s *grant.Store, id string, ttl time.Duration) (grant.Grant, error
 
 // TestNoGrantAfterARegexTimeout：某个规则的正则超时时本地检查没做完，不提供授权。
 func TestNoGrantAfterARegexTimeout(t *testing.T) {
+	productionMatchTimeout(t)
 	st := &grant.Store{Dir: t.TempDir(), KeyPath: filepath.Join(t.TempDir(), "grant.key"), Now: time.Now}
 	c := newCheck(t, false, action.Judge{})
 	c.Grants = st

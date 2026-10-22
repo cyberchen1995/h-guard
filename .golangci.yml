@@ -51,7 +51,7 @@ linters:
       # 测试用假的密钥、临时目录里的文件与权限、构建好的测试程序与重新运行的测试二进制、固定种子的随机数与构造好的下标。
       - path: _test\.go$
         linters: [gosec]
-        text: "G(101|115|122|204|301|304|306|404|602|702|703):"
+        text: "G(101|115|122|204|301|302|304|306|404|602|702|703):"
 
       # 命中的是环境变量名与消息键这类常量的名字，不是凭据本身。
       - path: ^(internal/i18n/keys|pkg/judge/anthropic/anthropic|pkg/judge/typesafe/typesafe)\.go$
@@ -64,7 +64,7 @@ linters:
         text: "G(304|703):"
 
       # 遍历的是用户自己的配置、规则与录制样本目录，只读其中的文件；能在遍历中途替换符号链接的人本来就能改这些文件。
-      - path: ^internal/(app/migrate|fixtures/fixtures|install/claudecode|install/status|rules/set)\.go$
+      - path: ^internal/(app/migrate|fixtures/fixtures|install/claudecode|install/hermes|install/status|rules/set)\.go$
         linters: [gosec]
         text: "G122:"
 
@@ -77,6 +77,11 @@ linters:
       - path: ^internal/fixtures/fixtures\.go$
         linters: [gosec]
         text: "G(301|302|306):"
+
+      # 花括号的字母序列：两端都是一个 ASCII 字母，序列里的值不会越出这个范围。
+      - path: ^internal/check/action/reads\.go$
+        linters: [gosec]
+        text: "G115:"
 
       # 自助抽样用固定种子的伪随机数，结果要可复现，与安全无关。
       - path: ^internal/eval/bootstrap\.go$

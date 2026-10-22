@@ -52,7 +52,8 @@ func (p *json5Parser) skip() {
 		case c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\v' || c == '\f':
 			p.i++
 		case strings.HasPrefix(p.s[p.i:], "//"):
-			if j := strings.IndexAny(p.s[p.i:], "\n\r"); j >= 0 {
+			// JSON5 的行结束符有四个：LF、CR、U+2028 与 U+2029。
+			if j := strings.IndexAny(p.s[p.i:], "\n\r\u2028\u2029"); j >= 0 {
 				p.i += j
 			} else {
 				p.i = len(p.s)
@@ -229,6 +230,10 @@ func (p *json5Parser) str() (string, error) {
 			p.i++
 			if p.i >= len(p.s) {
 				return "", p.errorf("unterminated string")
+			}
+			if strings.HasPrefix(p.s[p.i:], "\u2028") || strings.HasPrefix(p.s[p.i:], "\u2029") {
+				p.i += len("\u2028") // U+2028、U+2029 同样是续行
+				continue
 			}
 			e := p.s[p.i]
 			p.i++

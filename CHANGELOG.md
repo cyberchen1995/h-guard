@@ -70,6 +70,25 @@ minor releases. Every such change is recorded in this file.
   `publish` interrupt their high-impact forms instead of only logging every
   match. The interruption no longer says that the agent chose the operation on
   its own, which h-guard cannot tell without the judge.
+- Full-text exec rules also match the command with quotes and escapes removed
+  from simple words, so `rm /opt/\p\i/...`, PowerShell's `` `p`i `` and
+  `hermes 'plugins' disable h-guard` match like their plain spellings. Quoted
+  text that contains spaces or shell operators is left as it is.
+- `sensitive_read` recognizes more shell reads: recursive searches
+  (`grep -r`, `rg`, `ag`, `ack`) check the files under the directory they
+  read, honoring hidden-file defaults and simple include/exclude filters;
+  brace sequences (`.en{u..v}`); `**` with `shopt -s globstar`; `cmd /c`
+  payloads in quotes and `%USERPROFILE%`; `git diff --no-index` operands after
+  `--`; PowerShell array literals (`Get-Content @('.env')`). Expansions stay
+  bounded: a walk or glob over the limit, or a directory h-guard cannot read
+  (`sudo sh -c 'cat /root/.ssh/id_rsa*'`), asks for confirmation.
+- Fewer needless confirmations for shell reads: quoted or escaped wildcards
+  and braces are literal (`cat '.env*'`), PowerShell has no brace expansion
+  and `-LiteralPath` no wildcards, `xargs -a` counts only at a command
+  position, and the POSIX `$home` variable is no longer taken for `$HOME`.
+- `h-guard eval` uses a 10 s regex match timeout instead of the hook's
+  100 ms, so replaying the same corpus gives the same verdicts on a loaded
+  machine. Hooks and `check` keep 100 ms, and a timeout still counts as a hit.
 - opencode: custom tools, tools added by plugins and opencode tools h-guard
   has no mapping for (such as the experimental `batch`) no longer pass
   unchecked. They are blocked like MCP tools until listed in
@@ -134,11 +153,16 @@ minor releases. Every such change is recorded in this file.
   calls are checked in `before_tool_call` (`ask` becomes a
   plugin approval), tool output in the tool result middleware and prompts in
   `before_agent_run` and, for channel messages (including those steered into
-  a running turn), `before_dispatch`. OpenClaw's own tools are classified like pi's, and for
+  a running turn), `before_dispatch`. A channel message counts as the user's
+  instruction once, and only the sender's own text does (the channel envelope
+  and quoted messages are checked but never authorize). OpenClaw's own tools are classified like pi's, and for
   `browser`, `message`, `sessions`, `transcripts` and `canvas` by action (only
   observing the browser, reading and sending messages pass). Local files that
-  tools send away (message attachments, PDFs, reference media, `MEDIA:` lines)
-  are checked as file reads, with `file:` URLs decoded as OpenClaw does. Other
+  tools send away (message attachments, any `message` parameter whose name
+  ends in `Path`, `File` or `Url` since channel plugins can declare their own,
+  PDFs, reference media, `MEDIA:` lines) are checked as file reads, with
+  `file:` URLs decoded as OpenClaw does and drive-relative `C:foo` taken as a
+  path. Other
   tools and actions ask (`tool_unknown`), MCP tools included: the plugin cannot
   tell them from plugin tools with the same kind of name. An opt-in channel notifier
   (`plugins.entries.h-guard.config.notify` in OpenClaw's configuration) sends
@@ -153,8 +177,12 @@ minor releases. Every such change is recorded in this file.
   call` with `config.set`, `config.patch` or `config.apply`) or disable
   the plugin, reset or uninstall OpenClaw's configuration and state
   (`openclaw reset`, `openclaw uninstall --state`/`--all`, `--reset` on
-  `onboard`, `setup` and `gateway`). Path and `exec` patterns can use `{openclaw_config}` and
-  `{openclaw_includes}` (matching any included file).
+  `onboard`, `setup` and `gateway`), and the `openclaw secrets configure`
+  wizard. The state directory OpenClaw really uses (`OPENCLAW_STATE_DIR`
+  anywhere) is protected like `~/.openclaw`: the directory itself and the
+  `.json5` files in it. Path and `exec` patterns can use `{openclaw_config}`,
+  `{openclaw_state_dir}` and `{openclaw_includes}` (matching any included
+  file, both the path as written and with symbolic links resolved).
 - `h-guard install hermes` connects Hermes Agent through a Python plugin in
   `$HERMES_HOME/plugins/h-guard`, enabled in `plugins.enabled`. Tool calls are
   checked on `pre_tool_call` (`ask` goes to Hermes's own approval, keyed to the
@@ -185,6 +213,20 @@ minor releases. Every such change is recorded in this file.
 - `pkg/detect/command` adds `ReadTargets`: the files a command reads locally
   (file operands of common read commands, input redirections and PowerShell's
   `Get-Content` paths).
+- `pkg/detect/command`: `Unit.FullTexts` may return a third text, the command
+  with quotes and escapes removed from simple words.
+- `pkg/detect/command`: `CommandPositions` and `NormalizedPositions` also
+  return the command that `find -exec`/`-execdir`/`-ok`/`-okdir` runs;
+  `corepack` and the remaining value-taking `xargs` options are skipped as a
+  prefix; `Expand` adds the string of `env -S`/`--split-string` as a nested
+  unit; `NormalizedPositions` writes a relative operand that lexically leaves
+  the working directory in its cleaned form (`./../x` and `sub/../../x` as
+  `../x`).
+- `pkg/detect/command` adds `ReadTargetList` with the types `ReadTarget` and
+  `Walk`: the same files as `ReadTargets`, each with whether wildcards and
+  brace expansion apply at run time and, for recursive reads, how the
+  directory is walked. `ReadTargets` also returns directories that recursive
+  searches read (`.` when they name none).
 - New adapters `pkg/harness/opencode`, `pkg/harness/pi` (registers `pi` and
   `omp`), `pkg/harness/dsh`, `pkg/harness/openclaw` and `pkg/harness/hermes`.
 - `pkg/harness` adds `UnknownToolError` for tools an adapter does not know.

@@ -622,7 +622,7 @@ func TestStatusShowsJudgeOnlyCategories(t *testing.T) {
 	if err := (consent.Store{Dir: e.configDir}).Grant(id, []consent.Scope{consent.ScopeAction, consent.ScopeOutbound}, time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	if out, _, _ := e.run(nil, "status"); !strings.Contains(out, "acme-codename warn (judge only, not on Codex or DeepSeek Harness, nor for tool output on Hermes Agent)") {
+	if out, _, _ := e.run(nil, "status"); !strings.Contains(out, "acme-codename warn (judge only, not on Codex, DeepSeek Harness or OpenClaw, nor for tool output on Hermes Agent)") {
 		t.Errorf("status:\n%s", out)
 	}
 }
@@ -682,7 +682,8 @@ func TestStatusListsOpenClaw(t *testing.T) {
 	out, _, _ := e.run(nil, "status")
 	if !strings.Contains(out, "  openclaw: config written: yes") ||
 		!strings.Contains(out, "| hook running: not tracked for openclaw | self-test: not available for openclaw") ||
-		strings.Contains(out, "openclaw: cannot ask") {
+		strings.Contains(out, "openclaw: cannot ask") ||
+		!strings.Contains(out, "  openclaw: asks go to OpenClaw's plugin approval; warnings cannot be shown there, only recorded as warn_undelivered") {
 		t.Errorf("status:\n%s", out)
 	}
 	os.WriteFile(filepath.Join(e.home, ".openclaw", "openclaw.json"), []byte("{ // edited by hand\n}\n"), 0o600)

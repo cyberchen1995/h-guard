@@ -239,7 +239,7 @@ func (r *OutboundRule) validate() error {
 			// regexp2 的错误里带着整条正则；只留错误类型，原文不回显
 			return fieldErr(fmt.Sprintf("match.regex[%d]", i), "%s", quotedSpan.ReplaceAllString(err.Error(), "…"))
 		}
-		re.MatchTimeout = MatchTimeout
+		re.MatchTimeout = currentMatchTimeout()
 		r.regex = append(r.regex, re)
 	}
 	return nil

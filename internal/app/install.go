@@ -73,7 +73,7 @@ func runInstall(args []string, o Options) int {
 		return 1
 	}
 	t := install.Target{Home: o.Home, ConfigDir: o.ConfigDir, CacheDir: o.CacheDir, Bin: bin, Timeout: *timeout,
-		GOOS: o.GOOS, Getenv: o.Getenv, Run: o.RunHarness, Query: o.QueryHarness, Now: o.Now}
+		GOOS: o.GOOS, Getenv: o.Getenv, LookupEnv: o.LookupEnv, Run: o.RunHarness, Query: o.QueryHarness, Now: o.Now}
 	switch harness {
 	case "codex":
 		steps, err := install.Codex(t, *remove)

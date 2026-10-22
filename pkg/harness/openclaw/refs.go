@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/url"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/cyberchen1995/h-guard/pkg/guard"
@@ -12,11 +13,13 @@ import (
 
 // refSpec 是一个工具的参数里引用本地文件的位置：keys 是取值为字符串或字符串列表的参数，nested 是取值为对象列表的
 // 参数及其中引用文件的键，mediaLines 是正文里可以写 MEDIA: 指令（一行一个附件）的参数。OpenClaw 也接受这些键的
-// snake_case 写法（resolveSnakeCaseParamKey），一并取。
+// snake_case 写法（resolveSnakeCaseParamKey），一并取。suffixed 为真时，名字以 Path、File、Url（或 snake_case 的
+// _path、_file、_url）结尾的顶层参数也算（见 fileRefs 里的 message）。
 type refSpec struct {
 	keys       []string
 	nested     []nestedRefs
 	mediaLines []string
+	suffixed   bool
 }
 
 // nestedRefs 是取值为对象列表的参数（list）及其中引用文件的键。按顺序列出，动作的顺序固定。
@@ -30,7 +33,9 @@ type nestedRefs struct {
 //   - view_image：path、paths（本地图片或允许的 URL）；
 //   - message：附件 media、mediaUrl、path、filePath、fileUrl、image、mediaUrls、url 与 attachments[] 的 media、mediaUrl、
 //     path、filePath、fileUrl、url（src/infra/outbound/message-action-params.ts）；顶层的 url 是频道插件可以声明的媒体
-//     参数（describeMessageTool 的 mediaSourceParams，如上传文件），远端 URL 不算；
+//     参数（describeMessageTool 的 mediaSourceParams，如上传文件），远端 URL 不算。频道插件可以按子命令另外声明
+//     媒体参数（如 upload-file 的 sourcePath，设置头像的 avatarUrl、avatarPath），这份声明插件在 before_tool_call
+//     里看不到：名字以 Path、File、Url 结尾的顶层参数一律按文件引用取（宁可多查）；
 //   - pdf：pdf、pdfs（本地 PDF 原生模式下整个文件发给模型提供方）；
 //   - image_generate、music_generate：参考图 image、images；video_generate 另有参考视频 video、videos 与参考音频
 //     audioRef、audioRefs；
@@ -38,8 +43,9 @@ type nestedRefs struct {
 var fileRefs = map[string]refSpec{
 	"view_image": {keys: []string{"path", "paths", "filePath", "file"}},
 	"message": {
-		keys:   []string{"media", "mediaUrl", "path", "filePath", "fileUrl", "image", "mediaUrls", "url"},
-		nested: []nestedRefs{{"attachments", []string{"media", "mediaUrl", "path", "filePath", "fileUrl", "url"}}},
+		keys:     []string{"media", "mediaUrl", "path", "filePath", "fileUrl", "image", "mediaUrls", "url"},
+		nested:   []nestedRefs{{"attachments", []string{"media", "mediaUrl", "path", "filePath", "fileUrl", "url"}}},
+		suffixed: true,
 	},
 	"pdf":            {keys: []string{"pdf", "pdfs"}},
 	"image_generate": {keys: []string{"image", "images"}},
@@ -47,6 +53,10 @@ var fileRefs = map[string]refSpec{
 	"video_generate": {keys: []string{"image", "images", "video", "videos", "audioRef", "audioRefs"}},
 	"sessions_send":  {mediaLines: []string{"message"}},
 }
+
+// refSuffixRe 是按名字算作文件引用的参数：以 Path、File、Url（URL、Uri）结尾的 camelCase 名字，或以 _path、_file、
+// _url 结尾的 snake_case 名字。profile、smile 这样碰巧以 file 结尾的词不算。
+var refSuffixRe = regexp.MustCompile(`^[A-Za-z0-9]+(?:Path|File|Url|URL|Uri|URI)$|^[a-z0-9_]+_(?:path|file|url|uri)$`)
 
 // mediaLineRe 是 MEDIA: 指令（一行，src/media/parse-output.ts 的 MEDIA_TOKEN_RE）。
 var mediaLineRe = regexp.MustCompile("(?i)\\bMEDIA:\\s*`?([^\\n`]+)`?")
@@ -102,8 +112,21 @@ func refsOf(tool string, raw json.RawMessage) []string {
 		return out
 	}
 	var refs []string
-	for _, k := range both(spec.keys) {
+	keys := both(spec.keys)
+	for _, k := range keys {
 		refs = append(refs, stringsOf(m[k])...)
+	}
+	if spec.suffixed {
+		var extra []string
+		for k := range m {
+			if !slices.Contains(keys, k) && refSuffixRe.MatchString(k) {
+				extra = append(extra, k)
+			}
+		}
+		slices.Sort(extra) // 动作的顺序固定
+		for _, k := range extra {
+			refs = append(refs, stringsOf(m[k])...)
+		}
 	}
 	for _, n := range spec.nested {
 		items, _ := m[n.list].([]any)
@@ -151,6 +174,7 @@ var (
 	mediaPrefixRe  = regexp.MustCompile(`(?i)^\s*MEDIA\s*:\s*`)
 	schemeRe       = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9+.-]*:`)
 	driveRe        = regexp.MustCompile(`^[A-Za-z]:[\\/]`)
+	driveLetterRe  = regexp.MustCompile(`^[A-Za-z]:`)
 	encodedSepRe   = regexp.MustCompile(`(?i)%(?:2f|5c)`)
 	urlDrivePathRe = regexp.MustCompile(`^/[A-Za-z]:(?:/|$)`)
 )
@@ -159,7 +183,8 @@ var (
 //   - 去掉开头的 MEDIA: 前缀（media:// 是 OpenClaw 的媒体库，不是本地路径；normalizeMediaReferenceSource）；
 //   - file: URL 与 OpenClaw 的 safeFileURLToPath 一样解码：主机只能为空或 localhost，路径里不能有编码的分隔符
 //     （%2F、%5C），其余百分号编码解码；Windows 上 /C:/x 是 C:\x。OpenClaw 拒绝的 URL 不会读文件，不算；
-//   - Windows 盘符路径（C:\、C:/）与不带 scheme 的路径（含相对路径与 ~）是本地文件；
+//   - Windows 盘符路径（C:\、C:/，以及盘符相对的 C:foo：单个字母不是 URL 的 scheme）与不带 scheme 的路径（含相对
+//     路径与 ~）是本地文件；
 //   - 其余带 scheme 的引用（http(s)、data:、media:// 等）不是。
 func localRef(ref, platform string) (string, bool) {
 	ref = strings.TrimSpace(ref)
@@ -169,7 +194,7 @@ func localRef(ref, platform string) (string, bool) {
 	if ref == "" {
 		return "", false
 	}
-	if driveRe.MatchString(ref) {
+	if driveLetterRe.MatchString(ref) {
 		return ref, true
 	}
 	if !schemeRe.MatchString(ref) {

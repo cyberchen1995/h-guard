@@ -81,6 +81,11 @@ match:
       - '(?<![\w.])(?<![^\w]-)(?<!^-)[a-z]?(?:rm|unlink|mv|cp|install|ln|truncate|tee|chmod|chown|shred|sed\s+-i|perl\s+-[a-z]*i|python[0-9.]*\s+-c|node\s+-e|jq\b[^\n;&|]*>)\b[^\n;&|]*(?:{openclaw_config}|{openclaw_includes})(?![\w.-])'
       - '>>?\s*[^\n;&|]*(?:{openclaw_config}|{openclaw_includes})(?![\w.-])'
       - '(?:{openclaw_config}|{openclaw_includes})(?![\w.-])[^\n;&|]*\|\s*(?:tee|sponge)\b'
+      # OpenClaw 实际用的状态目录（{openclaw_state_dir}：OPENCLAW_STATE_DIR 等解析出的位置，可以在任何目录）与默认的
+      # ~/.openclaw 一样保护：整个目录，与其中同一层的 .json5 片段
+      - '(?<![\w.])(?<![^\w]-)(?<!^-)[a-z]?(?:rm|unlink|mv|cp|install|ln|truncate|tee|chmod|chown|shred|sed\s+-i|perl\s+-[a-z]*i|python[0-9.]*\s+-c|node\s+-e|jq\b[^\n;&|]*>)\b[^\n;&|]*{openclaw_state_dir}(?:[/\\]+[^\n;&|\s''"/\\]*\.json5)?[/\\]?(?=$|[\s''"`;&|)])'
+      - '>>?\s*[^\n;&|]*{openclaw_state_dir}[/\\]+[^\n;&|\s''"/\\]*\.json5'
+      - '{openclaw_state_dir}[/\\]+[^\n;&|\s''"/\\]*\.json5[^\n;&|]*\|\s*(?:tee|sponge)\b'
       # OpenClaw 的命令行改插件设置、停用或卸载 h-guard 的插件（config patch 的内容看不到，一律请求确认）；命令也可以是
       # 直接运行的入口脚本（node …/openclaw.mjs、openclaw.js）
       - '(?<![\w.-])openclaw(?:\.[cm]?js)?\b[^\n;&|]*\bconfig\s+(?:set|unset)\b[^\n;&|]*\bplugins\b'
@@ -93,6 +98,8 @@ match:
       # 能停用插件；--help 与 config 的只读子命令（get、file、schema、validate）不算
       - '(?<![\w.-])openclaw(?:\.[cm]?js)?\b(?:\s+-{1,2}\w[\w-]*(?:=\S+|\s+[^\s;&|-]\S*)?)*\s+config(?:\s+--section(?:=\S+|\s+[^\s;&|-]\S*))*\s*(?=$|[;&|)])'
       - '(?<![\w.-])openclaw(?:\.[cm]?js)?\b(?:\s+-{1,2}\w[\w-]*(?:=\S+|\s+[^\s;&|-]\S*)?)*\s+configure\b(?![^\n;&|]*\s(?:--help|-h)\b)'
+      # openclaw secrets configure 同样是改写 openclaw.json 的交互式向导（secrets 的提供方与引用）
+      - '(?<![\w.-])openclaw(?:\.[cm]?js)?\b(?:\s+-{1,2}\w[\w-]*(?:=\S+|\s+[^\s;&|-]\S*)?)*\s+secrets\s+configure\b(?![^\n;&|]*\s(?:--help|-h)\b)'
       # 重置或卸载 OpenClaw 的配置与状态（openclaw reset、openclaw uninstall --state/--all、onboard、setup 与
       # gateway --dev 的 --reset）同样去掉 h-guard 的插件设置；--dry-run 的用法也请求确认
       - '(?<![\w.-])openclaw(?:\.[cm]?js)?\b(?:\s+-{1,2}\w[\w-]*(?:=\S+|\s+[^\s;&|-]\S*)?)*\s+reset\b'
@@ -136,6 +143,10 @@ match:
       - '(?<![\w.-])(?:set-content|sc|add-content|ac|out-file|clear-content|clc|remove-item|rm|ri|del|erase|rd|rmdir|move-item|mi|mv|move|copy-item|cpi|cp|copy|rename-item|rni|ren|new-item|ni|set-item|si|set-itemproperty|sp|tee-object|tee)\b[^\n;&|]*(?:{openclaw_config}|{openclaw_includes})(?![\w.-])'
       - '\[(?:system\.)?io\.file\]::(?:write|append|delete|move|copy|replace|create|open)\w*\s*\([^\n]*(?:{openclaw_config}|{openclaw_includes})(?![\w.-])'
       - '>>?\s*[^\n;&|]*(?:{openclaw_config}|{openclaw_includes})(?![\w.-])'
+      # OpenClaw 实际用的状态目录与其中的 .json5 片段
+      - '(?<![\w.-])(?:set-content|sc|add-content|ac|out-file|clear-content|clc|remove-item|rm|ri|del|erase|rd|rmdir|move-item|mi|mv|move|copy-item|cpi|cp|copy|rename-item|rni|ren|new-item|ni|set-item|si|set-itemproperty|sp|tee-object|tee)\b[^\n;&|]*{openclaw_state_dir}(?:[/\\]+[^\n;&|\s''"/\\]*\.json5)?[\\/]?(?=$|[\s''"`;&|),])'
+      - '\[(?:system\.)?io\.file\]::(?:write|append|delete|move|copy|replace|create|open)\w*\s*\([^\n]*{openclaw_state_dir}[/\\]+[^\n;&|\s''"/\\]*\.json5'
+      - '>>?\s*[^\n;&|]*{openclaw_state_dir}[/\\]+[^\n;&|\s''"/\\]*\.json5'
       - '(?<![\w.-])(?:set-content|sc|add-content|ac|out-file|clear-content|clc|remove-item|rm|ri|del|erase|rd|rmdir|move-item|mi|mv|move|copy-item|cpi|cp|copy|rename-item|rni|ren|new-item|ni|set-item|si|set-itemproperty|sp|tee-object|tee)\b[^\n;&|]*(?:\.(?:openclaw(?:-[^\n;&|\\/]+)?|clawdbot)[\\/](?:(?:openclaw|clawdbot)\.json|[^\n;&|\s''"\\/]*\.json5)|\$(?:\{env:|env:)(?:openclaw_config_path\}?|openclaw_state_dir\}?[\\/](?:(?:openclaw|clawdbot)\.json|[^\n;&|\s''"\\/]*\.json5)))'
       - '\[(?:system\.)?io\.file\]::(?:write|append|delete|move|copy|replace|create|open)\w*\s*\([^\n]*(?:\.(?:openclaw(?:-[^\n;&|\\/]+)?|clawdbot)[\\/](?:(?:openclaw|clawdbot)\.json|[^\n;&|\s''"\\/]*\.json5)|\$(?:\{env:|env:)(?:openclaw_config_path\}?|openclaw_state_dir\}?[\\/](?:(?:openclaw|clawdbot)\.json|[^\n;&|\s''"\\/]*\.json5)))'
       - '>>?\s*[^\n;&|]*(?:\.(?:openclaw(?:-[^\n;&|\\/]+)?|clawdbot)[\\/](?:(?:openclaw|clawdbot)\.json|[^\n;&|\s''"\\/]*\.json5)|\$(?:\{env:|env:)(?:openclaw_config_path\}?|openclaw_state_dir\}?[\\/](?:(?:openclaw|clawdbot)\.json|[^\n;&|\s''"\\/]*\.json5)))'
@@ -201,6 +212,9 @@ match:
       - '{openclaw_config}'
       # 配置用 $include 引入的文件（逐层解析出的实际位置），与状态目录里同一层的 .json5 片段
       - '{openclaw_includes}'
+      # 实际用的状态目录（OPENCLAW_STATE_DIR 等）与默认的 ~/.openclaw 一样：整个目录与同一层的 .json5 片段
+      - '{openclaw_state_dir}'
+      - '{openclaw_state_dir}/*.json5'
       - '~/.openclaw/*.json5'
       - '~/.openclaw-*/*.json5'
       - '~/.clawdbot/*.json5'
@@ -415,6 +429,17 @@ examples:
     - {shell: posix, command: "sed -i 's/true/false/' ~/.openclaw/plugins.json5"}
     - {shell: posix, command: "echo '{}' > \"$OPENCLAW_STATE_DIR/plugins.json5\""}
     - {shell: powershell, command: "Set-Content ~\\.openclaw\\plugins.json5 -Value '{}'"}
+    # OPENCLAW_STATE_DIR 设在自定义位置（样例里的 {openclaw_state_dir} 是 /srv/openclaw）
+    - {shell: posix, command: "rm -rf /srv/openclaw"}
+    - {shell: posix, command: "mv /srv/openclaw/ /tmp/x"}
+    - {shell: posix, command: "echo '{}' > /srv/openclaw/plugins.json5"}
+    - {shell: powershell, command: "Remove-Item C:\\srv\\openclaw -Recurse -Force"}
+    - {shell: powershell, command: "Set-Content /srv/openclaw/plugins.json5 -Value '{}'"}
+    - {action: file_delete, path: "/srv/openclaw"}
+    - {action: file_rename, path: "/srv/openclaw"}
+    - {action: file_write, path: "/srv/openclaw/plugins.json5"}
+    - {shell: posix, command: "openclaw secrets configure"}
+    - {shell: posix, command: "node openclaw.mjs --profile work secrets configure"}
     - {shell: posix, command: "sed -i '/h-guard/d' ~/.hermes/config.yaml"}
     - {shell: posix, command: "rm -rf ~/.hermes/plugins/h-guard"}
     - {shell: posix, command: "mv ~/.hermes/plugins /tmp/x"}
@@ -455,6 +480,15 @@ examples:
     - {action: file_delete, path: "~/.hermes/plugins/h-guard/__init__.py"}
     - {action: file_rename, path: "~/.hermes/plugins"}
     - {action: file_write, path: "~/.hermes/profiles/work/config.yaml"}
+    # 引号与转义去掉之后与不带的写法相同（POSIX 引号外的 \x 即 x，PowerShell 代码里的 `x 即 x）
+    - {shell: posix, command: "hermes 'plugins' disable h-guard"}
+    - {shell: posix, command: "hermes config 'unset' plugins"}
+    - {shell: posix, command: "hermes \"config\" set \"plugins\" '{}' --force"}
+    - {shell: posix, command: "rm /opt/\\p\\i/agent/extensions/h-guard.js"}
+    - {shell: posix, command: "rm ~/.her\\mes/plugins/h-guard/__init__.py"}
+    - {shell: posix, command: "r\\m ~/.config/h-guard/questions.json"}
+    - {shell: powershell, command: "Remove-Item /opt/`p`i/agent/extensions/h-guard.js"}
+    - {shell: powershell, command: "hermes 'plugins' disable h-guard"}
   miss:
     - {shell: powershell, command: "Get-Content ~\\.claude\\settings.json"}
     - {shell: posix, command: "cat ~/.claude/settings.json"}
@@ -515,6 +549,11 @@ examples:
     - {shell: posix, command: "openclaw plugins uninstall other-plugin"}
     - {shell: posix, command: "openclaw onboard --non-interactive"}
     - {shell: posix, command: "openclaw sessions list --json"}
+    - {shell: posix, command: "rm -rf /srv/openclaw/workspace/tmp"}
+    - {shell: posix, command: "ls /srv/openclaw"}
+    - {action: file_write, path: "/srv/openclaw/workspace/notes.md"}
+    - {shell: posix, command: "openclaw secrets configure --help"}
+    - {shell: posix, command: "openclaw secrets list"}
     # 很长的选项列表不会让 openclaw 命令的模式回溯到超时（超时按命中处理）
     - {shell: posix, command: "openclaw --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d --a-b-c-d status"}
     - {shell: posix, command: "cat ~/.hermes/config.yaml"}
@@ -531,6 +570,7 @@ examples:
     - {shell: posix, command: "rm -rf ~/.hermes/profiles/work/plugins/other"}
     - {action: file_write, path: "~/.hermes/profiles/work/skills/x/SKILL.md"}
     - {shell: posix, command: "hermes config set plugins_note x"}
+    - {shell: posix, command: "hermes 'plugins' disable 'h-guard-notes'"}
     - {shell: posix, command: "echo plugins disable h-guard"}
     - {shell: posix, command: "rm -rf ~/.hermes/plugins/other-plugin"}
     - {action: file_write, path: "~/.hermes/skills/notes/SKILL.md"}

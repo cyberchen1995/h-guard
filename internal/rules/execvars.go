@@ -171,7 +171,7 @@ func compileTemplate(p string, env paths.Env) (*regexp2.Regexp, error) {
 	if err != nil {
 		return nil, err
 	}
-	re.MatchTimeout = MatchTimeout
+	re.MatchTimeout = currentMatchTimeout()
 	return re, nil
 }
 

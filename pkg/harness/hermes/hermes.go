@@ -476,7 +476,8 @@ func fileContent(tool string, in toolArgs) bool {
 
 // resultText 取出工具结果的文本。Hermes 的工具结果是字符串，通常是 JSON：能解析时取出其中的键与值（字符串原样，
 // 数与布尔值按 JSON 的写法），以换行连接（JSON 里转义的换行还原后，多行的私钥等才能认出；键与数里同样可能有邮箱、
-// 账号），否则原样。
+// 账号），否则原样。同一个对象里重复的键每一次出现都取出：解码成 map 只留下最后一个值，前面的值（可能是凭据）
+// 模型照样读得到。
 func resultText(raw json.RawMessage) string {
 	var r resultPayload
 	if extadapter.IsNull(raw) || json.Unmarshal(raw, &r) != nil {
@@ -486,14 +487,17 @@ func resultText(raw json.RawMessage) string {
 	if json.Unmarshal(r.Content, &s) != nil {
 		return extadapter.Text(r.Content)
 	}
+	if !json.Valid([]byte(s)) {
+		return s
+	}
 	dec := json.NewDecoder(strings.NewReader(s))
 	dec.UseNumber()
-	var v any
-	if dec.Decode(&v) != nil || dec.More() {
+	v, err := decodeOrdered(dec)
+	if err != nil {
 		return s
 	}
 	switch v.(type) {
-	case map[string]any, []any:
+	case object, []any:
 	default:
 		return s
 	}
@@ -502,7 +506,60 @@ func resultText(raw json.RawMessage) string {
 	return strings.Join(parts, "\n")
 }
 
-// walkStrings 收集 JSON 值里的键与标量（null 不收集；Go 的 map 没有顺序，所以对象按键排序）。
+// member 是 JSON 对象的一个键值对；object 按原文的顺序保留全部键值对，重复的键也不合并。
+type member struct {
+	key string
+	val any
+}
+
+type object []member
+
+// decodeOrdered 按词法单元读出一个 JSON 值：对象是 object，数组是 []any，数是 json.Number（dec 需 UseNumber）。
+func decodeOrdered(dec *json.Decoder) (any, error) {
+	tok, err := dec.Token()
+	if err != nil {
+		return nil, err
+	}
+	d, ok := tok.(json.Delim)
+	if !ok {
+		return tok, nil
+	}
+	switch d {
+	case '{':
+		var o object
+		for dec.More() {
+			kt, err := dec.Token()
+			if err != nil {
+				return nil, err
+			}
+			k, ok := kt.(string)
+			if !ok {
+				return nil, fmt.Errorf("hermes: object key %v", kt)
+			}
+			v, err := decodeOrdered(dec)
+			if err != nil {
+				return nil, err
+			}
+			o = append(o, member{k, v})
+		}
+		_, err = dec.Token() // }
+		return o, err
+	case '[':
+		a := []any{}
+		for dec.More() {
+			v, err := decodeOrdered(dec)
+			if err != nil {
+				return nil, err
+			}
+			a = append(a, v)
+		}
+		_, err = dec.Token() // ]
+		return a, err
+	}
+	return nil, fmt.Errorf("hermes: unexpected %v", d)
+}
+
+// walkStrings 收集 JSON 值里的键与标量（null 不收集；对象按键排序，同名的键按原文的顺序）。
 func walkStrings(v any, out *[]string) {
 	switch t := v.(type) {
 	case string:
@@ -515,15 +572,12 @@ func walkStrings(v any, out *[]string) {
 		for _, e := range t {
 			walkStrings(e, out)
 		}
-	case map[string]any:
-		keys := make([]string, 0, len(t))
-		for k := range t {
-			keys = append(keys, k)
-		}
-		slices.Sort(keys)
-		for _, k := range keys {
-			*out = append(*out, k)
-			walkStrings(t[k], out)
+	case object:
+		sorted := slices.Clone(t)
+		slices.SortStableFunc(sorted, func(a, b member) int { return strings.Compare(a.key, b.key) })
+		for _, m := range sorted {
+			*out = append(*out, m.key)
+			walkStrings(m.val, out)
 		}
 	}
 }

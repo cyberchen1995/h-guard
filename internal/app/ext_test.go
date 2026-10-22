@@ -460,4 +460,13 @@ func TestOpenClawPlaceholdersUseTargetPlatform(t *testing.T) {
 	if got := openclawConfig(o); got != "/srv/openclaw.json" {
 		t.Errorf("linux: %s", got)
 	}
+	// {openclaw_state_dir}：OPENCLAW_STATE_DIR，没有设置时是主目录下的 .openclaw
+	vars = map[string]string{"OPENCLAW_STATE_DIR": "/srv/openclaw"}
+	if got := openclawStateDir(o); got != "/srv/openclaw" {
+		t.Errorf("state dir: %s", got)
+	}
+	vars = map[string]string{}
+	if got := openclawStateDir(o); got != filepath.Join(home, ".openclaw") {
+		t.Errorf("default state dir: %s", got)
+	}
 }

@@ -18,15 +18,16 @@ match:
     # any 组沿用 Python 版正则，两种 shell 都适用（不拆分，只收紧）；PowerShell 专有的写法在 powershell 组
     any:
       - '\bgit(?:\.exe)?\b[^\n;&|]*\breset\s+(?:-\S+\s+)*--(?:hard|merge)\b'
-      - '\bgit(?:\.exe)?\b[^\n;&|]*\bclean\b(?!(?:(?!\s--(?:\s|$))[^\n;&|])*(?:\s-[a-z]*n\b|\s--dry-run\b))'
+      - '\bgit(?:\.exe)?\b[^\n;&|]*\bclean\b(?!(?:[^\S\n]+(?:(?:-[a-df-z]*e|--exclude)[^\S\n]+[^\s;&|]+|(?!(?:-[a-df-z]*e|--exclude)(?:\s|$))(?!(?:-[a-df-z]*n|--dry-run)\b)(?!--(?:\s|$))[^\s;&|]+))*[^\S\n]+(?:-[a-df-z]*n|--dry-run)\b)'
       - '\bgit(?:\.exe)?\b[^\n;&|]*\brestore\b(?![^\n;&|]*--staged)'
       - '\bgit(?:\.exe)?\b[^\n;&|]*\bcheckout\s+(?:-\S+\s+)*(?:--(?:\s|$)|\.(?:\s|$)|-f\b|--force\b)'
       - '\bgit(?:\.exe)?\b[^\n;&|]*\bstash\s+(?:drop|clear)\b'
       - '\bgit(?:\.exe)?\b[^\n;&|]*\bworktree\s+remove\b[^\n;&|]*(?:-f\b|--force\b)'
     # 模型关闭时也打断的形态：丢弃整个工作区的改动或未跟踪文件，几乎不会是误报（维护者决定，2026-10-19）
+    # git clean 的 -n 豁免按选项逐个解析：-e、--exclude 的参数（git clean -fd -e -n 里的 -n）不算 dry run，any 组同样
     local:
       - '^git(?:\.exe)?(?:\s+(?:-[Cc]\s+(?:\"[^\"]*\"|''[^'']*''|\S+)|--(?:git-dir|work-tree|namespace|config-env|super-prefix)\s+(?:\"[^\"]*\"|''[^'']*''|\S+)|--?[\w-]+(?:=\S+)?))*\s+reset\s+(?:[^\s;&|]+\s+)*?--hard\b'
-      - '^git(?:\.exe)?(?:\s+(?:-[Cc]\s+(?:\"[^\"]*\"|''[^'']*''|\S+)|--(?:git-dir|work-tree|namespace|config-env|super-prefix)\s+(?:\"[^\"]*\"|''[^'']*''|\S+)|--?[\w-]+(?:=\S+)?))*\s+clean\b(?!(?:(?!\s--(?:\s|$))[^\n;&|])*(?:\s-[a-z]*n[a-z]*(?:\s|$)|\s--dry-run\b))'
+      - '^git(?:\.exe)?(?:\s+(?:-[Cc]\s+(?:\"[^\"]*\"|''[^'']*''|\S+)|--(?:git-dir|work-tree|namespace|config-env|super-prefix)\s+(?:\"[^\"]*\"|''[^'']*''|\S+)|--?[\w-]+(?:=\S+)?))*\s+clean\b(?!(?:\s+(?:(?:-[a-df-z]*e|--exclude)\s+\S+|(?!(?:-[a-df-z]*e|--exclude)(?:\s|$))(?!(?:-[a-df-z]*n[a-z]*|--dry-run)(?:\s|$))(?!--(?:\s|$))\S+))*\s+(?:-[a-df-z]*n[a-z]*|--dry-run)(?:\s|$))'
       - '^git(?:\.exe)?(?:\s+(?:-[Cc]\s+(?:\"[^\"]*\"|''[^'']*''|\S+)|--(?:git-dir|work-tree|namespace|config-env|super-prefix)\s+(?:\"[^\"]*\"|''[^'']*''|\S+)|--?[\w-]+(?:=\S+)?))*\s+checkout\s+(?:-\S+\s+)*(?:--\s+)?\.(?:\s|$)'
       - '^git(?:\.exe)?(?:\s+(?:-[Cc]\s+(?:\"[^\"]*\"|''[^'']*''|\S+)|--(?:git-dir|work-tree|namespace|config-env|super-prefix)\s+(?:\"[^\"]*\"|''[^'']*''|\S+)|--?[\w-]+(?:=\S+)?))*\s+checkout\b(?=[^\n;&|]*\s(?:-[a-z]*f[a-z]*|--force)(?:\s|$))'
       - '^git(?:\.exe)?(?:\s+(?:-[Cc]\s+(?:\"[^\"]*\"|''[^'']*''|\S+)|--(?:git-dir|work-tree|namespace|config-env|super-prefix)\s+(?:\"[^\"]*\"|''[^'']*''|\S+)|--?[\w-]+(?:=\S+)?))*\s+stash\s+clear\b'
@@ -43,12 +44,15 @@ examples:
   hit:
     - {shell: posix, command: "git reset --hard HEAD~1"}
     - {shell: posix, command: "git clean -fdx"}
+    - {shell: posix, command: "watch git clean -fd -e -n"}
+    - {shell: posix, command: "git clean -fd -e -n"}
     - {shell: posix, command: "git restore src/"}
     - {shell: posix, command: "git checkout -- ."}
     - {shell: posix, command: "git stash drop"}
     - {shell: posix, command: "cd repo; git reset --hard origin/main"}
   miss:
     - {shell: posix, command: "git status"}
+    - {shell: posix, command: "git clean -e build -n"}
     - {shell: posix, command: "git reset --soft HEAD~1"}
     - {shell: posix, command: "git restore --staged a.py"}
     - {shell: posix, command: "git clean -n"}

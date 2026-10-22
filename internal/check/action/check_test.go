@@ -510,6 +510,7 @@ func TestCommittedActionSurvivesALaterPanic(t *testing.T) {
 // TestDenySurvivesBudgetExhaustion：灾难性形态命中之后预算耗尽，结论仍为 deny 且保留命中，
 // 并且 deny 在后续匹配之前就已提交。
 func TestDenySurvivesBudgetExhaustion(t *testing.T) {
+	productionMatchTimeout(t)
 	c := newCheck(t, false, action.Judge{})
 	dir := t.TempDir()
 	for name, pattern := range map[string]string{"zzslow": "(a+)+$", "zzz": "nevermatch"} {
@@ -549,6 +550,7 @@ func TestBudgetExhaustionWithoutDenyAsks(t *testing.T) {
 // TestRegexTimeoutDoesNotWeakenADefiniteDeny：某个模式超时不能让另一处的确定命中降为请求确认；只有超时命中时
 // 请求确认并说明正则超时，不能说成「修改护栏本身」。
 func TestRegexTimeoutDoesNotWeakenADefiniteDeny(t *testing.T) {
+	productionMatchTimeout(t)
 	slow := "rmdir" + strings.Repeat(" -r", 20000) // 让灾难性规则的一个模式超时
 	c := newCheck(t, false, action.Judge{})
 	if v := run(t, c, event(nil, slow+"; echo $(rm -rf /)")); v.Decision != guard.DecisionDeny {

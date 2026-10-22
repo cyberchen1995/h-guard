@@ -21,6 +21,7 @@ const TITLE = 'h-guard: confirm this tool call'
 const MAX_DESCRIPTION = 512 // Gateway 截断审批说明的长度
 const NOTIFY_TIMEOUT_MS = 60000
 const NOTIFY_MAX_PENDING = 20
+const DISPATCHED_TTL_MS = 10 * 60 * 1000 // before_dispatch 记下的消息等 before_agent_run 的时限
 
 export default {
   id: 'h-guard',
@@ -28,6 +29,7 @@ export default {
   description: 'Checks tool calls, tool output and prompts with h-guard.',
   register(api) {
     const workspaces = new Map() // sessionKey → before_agent_run 报告的工作区
+    const dispatched = new Map() // sessionKey → before_dispatch 已经记为用户指令的消息 { id, text, at }
     const notify = notifier(api)
 
     // 动作：工具执行之前检查。deny 阻止工具调用，模型读到说明；ask 交给 OpenClaw 的插件审批（没有能回答的界面时
@@ -96,17 +98,27 @@ export default {
 
     // 渠道消息：OpenClaw 把收到的消息分派给 agent 之前检查。默认的 steer 队列模式下，会话正在运行时收到的消息直接插进
     // 这次运行（下一次调用模型时），不经过 before_agent_run；before_dispatch 在分派之前，所有渠道消息都经过这里。
-    // deny 时代替 agent 回复 h-guard 的说明，消息不交给 agent。接入层故障放行并记一行日志
+    // deny 时代替 agent 回复 h-guard 的说明，消息不交给 agent。接入层故障放行并记一行日志。
+    // 检查的是 content 与 body（body 另有渠道的信封、引用的消息等）；记为用户指令的只是发送者自己写的 content（request），
+    // 引用的别人的话不能成为授权依据
     api.on('before_dispatch', async (event, ctx = {}) => {
+      const content = event && typeof event.content === 'string' ? event.content : ''
       const parts = []
-      for (const t of [event && event.content, event && event.body]) {
+      for (const t of [content, event && event.body]) {
         if (typeof t === 'string' && t.trim() !== '' && !parts.includes(t)) parts.push(t)
       }
       if (parts.length === 0) return undefined
+      const sessionKey = ctx.sessionKey || event.sessionKey
+      const session = sessionOf(api, workspaces, ctx)
       try {
-        const reply = await callGuard(api, 'before_dispatch', sessionOf(api, workspaces, ctx), {
-          data: { prompt: parts.join('\n'), sessionKey: ctx.sessionKey || event.sessionKey, channel: ctx.channelId || event.channel },
+        const reply = await callGuard(api, 'before_dispatch', session, {
+          data: { prompt: parts.join('\n'), request: content, sessionKey, channel: ctx.channelId || event.channel },
         })
+        if ((reply.action === 'pass' || reply.action === 'warn') && sessionKey && content.trim() !== '') {
+          dispatched.delete(sessionKey)
+          dispatched.set(sessionKey, { id: session.id, text: content.trim(), at: Date.now() })
+          if (dispatched.size > 1000) dispatched.delete(dispatched.keys().next().value)
+        }
         if (reply.action === 'deny' || reply.action === 'ask') {
           log(api, messageOf(reply))
           notify('deny', 'blocked a message', ctx, reply)
@@ -131,14 +143,16 @@ export default {
         if (workspaces.size > 1000) workspaces.delete(workspaces.keys().next().value)
       }
       if (!event || typeof event.prompt !== 'string' || event.prompt.trim() === '') return undefined
+      const session = sessionOf(api, workspaces, ctx)
       try {
-        const reply = await callGuard(api, 'before_agent_run', sessionOf(api, workspaces, ctx), {
+        const reply = await callGuard(api, 'before_agent_run', session, {
           data: {
             prompt: event.prompt,
             trigger: ctx.trigger,
             provenance: ctx.inputProvenance ? ctx.inputProvenance.kind : undefined,
             sessionKey: ctx.sessionKey,
             channel: ctx.channel || event.channelId,
+            dispatched: wasDispatched(dispatched, ctx.sessionKey, session.id, event.prompt) || undefined,
           },
         })
         if (reply.action === 'deny' || reply.action === 'ask') {
@@ -157,6 +171,17 @@ export default {
       return undefined
     })
   },
+}
+
+// wasDispatched 报告这一轮的输入是不是 before_dispatch 刚检查并记为用户指令的那条渠道消息（同一个会话，输入里有那条
+// 消息，在时限内）；是的话 h-guard 照常检查这一轮，但不再记一次，免得同一条消息占两个 policy.request_window 的位置。
+// 每条记下的消息只抵消一次
+function wasDispatched(dispatched, sessionKey, sessionId, prompt) {
+  if (!sessionKey) return false
+  const d = dispatched.get(sessionKey)
+  if (!d) return false
+  dispatched.delete(sessionKey)
+  return d.id === sessionId && Date.now() - d.at <= DISPATCHED_TTL_MS && prompt.includes(d.text)
 }
 
 // log 把提示写进 Gateway 的日志：插件没有向用户显示提示的接口

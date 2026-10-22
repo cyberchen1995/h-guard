@@ -183,8 +183,9 @@ var (
 const openclawMaxIncludes = 64
 
 // OpenClawIncludes 返回 OpenClaw 的配置用 $include 引入的文件（不含配置文件本身）：LoadOpenClawConfig 合并时读到的，
-// 加上按文本找到的（scanIncludes：配置不能解析时也不漏掉）。unresolved 为 true 表示配置或引入的文件读不到、不能解析，
-// 它们里面的设置看不到。
+// 加上按文本找到的（scanIncludes：配置不能解析时也不漏掉）。路径里有符号链接（引入的文件本身或它所在的目录）时，
+// 链接的写法与解析出的实际位置都列出：命令直接改链接的目标同样要认出来。unresolved 为 true 表示配置或引入的文件
+// 读不到、不能解析，它们里面的设置看不到。
 func OpenClawIncludes(t Target) (files []string, unresolved bool) {
 	e := LoadOpenClawConfig(t)
 	files = slices.Clone(e.Includes)
@@ -192,6 +193,11 @@ func OpenClawIncludes(t Target) (files []string, unresolved bool) {
 	for _, f := range scanned {
 		if !slices.Contains(files, f) {
 			files = append(files, f)
+		}
+	}
+	for _, f := range slices.Clone(files) {
+		if real, err := filepath.EvalSymlinks(f); err == nil && real != f && !slices.Contains(files, real) {
+			files = append(files, real)
 		}
 	}
 	slices.Sort(files) // 合并时按对象遍历，顺序不固定

@@ -26,15 +26,21 @@ type Unit struct {
 	// Encoded 为真表示单元来自 -EncodedCommand 解码出的内容（含其中再展开的单元），规则 obfuscated_exec 据此识别
 	Encoded bool
 	joined  string // 去掉续行后的全文（没有续行时为空）
+	plain   string // 简单词去掉引号与转义后的全文（见 plain.go；与原文、joined 相同时为空）
 }
 
-// FullTexts 返回全文匹配用的文本：原文，以及去掉续行后的版本（rm -r\ 换行 f 与 rm -rf 等价）。
+// FullTexts 返回全文匹配用的文本：原文，去掉续行后的版本（rm -r\ 换行 f 与 rm -rf 等价），
+// 以及简单词去掉引号与转义后的版本（rm /opt/\p\i 与 rm /opt/pi 等价，见 plain.go）；后两者只在与原文不同时给出。
 // 哪些反斜杠换行是续行由词法分析按上下文确认：单引号、$'…'、注释与带引号定界符的 heredoc 正文里的不是。
 func (u Unit) FullTexts() []string {
-	if u.joined == "" {
-		return []string{u.Text}
+	out := []string{u.Text}
+	if u.joined != "" {
+		out = append(out, u.joined)
 	}
-	return []string{u.Text, u.joined}
+	if u.plain != "" {
+		out = append(out, u.plain)
+	}
+	return out
 }
 
 // Positions 返回该单元各段处于命令位置的文本（POSIX 见 CommandPositions，PowerShell 见 pwsh.go）。
@@ -94,17 +100,21 @@ func (e *Expansion) expand(ctx context.Context, text string, shell guard.Shell, 
 		text = pwshNormalize(text) // Unicode 破折号与中文引号换成 ASCII 写法
 		stripped, sub := pwshExpand(text)
 		u := Unit{Text: stripped, Depth: depth, Shell: shell}
-		if lx := pwshLex(stripped); len(lx.conts) > 0 {
+		lx := pwshLex(stripped)
+		if len(lx.conts) > 0 {
 			u.joined = lx.join(0, len(stripped)) // 反引号续行与代码里的转义反引号
 		}
+		u.plain = distinct(plainPwsh(lx), u.Text, u.joined)
 		e.Units = append(e.Units, u)
 		inner = sub
 	} else {
 		stripped, expandable, executed := stripHeredocs(text)
 		u := Unit{Text: stripped, Depth: depth, Shell: shell}
-		if lx := lex(stripped); len(lx.conts) > 0 {
+		lx := lex(stripped)
+		if len(lx.conts) > 0 {
 			u.joined = lx.join(0, len(stripped)) // 续行由词法分析按上下文确认
 		}
+		u.plain = distinct(plainPOSIX(lx), u.Text, u.joined)
 		e.Units = append(e.Units, u)
 		for _, b := range expandable {
 			for _, s := range substitutions(b) {

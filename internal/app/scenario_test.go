@@ -98,6 +98,46 @@ func TestLocalFormsInterruptWithoutTheJudge(t *testing.T) {
 		"gh release -R owner/repo create v1":                  "ask",
 		"gh release new v1":                                   "ask",
 		"yarn workspaces foreach -A --no-private npm publish": "ask",
+		// 前缀与包装：env -S、find -exec、xargs 带参数的选项、corepack
+		"env -S 'npm publish'":                                 "ask",
+		"env --split-string='git reset --hard'":                "ask",
+		"env -S 'echo npm publish'":                            "pass",
+		`find . -maxdepth 0 -exec npm publish \;`:              "ask",
+		"find . -name x -execdir rm -rf ../sibling {} +":       "ask",
+		`find . -exec echo npm publish \;`:                     "pass",
+		"xargs --process-slot-var SLOT npm publish </dev/null": "ask",
+		"corepack pnpm publish":                                "ask",
+		"corepack npm@10.0.0 publish":                          "ask",
+		"corepack enable":                                      "pass",
+		// 带参数的选项
+		"yarn workspaces foreach -A -j 2 npm publish":                                   "ask",
+		"yarn workspaces foreach --from '@scope/*' --include a --exclude b npm publish": "ask",
+		"uv --directory pkg publish":                                                    "ask",
+		"uv --project pkg --config-file uv.toml publish":                                "ask",
+		"uv --directory pkg run publish":                                                "pass",
+		"git clean -fd -e -n":                                                           "ask",
+		"git clean -fd --exclude -n":                                                    "ask",
+		"git clean -fen":                                                                "ask",
+		"git clean -e build -n":                                                         "pass",
+		// git-filter-repo 的模块写法与只读用法
+		"python3 -m git_filter_repo --path secrets --invert-paths":    "ask",
+		"python3 -W ignore -m git_filter_repo --force":                "ask",
+		"python3 -m git_filter_repo --analyze":                        "pass",
+		"git filter-repo --analyze":                                   "pass",
+		"git filter-repo --dry-run":                                   "pass",
+		"git filter-repo --path secrets && git filter-repo --analyze": "ask",
+		"git filter-repo --path-glob '*.key --analyze'":               "ask",
+		// rm -r 的操作数按字面整理后再看是否走出工作区
+		"rm -rf ./../sibling":      "ask",
+		"rm -rf sub/../../sibling": "ask",
+		"rm -rf sub/../build":      "pass",
+		// 帮助
+		"npm publish --help":                "pass",
+		"npm publish -h":                    "pass",
+		"cargo publish --help":              "pass",
+		"uv --directory pkg publish --help": "pass",
+		"npm publish && npm --help":         "ask",
+		"cargo publish; cargo --help":       "ask",
 	} {
 		out, errs, _ := e.run(nil, "check", cmd)
 		if !strings.Contains(out, "decision: "+want) {
@@ -114,6 +154,11 @@ func TestLocalFormsInterruptWithoutTheJudge(t *testing.T) {
 		"Remove-Item -Recurse $env:HOME/projects":      "ask",
 		"Publish-Module -Name Example -WhatIf":         "pass",
 		"Publish-Module -Name Example":                 "ask",
+		// 引号里的 -WhatIf 不是参数
+		`Remove-Item -Recurse "$HOME/cache -WhatIf x"`: "ask",
+		`Remove-Item -Recurse "$HOME/cache" -WhatIf`:   "pass",
+		`Publish-Module -Name "Example -WhatIf"`:       "ask",
+		`Publish-Module -Name 'Example' -WhatIf`:       "pass",
 		"git reset --hard":                             "ask",
 		"npm publish":                                  "ask",
 	} {
@@ -234,17 +279,74 @@ func TestShellGlobReads(t *testing.T) {
 		t.Fatal(err)
 	}
 	for cmd, want := range map[string]string{
-		"cat .env*":                      "ask",
-		"head -n1 .e?v":                  "ask",
-		"cat *":                          "pass",
-		"cat READ*":                      "pass",
-		"cat .env.example*":              "pass",
-		"cat '[vault/.env'":              "ask", // 不是合法的通配符：按字面检查
-		"shopt -s dotglob; cat *":        "ask", // * 匹配 .env
-		"shopt -s globstar; cat **/.env": "ask", // ** 跨目录：没有递归展开，按没有全部检查处理
-		"cat **/*.md":                    "pass",
-		"cat */*":                        "pass",
-		"cat .{env,example}":             "ask",
+		"cat .env*":                             "ask",
+		"head -n1 .e?v":                         "ask",
+		"cat *":                                 "pass",
+		"cat READ*":                             "pass",
+		"cat .env.example*":                     "pass",
+		"cat '[vault/.env'":                     "ask", // 不是合法的通配符：按字面检查
+		"shopt -s dotglob; cat *":               "ask", // * 匹配 .env
+		"shopt -s globstar; cat **/.env":        "ask", // ** 匹配零层或多层目录：读到 .env
+		"shopt -s globstar; cat **/*.md":        "pass",
+		"cat **/*.md":                           "pass",
+		"cat */*":                               "pass",
+		"cat .{env,example}":                    "ask",
+		"cat .en{u..v}":                         "ask",  // 花括号序列
+		"cat '.env*'":                           "pass", // 引号里的通配符按字面：读的是名为 .env* 的文件
+		`cat .env\*`:                            "pass",
+		"cat '.{env,example}'":                  "pass",
+		`cat ".env"*`:                           "ask",
+		"echo xargs -a .env":                    "pass", // 不在命令位置上的 xargs 不读文件
+		"sudo xargs -a .env echo":               "ask",
+		`home=/tmp; cat "$home/.netrc"`:         "pass", // POSIX 的 $home 不是 $HOME
+		`cat "$HOME/.netrc"`:                    "ask",
+		"git diff --no-index -- README.md .env": "ask",
+		// 递归读取目录
+		"grep -r TOKEN .":         "ask",
+		"grep -rn TOKEN":          "ask",
+		"grep -r TOKEN README.md": "pass",
+		"grep -r TOKEN --exclude='.env*' --exclude-dir=.ssh .": "pass",
+		"grep -r --include=*.md TOKEN .":                       "pass",
+		"rg TOKEN":                                             "pass", // rg 默认跳过以点开头的文件与目录
+		"rg --hidden TOKEN":                                    "ask",
+		"rg -uu TOKEN .":                                       "ask",
+		"git log | rg TOKEN":                                   "pass",
+		"grep TOKEN .":                                         "pass", // 不递归：grep 不读目录
+	} {
+		out, errs, _ := e.run(nil, "check", cmd, "--cwd", dir)
+		if !strings.Contains(out, "decision: "+want) {
+			t.Errorf("%q: want %s\n%s%s", cmd, want, out, errs)
+		}
+	}
+	// PowerShell：引号里的通配符同样生效，没有花括号展开，-LiteralPath 按字面
+	for cmd, want := range map[string]string{
+		"Get-Content '.env*'":                           "ask",
+		"Get-Content -LiteralPath '.env*'":              "pass",
+		"Get-Content -LiteralPath '.{env,example}'":     "pass",
+		"Get-Content @('.env')":                         "ask",
+		`cmd /c "type .env"`:                            "ask",
+		`cmd /c type %USERPROFILE%/.docker/config.json`: "ask",
+		`cmd /c type %HOMEDRIVE%%HOMEPATH%/.netrc`:      "ask",
+		"Get-Content README.md":                         "pass",
+	} {
+		out, errs, _ := e.run(nil, "check", cmd, "--shell", "powershell", "--cwd", dir)
+		if !strings.Contains(out, "decision: "+want) {
+			t.Errorf("%q: want %s\n%s%s", cmd, want, out, errs)
+		}
+	}
+}
+
+// TestShellGlobUnreadable：通配符要读的目录读不了时，不当作没有匹配，请求确认（失败即确认）。
+// 这里用符号链接环路（root 也读不了）；sudo sh -c 'cat /root/.ssh/id_rsa*' 读不了 /root 时是同样的情形。
+func TestShellGlobUnreadable(t *testing.T) {
+	e := newEnv(t)
+	dir := t.TempDir()
+	if err := os.Symlink("loop", filepath.Join(dir, "loop")); err != nil {
+		t.Skip("symlinks unavailable:", err)
+	}
+	for cmd, want := range map[string]string{
+		"sudo sh -c 'cat loop/id_rsa*'": "ask",
+		"cat missing/id_rsa*":           "pass", // 不存在的目录里没有文件
 	} {
 		out, errs, _ := e.run(nil, "check", cmd, "--cwd", dir)
 		if !strings.Contains(out, "decision: "+want) {
@@ -266,6 +368,10 @@ func TestShellGlobTooMany(t *testing.T) {
 		"cat f*":    "ask",
 		"cat f000*": "pass",
 		"cat {.,x}{e,a}{n,b}{v,c}{,x}{,x}{,x}{,x}{,x}{,x}{,x}": "ask", // 花括号展开出 2048 个词，超过上限
+		"cat f{0000..2000}":   "ask", // 花括号序列超过上限
+		"cat f{0000..0005}":   "pass",
+		"grep -r TOKEN .":     "ask", // 递归读取的文件超过上限
+		"grep -r TOKEN f0001": "pass",
 	} {
 		out, errs, _ := e.run(nil, "check", cmd, "--cwd", dir)
 		if !strings.Contains(out, "decision: "+want) {

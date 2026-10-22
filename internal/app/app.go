@@ -81,7 +81,10 @@ type Options struct {
 	Stdin          io.Reader
 	Stdout, Stderr io.Writer
 	Getenv         func(string) string
-	Now            func() time.Time
+	// LookupEnv 区分设置为空与没有设置的环境变量（install 照 Hermes 的方式展开 $VAR 时用）；默认在 Getenv 也是默认值时
+	// 取 os.LookupEnv，否则为空，按 Getenv 处理
+	LookupEnv func(string) (string, bool)
+	Now       func() time.Time
 	// 默认 store.ConfigDir()、store.CacheDir()。取不到时为空：不读用户配置、规则与 .env（只用内置默认），
 	// 也不写指令缓存与日志——不能退回相对路径，否则当前项目里的文件会配置护栏、提示词会写进项目。
 	ConfigDir string
@@ -124,6 +127,9 @@ func (o *Options) fill() {
 	}
 	if o.Getenv == nil {
 		o.Getenv = os.Getenv
+		if o.LookupEnv == nil {
+			o.LookupEnv = os.LookupEnv
+		}
 	}
 	if o.Now == nil {
 		o.Now = time.Now
@@ -335,7 +341,15 @@ func openclawConfig(o Options) string {
 	if o.Home == "" {
 		return ""
 	}
-	return install.OpenClawConfig(install.Target{Home: o.Home, Getenv: o.Getenv, GOOS: o.GOOS})
+	return install.OpenClawConfig(install.Target{Home: o.Home, Getenv: o.Getenv, LookupEnv: o.LookupEnv, GOOS: o.GOOS})
+}
+
+// openclawStateDir 是 OpenClaw 的状态目录（$OPENCLAW_STATE_DIR，默认 ~/.openclaw）。
+func openclawStateDir(o Options) string {
+	if o.Home == "" {
+		return ""
+	}
+	return install.OpenClawStateDir(install.Target{Home: o.Home, Getenv: o.Getenv, GOOS: o.GOOS})
 }
 
 // openclawIncludes 是 OpenClaw 的配置用 $include 引入的文件。
@@ -343,7 +357,7 @@ func openclawIncludes(o Options) []string {
 	if o.Home == "" {
 		return nil
 	}
-	files, _ := install.OpenClawIncludes(install.Target{Home: o.Home, Getenv: o.Getenv, GOOS: o.GOOS})
+	files, _ := install.OpenClawIncludes(install.Target{Home: o.Home, Getenv: o.Getenv, LookupEnv: o.LookupEnv, GOOS: o.GOOS})
 	return files
 }
 
@@ -353,7 +367,7 @@ func hermesHome(o Options) string {
 	if o.Home == "" {
 		return ""
 	}
-	return install.HermesHome(install.Target{Home: o.Home, GOOS: o.GOOS, Getenv: o.Getenv})
+	return install.HermesHome(install.Target{Home: o.Home, GOOS: o.GOOS, Getenv: o.Getenv, LookupEnv: o.LookupEnv})
 }
 
 // hermesManaged 是 Hermes Agent 的托管范围目录：$HERMES_MANAGED_DIR，默认 /etc/hermes（Windows 上没有默认位置）。
@@ -390,7 +404,7 @@ func (s setup) newEngine(o Options, j action.Judge, oj outbound.Judge) *engine.E
 			Vars: absVars(map[string]string{rules.VarConfig: o.ConfigDir, rules.VarCache: o.CacheDir, rules.VarExtraConfig: s.extra,
 				rules.VarClaudeConfig: o.Getenv("CLAUDE_CONFIG_DIR"), rules.VarCodexHome: o.Getenv("CODEX_HOME"),
 				rules.VarXDGConfig: o.Getenv("XDG_CONFIG_HOME"), rules.VarPiAgentDir: piAgentDir(o), rules.VarDSHHome: install.ExpandDSHHome(o.Home, o.Getenv("DSH_HOME")), rules.VarOMPConfig: ompConfig(o),
-				rules.VarOpenClawConfig: openclawConfig(o), rules.VarHermesHome: hermesHome(o), rules.VarHermesManaged: hermesManaged(o)}),
+				rules.VarOpenClawConfig: openclawConfig(o), rules.VarOpenClawStateDir: openclawStateDir(o), rules.VarHermesHome: hermesHome(o), rules.VarHermesManaged: hermesManaged(o)}),
 			Lists: map[string][]string{rules.VarOpenClawIncludes: openclawIncludes(o)}}}
 	o2 := &outbound.Check{Rules: s.rules, Config: s.cfg, Judge: oj}
 	return &engine.Engine{
