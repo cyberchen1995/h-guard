@@ -70,6 +70,18 @@ minor releases. Every such change is recorded in this file.
   `publish` interrupt their high-impact forms instead of only logging every
   match. The interruption no longer says that the agent chose the operation on
   its own, which h-guard cannot tell without the judge.
+- `sensitive_read` recognizes more shell reads: recursive searches
+  (`grep -r`, `rg`, `ag`, `ack`) check the files under the directory they
+  read, honoring hidden-file defaults and simple include/exclude filters;
+  brace sequences (`.en{u..v}`); `**` with `shopt -s globstar`; `cmd /c`
+  payloads in quotes and `%USERPROFILE%`; `git diff --no-index` operands after
+  `--`; PowerShell array literals (`Get-Content @('.env')`). Expansions stay
+  bounded: a walk or glob over the limit, or a directory h-guard cannot read
+  (`sudo sh -c 'cat /root/.ssh/id_rsa*'`), asks for confirmation.
+- Fewer needless confirmations for shell reads: quoted or escaped wildcards
+  and braces are literal (`cat '.env*'`), PowerShell has no brace expansion
+  and `-LiteralPath` no wildcards, `xargs -a` counts only at a command
+  position, and the POSIX `$home` variable is no longer taken for `$HOME`.
 
 ### Harnesses
 
@@ -172,6 +184,11 @@ minor releases. Every such change is recorded in this file.
 - `pkg/detect/command` adds `ReadTargets`: the files a command reads locally
   (file operands of common read commands, input redirections and PowerShell's
   `Get-Content` paths).
+- `pkg/detect/command` adds `ReadTargetList` with the types `ReadTarget` and
+  `Walk`: the same files as `ReadTargets`, each with whether wildcards and
+  brace expansion apply at run time and, for recursive reads, how the
+  directory is walked. `ReadTargets` also returns directories that recursive
+  searches read (`.` when they name none).
 - New adapters `pkg/harness/opencode`, `pkg/harness/pi` (registers `pi` and
   `omp`), `pkg/harness/dsh`, `pkg/harness/openclaw` and `pkg/harness/hermes`.
 - `pkg/harness` adds `UnknownToolError` for tools an adapter does not know.

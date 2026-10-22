@@ -234,17 +234,74 @@ func TestShellGlobReads(t *testing.T) {
 		t.Fatal(err)
 	}
 	for cmd, want := range map[string]string{
-		"cat .env*":                      "ask",
-		"head -n1 .e?v":                  "ask",
-		"cat *":                          "pass",
-		"cat READ*":                      "pass",
-		"cat .env.example*":              "pass",
-		"cat '[vault/.env'":              "ask", // 不是合法的通配符：按字面检查
-		"shopt -s dotglob; cat *":        "ask", // * 匹配 .env
-		"shopt -s globstar; cat **/.env": "ask", // ** 跨目录：没有递归展开，按没有全部检查处理
-		"cat **/*.md":                    "pass",
-		"cat */*":                        "pass",
-		"cat .{env,example}":             "ask",
+		"cat .env*":                             "ask",
+		"head -n1 .e?v":                         "ask",
+		"cat *":                                 "pass",
+		"cat READ*":                             "pass",
+		"cat .env.example*":                     "pass",
+		"cat '[vault/.env'":                     "ask", // 不是合法的通配符：按字面检查
+		"shopt -s dotglob; cat *":               "ask", // * 匹配 .env
+		"shopt -s globstar; cat **/.env":        "ask", // ** 匹配零层或多层目录：读到 .env
+		"shopt -s globstar; cat **/*.md":        "pass",
+		"cat **/*.md":                           "pass",
+		"cat */*":                               "pass",
+		"cat .{env,example}":                    "ask",
+		"cat .en{u..v}":                         "ask",  // 花括号序列
+		"cat '.env*'":                           "pass", // 引号里的通配符按字面：读的是名为 .env* 的文件
+		`cat .env\*`:                            "pass",
+		"cat '.{env,example}'":                  "pass",
+		`cat ".env"*`:                           "ask",
+		"echo xargs -a .env":                    "pass", // 不在命令位置上的 xargs 不读文件
+		"sudo xargs -a .env echo":               "ask",
+		`home=/tmp; cat "$home/.netrc"`:         "pass", // POSIX 的 $home 不是 $HOME
+		`cat "$HOME/.netrc"`:                    "ask",
+		"git diff --no-index -- README.md .env": "ask",
+		// 递归读取目录
+		"grep -r TOKEN .":         "ask",
+		"grep -rn TOKEN":          "ask",
+		"grep -r TOKEN README.md": "pass",
+		"grep -r TOKEN --exclude='.env*' --exclude-dir=.ssh .": "pass",
+		"grep -r --include=*.md TOKEN .":                       "pass",
+		"rg TOKEN":                                             "pass", // rg 默认跳过以点开头的文件与目录
+		"rg --hidden TOKEN":                                    "ask",
+		"rg -uu TOKEN .":                                       "ask",
+		"git log | rg TOKEN":                                   "pass",
+		"grep TOKEN .":                                         "pass", // 不递归：grep 不读目录
+	} {
+		out, errs, _ := e.run(nil, "check", cmd, "--cwd", dir)
+		if !strings.Contains(out, "decision: "+want) {
+			t.Errorf("%q: want %s\n%s%s", cmd, want, out, errs)
+		}
+	}
+	// PowerShell：引号里的通配符同样生效，没有花括号展开，-LiteralPath 按字面
+	for cmd, want := range map[string]string{
+		"Get-Content '.env*'":                           "ask",
+		"Get-Content -LiteralPath '.env*'":              "pass",
+		"Get-Content -LiteralPath '.{env,example}'":     "pass",
+		"Get-Content @('.env')":                         "ask",
+		`cmd /c "type .env"`:                            "ask",
+		`cmd /c type %USERPROFILE%/.docker/config.json`: "ask",
+		`cmd /c type %HOMEDRIVE%%HOMEPATH%/.netrc`:      "ask",
+		"Get-Content README.md":                         "pass",
+	} {
+		out, errs, _ := e.run(nil, "check", cmd, "--shell", "powershell", "--cwd", dir)
+		if !strings.Contains(out, "decision: "+want) {
+			t.Errorf("%q: want %s\n%s%s", cmd, want, out, errs)
+		}
+	}
+}
+
+// TestShellGlobUnreadable：通配符要读的目录读不了时，不当作没有匹配，请求确认（失败即确认）。
+// 这里用符号链接环路（root 也读不了）；sudo sh -c 'cat /root/.ssh/id_rsa*' 读不了 /root 时是同样的情形。
+func TestShellGlobUnreadable(t *testing.T) {
+	e := newEnv(t)
+	dir := t.TempDir()
+	if err := os.Symlink("loop", filepath.Join(dir, "loop")); err != nil {
+		t.Skip("symlinks unavailable:", err)
+	}
+	for cmd, want := range map[string]string{
+		"sudo sh -c 'cat loop/id_rsa*'": "ask",
+		"cat missing/id_rsa*":           "pass", // 不存在的目录里没有文件
 	} {
 		out, errs, _ := e.run(nil, "check", cmd, "--cwd", dir)
 		if !strings.Contains(out, "decision: "+want) {
@@ -266,6 +323,10 @@ func TestShellGlobTooMany(t *testing.T) {
 		"cat f*":    "ask",
 		"cat f000*": "pass",
 		"cat {.,x}{e,a}{n,b}{v,c}{,x}{,x}{,x}{,x}{,x}{,x}{,x}": "ask", // 花括号展开出 2048 个词，超过上限
+		"cat f{0000..2000}":   "ask", // 花括号序列超过上限
+		"cat f{0000..0005}":   "pass",
+		"grep -r TOKEN .":     "ask", // 递归读取的文件超过上限
+		"grep -r TOKEN f0001": "pass",
 	} {
 		out, errs, _ := e.run(nil, "check", cmd, "--cwd", dir)
 		if !strings.Contains(out, "decision: "+want) {

@@ -11,6 +11,7 @@ const (
 	KeyActionGuardSelfFile     = "action.guard_self_file"     // {paths} {rules}
 	KeyActionFileRule          = "action.file_rule"           // {paths} {rules}
 	KeyActionGlobTooMany       = "action.glob_too_many"       // {pattern} {limit}
+	KeyActionReadUnreadable    = "action.read_unreadable"     // {pattern} {dir}
 	KeyActionJudgeUnavailable  = "action.judge_unavailable"   // {code} {rules}
 	KeyActionEvidenceTruncated = "action.evidence_truncated"  //
 	KeyActionRegexTimeout      = "action.regex_timeout"       //
@@ -49,7 +50,7 @@ const (
 
 // AllKeys 是全部消息键；en 目录必须覆盖它们（测试检查）。
 var AllKeys = []string{
-	KeyActionBlocked, KeyActionDangerous, KeyActionDangerousLocal, KeyActionRadius, KeyActionNotRequested, KeyActionGuardSelf, KeyActionGuardSelfFile, KeyActionGlobTooMany,
+	KeyActionBlocked, KeyActionDangerous, KeyActionDangerousLocal, KeyActionRadius, KeyActionNotRequested, KeyActionGuardSelf, KeyActionGuardSelfFile, KeyActionGlobTooMany, KeyActionReadUnreadable,
 	KeyActionFileRule, KeyActionJudgeUnavailable, KeyActionEvidenceTruncated, KeyActionRegexTimeout, KeyActionBudgetExceeded,
 	KeyActionProbe, KeyActionOperation, KeyActionOperationHere, KeyActionImpact, KeyActionAdvice, KeyOutboundCredentials, KeyOutboundPrivateKey, KeyOutboundPII, KeyOutboundCustom, KeyOutboundJudge, KeyErrorInternal, KeyErrorConfigInvalid, KeyErrorInputTooLarge, KeyErrorTargetUnparsed, KeyErrorToolUnknown, KeyDegradeAskUnsupported, KeyDegradePromptNotBlocked,
 	KeySourceLocal, KeySourceJudge, KeySourceBoth, KeyHintManual, KeyHintConsent, KeyHintJudgeUnavailable,
