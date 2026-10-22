@@ -299,6 +299,7 @@ func TestStateOf(t *testing.T) {
 
 // TestDeadlineIsCheckedBeforeEveryMatch：截止时间到了之后不再开始新的正则匹配。
 func TestDeadlineIsCheckedBeforeEveryMatch(t *testing.T) {
+	productionMatchTimeout(t)
 	dir := t.TempDir()
 	writeRule(t, dir, "slow.yaml", `schema: 1
 id: slow
@@ -327,6 +328,7 @@ match:
 // TestDefiniteMatchClearsEarlierTimeout：前面的模式超时之后，另一个模式确定命中时结论是确定命中，不带超时标记
 // （否则 deny 级规则的确定命中会被降为请求确认）。
 func TestDefiniteMatchClearsEarlierTimeout(t *testing.T) {
+	productionMatchTimeout(t)
 	dir := t.TempDir()
 	writeRule(t, dir, "slow.yaml", `schema: 1
 id: slow
@@ -349,6 +351,7 @@ match:
 }
 
 func TestRegexTimeoutCountsAsHit(t *testing.T) {
+	productionMatchTimeout(t)
 	dir := t.TempDir()
 	writeRule(t, dir, "slow.yaml", `schema: 1
 id: slow
