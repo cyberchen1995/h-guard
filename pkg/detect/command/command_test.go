@@ -318,6 +318,13 @@ func TestNestedShells(t *testing.T) {
 		{`bash script.sh`, nil},
 		{`python3 -c "` + MARK + `"`, nil},
 		{`echo "bash -c ` + MARK + `"`, nil},
+		// env -S 把字符串拆成词作为命令运行，后面的词接在后面
+		{`env -S '` + MARK + `'`, []string{MARK}},
+		{`env -iS"` + MARK + `" x`, []string{MARK + " x"}},
+		{`env -u HOME --split-string='` + MARK + `'`, []string{MARK}},
+		{`sudo env --split-string "` + MARK + `"`, []string{MARK}},
+		{`env -- -S x`, nil},
+		{`echo env -S x`, nil},
 	}
 	for _, tt := range tests {
 		if got := inner(expand(t, tt.cmd)); !slices.Equal(got, tt.inner) {
@@ -361,6 +368,9 @@ func TestNormalizedPositions(t *testing.T) {
 		`echo "rm -rf /"`:             {`echo "rm -rf /"`},
 		`rm -rf / >/dev/null; ls "a"`: {"rm -rf /", "ls a"},
 		`rm -rf "my dir"`:             {`rm -rf "my dir"`},
+		// 按字面走出当前目录的相对路径写成整理后的形式；不走出的、绝对路径与变量开头的不动
+		`rm -rf ./../sibling sub/../../x/ ./a/.. sub/../b /tmp/../x $HOME/../x`: {"rm -rf ../sibling ../x ./a/.. sub/../b /tmp/../x $HOME/../x"},
+		`find . -exec rm -rf ./../x {} \;`:                                      {"find . -exec rm -rf ../x {} ;", "rm -rf ../x {}"},
 	} {
 		if got := command.NormalizedPositions(cmd); !slices.Equal(got, want) {
 			t.Errorf("NormalizedPositions(%q) = %q, want %q", cmd, got, want)
@@ -433,6 +443,16 @@ func TestCommandPositions(t *testing.T) {
 		{"if rm x; then ls; fi", []string{"rm x", "ls", "fi"}},
 		{"{ rm x; }", []string{"rm x"}},
 		{"! rm x", []string{"rm x"}},
+		// find 的 -exec 等交给的命令另算一个命令位置（到 ; 或 {} + 为止），其中的前缀同样剥掉
+		{`find . -maxdepth 0 -exec npm publish \;`, []string{`find . -maxdepth 0 -exec npm publish \;`, "npm publish"}},
+		{"find . -execdir sudo rm -rf x {} + -print", []string{"find . -execdir sudo rm -rf x {} + -print", "rm -rf x {}"}},
+		{"find . -ok rm a + b ';' -exec ls", []string{"find . -ok rm a + b ';' -exec ls", "rm a + b", "ls"}},
+		{"echo find . -exec rm x", []string{"echo find . -exec rm x"}},
+		// xargs 带参数的选项连同参数跳过；corepack 运行它后面的包管理器
+		{"xargs --process-slot-var SLOT npm publish", []string{"npm publish"}},
+		{"xargs -J % -R 2 -S 255 cp % dest", []string{"cp % dest"}},
+		{"corepack pnpm publish", []string{"pnpm publish"}},
+		{"corepack npm@10.0.0 publish", []string{"npm@10.0.0 publish"}},
 	}
 	for _, tt := range tests {
 		if got := command.CommandPositions(tt.in); !slices.Equal(got, tt.want) {

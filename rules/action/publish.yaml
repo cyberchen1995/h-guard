@@ -24,8 +24,9 @@ match:
       - '\bgh(?:\.exe)?\s+repo\s+(?:create|delete|edit|rename|archive)\b'
       - '\bgh(?:\.exe)?\s+issue\s+(?:create|close|comment|edit|delete|reopen)\b'
       - '\bglab\s+mr\s+(?:create|merge|close|approve|update)\b'
-      - '\b(?:npm|pnpm|yarn)\s+publish\b'
+      - '\b(?:npm|pnpm|yarn)(?:@\S*)?\s+publish\b'
       - '\b(?:twine\s+upload|uv\s+publish|cargo\s+publish|gem\s+push|docker\s+push)\b'
+      - '\buv(?:\s+(?:(?:--(?:directory|project|config-file|cache-dir|color|allow-insecure-host|python-preference|python)|-p)(?:=|\s+)(?:"[^"]*"|''[^'']*''|[^\s;&|]+)|-{1,2}[\w-]+(?:=[^\s;&|]+)?))+\s+publish\b'
       - '\b(?:curl|wget|http|https)\b[^\n;&|]*(?:-X\s*|--request(?:=|\s+)|--method(?:=|\s+))(?:POST|PUT|PATCH|DELETE)\b(?![^\n;&|]*(?:localhost|127\.0\.0\.1))'
     # PowerShell：Invoke-RestMethod / Invoke-WebRequest（5.1 里 curl、wget 是它们的别名）的写操作，
     # -Method 可缩写（-Me），也可用 -CustomMethod；只在实际的 URI 是本机时豁免：-Uri（或 -Ur）的值、或紧跟命令的
@@ -38,17 +39,18 @@ match:
       - '\b(?:publish-module|publish-script|publish-psresource)\b'
       - '\bnuget(?:\.exe)?\s+push\b'
     # 模型关闭时也打断的形态：发布包、镜像或 release（发出去就收不回来）；git push 与 PR 操作仍要模型判断
-    # 是不是用户要求的（维护者决定，2026-10-19）
+    # 是不是用户要求的（维护者决定，2026-10-19）。带参数的选项（yarn workspaces foreach -j 2、uv --directory <dir>）
+    # 连同参数跳过；-h、--help 只显示帮助；PowerShell 的 -WhatIf 按参数认，引号里的同样文本不算
     local:
-      - '^(?:npm|pnpm|yarn)(?![^\n;&|]*\s--dry-run(?:=true)?(?:\s|$))(?:\s+-{1,2}[\w-]+(?:=\S+|\s+[^-\s]\S*)?)*(?:\s+workspace\s+\S+|\s+workspaces\s+foreach(?:\s+-{1,2}[\w-]+(?:=\S+)?)*)?(?:\s+npm)?\s+(?:publish|pub)(?=\s|$)'
-      - '^(?:(?:python[\d.]*|py)(?:\s+-[^\sm]\S*)*\s+-m\s+)?twine\s+upload\b'
-      - '^(?:uv\s+publish|gem\s+push)\b'
+      - '^(?:npm|pnpm|yarn)(?:@\S*)?(?![^\n;&|]*\s(?:--dry-run(?:=true)?|-h|--help)(?:\s|$))(?:\s+-{1,2}[\w-]+(?:=\S+|\s+[^-\s]\S*)?)*(?:\s+workspace\s+\S+|\s+workspaces\s+foreach(?:\s+(?:(?:-j|--jobs|--from|--include|--exclude)\s+(?:"[^"]*"|''[^'']*''|\S+)|-{1,2}[\w-]+(?:=\S+)?))*)?(?:\s+npm)?\s+(?:publish|pub)(?=\s|$)'
+      - '^(?:(?:python[\d.]*|py)(?:\s+-[^\sm]\S*)*\s+-m\s+)?twine\s+upload\b(?![^\n;&|]*\s(?:-h|--help)(?:\s|$))'
+      - '^(?:uv(?:\s+(?:(?:--(?:directory|project|config-file|cache-dir|color|allow-insecure-host|python-preference|python)|-p)\s+(?:"[^"]*"|''[^'']*''|\S+)|-{1,2}[\w-]+(?:=\S+)?))*\s+publish|gem\s+push)(?=\s|$)(?![^\n;&|]*\s(?:-h|--help)(?:\s|$))'
       - '^(?:docker|podman)(?:\s+-{1,2}[\w-]+(?:=\S+|\s+[^-\s]\S*)?)*\s+(?:image\s+)?push(?=\s|$)'
       - '^(?:docker|podman)(?:\s+-{1,2}[\w-]+(?:=\S+|\s+[^-\s]\S*)?)*\s+compose(?:\s+-{1,2}[\w-]+(?:=\S+|\s+[^-\s]\S*)?)*\s+(?:push|publish)(?=\s|$)(?![^\n;&|]*\s--dry-run(?:=true)?(?:\s|$))'
-      - '^cargo(?:\s+\+\S+)?(?:\s+-{1,2}[\w-]+(?:=\S+|\s+[^-\s]\S*)?)*\s+publish(?=\s|$)(?![^\n;&|]*\s(?:--dry-run|-n)(?:\s|$))'
+      - '^cargo(?:\s+\+\S+)?(?:\s+-{1,2}[\w-]+(?:=\S+|\s+[^-\s]\S*)?)*\s+publish(?=\s|$)(?![^\n;&|]*\s(?:--dry-run|-n|-h|--help)(?:\s|$))'
       - '^gh(?:\.exe)?(?:\s+-{1,2}[\w-]+(?:=\S+|\s+[^-\s]\S*)?)*\s+release(?:\s+-{1,2}[\w-]+(?:=\S+|\s+[^-\s]\S*)?)*\s+(?:create|new|upload|delete)\b'
       - '^gh(?:\.exe)?(?:\s+-{1,2}[\w-]+(?:=\S+|\s+[^-\s]\S*)?)*\s+release(?:\s+-{1,2}[\w-]+(?:=\S+|\s+[^-\s]\S*)?)*\s+edit\b(?=[^\n;&|]*\s--draft=false\b)'
-      - '^(?:publish-module|publish-script|publish-psresource)\b(?![^\n;&|]*\s-w(?:hatif|hati|hat|ha|h|i)?(?::\$true)?(?:\s|$))'
+      - '^(?:publish-module|publish-script|publish-psresource)\b(?!(?:''(?>(?:[^'']|'''')*)''|"(?>(?:[^"`]|`[\s\S]|"")*)"|`[\s\S]|[^\n;&|''"`])*?\s-w(?:hatif|hati|hat|ha|h|i)?(?::\$true)?(?:\s|$))'
       - '^(?:dotnet\s+)?nuget(?:\.exe)?\s+push\b'
 question:
   kind: probability
@@ -71,6 +73,8 @@ examples:
     - {shell: posix, command: "gh api -X POST repos/o/r/issues -f title=x"}
     - {shell: posix, command: "gh release create v1.0"}
     - {shell: posix, command: "npm publish"}
+    - {shell: posix, command: "watch uv --directory pkg publish"}
+    - {shell: posix, command: "uv --project pkg publish"}
     - {shell: posix, command: "glab mr create"}
     - {shell: posix, command: "curl -X POST https://api.example.com/deploy"}
   miss:

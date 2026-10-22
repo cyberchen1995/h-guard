@@ -109,10 +109,12 @@ var prefixWords = map[string][]string{
 	"ionice":  {"-c", "-n", "-p", "--class", "--classdata"},
 	"exec":    {"-a"},
 	"builtin": nil,
-	// xargs 运行它后面的命令（输入为空时 GNU xargs 也运行一次）
-	"xargs": {"-I", "-L", "-n", "-P", "-s", "-d", "-E", "-a", "--max-args", "--max-procs", "--max-chars", "--delimiter",
-		"--arg-file", "--replace", "--max-lines", "--eof"},
+	// xargs 运行它后面的命令（输入为空时 GNU xargs 也运行一次）；-J、-R、-S 是 BSD xargs 的
+	"xargs": {"-I", "-L", "-n", "-P", "-s", "-d", "-E", "-a", "-J", "-R", "-S", "--max-args", "--max-procs", "--max-chars",
+		"--delimiter", "--arg-file", "--replace", "--max-lines", "--eof", "--process-slot-var"},
 	"busybox": nil,
+	// corepack pnpm …、corepack npm@10 … 运行对应的包管理器
+	"corepack": nil,
 	// 保留字：if rm …、do rm …、{ rm …; }、! rm …
 	"!": nil, "{": nil, "}": nil, "if": nil, "then": nil, "else": nil, "elif": nil, "do": nil, "while": nil, "until": nil,
 }
@@ -140,6 +142,11 @@ func commandStart(lx lexed, seg segment) ([]token, int) {
 			words = append(words, t)
 		}
 	}
+	return words, skipPrefix(lx, words)
+}
+
+// skipPrefix 返回 words 中命令词的下标：跳过前缀词及其选项、位置参数，赋值与保留字；没有命令词时等于词数。
+func skipPrefix(lx lexed, words []token) int {
 	var argOpts []string
 	positional := 0
 	k := 0
@@ -169,7 +176,34 @@ func commandStart(lx lexed, seg segment) ([]token, int) {
 		}
 		break
 	}
-	return words, k
+	return k
+}
+
+// launched 返回 words 里处于命令位置的各段词：剥掉前缀之后的命令本身，以及 find 的 -exec、-execdir、-ok、-okdir
+// 交给的命令（到单独的 ; 或紧跟 {} 的 + 为止，同样剥掉前缀，可以再嵌套 find）。没有命令词时为空。
+func launched(lx lexed, words []token) [][]token {
+	k := skipPrefix(lx, words)
+	if k >= len(words) {
+		return nil
+	}
+	out := [][]token{words[k:]}
+	if strings.ToLower(path.Base(words[k].value)) != "find" {
+		return out
+	}
+	for i := k + 1; i < len(words); i++ {
+		switch words[i].value {
+		case "-exec", "-execdir", "-ok", "-okdir":
+		default:
+			continue
+		}
+		j := i + 1
+		for j < len(words) && words[j].value != ";" && (words[j].value != "+" || words[j-1].value != "{}") {
+			j++
+		}
+		out = append(out, launched(lx, words[i+1:j])...)
+		i = j
+	}
+	return out
 }
 
 func isDigits(s string) bool {
@@ -187,9 +221,13 @@ func CommandPositions(cmd string) []string {
 	lx := lex(cmd)
 	var out []string
 	for _, seg := range lx.segments() {
-		words, k := commandStart(lx, seg)
-		if k < len(words) {
-			if s := strings.TrimSpace(lx.join(words[k].start, seg.end)); s != "" {
+		words, _ := commandStart(lx, seg)
+		for i, ws := range launched(lx, words) {
+			end := ws[len(ws)-1].end // find -exec 交给的命令到它的最后一个词为止
+			if i == 0 {
+				end = seg.end
+			}
+			if s := strings.TrimSpace(lx.join(ws[0].start, end)); s != "" {
 				out = append(out, s)
 			}
 		}
@@ -245,32 +283,52 @@ func NormalizedPositions(cmd string) []string {
 	lx := lex(cmd)
 	var out []string
 	for _, seg := range lx.segments() {
-		words, k := commandStart(lx, seg)
-		if k >= len(words) {
-			continue
+		words, _ := commandStart(lx, seg)
+		for _, ws := range launched(lx, words) {
+			out = append(out, normalizeWords(lx, ws))
 		}
-		parts := make([]string, 0, len(words)-k)
-		for i, w := range words[k:] {
-			v := w.value
-			switch {
-			case strings.ContainsAny(v, " \t\n"):
-				v = lx.join(w.start, w.end)
-			default:
-				if i == 0 && v != "" {
-					v = path.Base(v)
-				}
-				v = strings.ReplaceAll(v, "${HOME}", "$HOME")
-				if len(v) > 1 {
-					if v = strings.TrimRight(v, "/"); v == "" {
-						v = "/"
-					}
-				}
-			}
-			parts = append(parts, v)
-		}
-		out = append(out, strings.Join(parts, " "))
 	}
 	return out
+}
+
+// normalizeWords 是 NormalizedPositions 里一条命令的规范写法，ws[0] 是命令词。
+func normalizeWords(lx lexed, ws []token) string {
+	parts := make([]string, 0, len(ws))
+	for i, w := range ws {
+		v := w.value
+		switch {
+		case strings.ContainsAny(v, " \t\n"):
+			v = lx.join(w.start, w.end)
+		default:
+			if i == 0 && v != "" {
+				v = path.Base(v)
+			}
+			if i > 0 {
+				v = escapingPath(v)
+			}
+			v = strings.ReplaceAll(v, "${HOME}", "$HOME")
+			if len(v) > 1 {
+				if v = strings.TrimRight(v, "/"); v == "" {
+					v = "/"
+				}
+			}
+		}
+		parts = append(parts, v)
+	}
+	return strings.Join(parts, " ")
+}
+
+// escapingPath 把按字面就走出当前目录的相对路径写成整理后的形式（./../x、sub/../../x 写作 ../x），
+// 让匹配 ../ 开头的规则认得出；其余的词原样返回。只看字面，不解析符号链接。
+func escapingPath(v string) string {
+	if v == "" || strings.HasPrefix(v, "-") || strings.HasPrefix(v, "/") || strings.HasPrefix(v, "~") ||
+		strings.HasPrefix(v, "$") || strings.HasPrefix(v, "../") || !strings.Contains(v, "..") {
+		return v
+	}
+	if c := path.Clean(v); c == ".." || strings.HasPrefix(c, "../") {
+		return c
+	}
+	return v
 }
 
 func contains(list []string, s string) bool {
@@ -361,10 +419,13 @@ func substitutions(body string) []string {
 
 var shells = map[string]bool{"bash": true, "sh": true, "zsh": true, "dash": true, "ksh": true, "ash": true}
 
-// nestedScripts 取出嵌套调用的脚本：bash -c '…'、sh -lc "…" 等按 POSIX 检查，
+// nestedScripts 取出嵌套调用的脚本：bash -c '…'、sh -lc "…" 与 env -S '…' 等按 POSIX 检查，
 // pwsh、powershell 的 -Command、-EncodedCommand 与按位置给出的命令按 PowerShell 检查（见 pwshScripts）。
 func nestedScripts(cmd string) []nested {
 	var out []nested
+	for _, s := range envSplitStrings(lex(cmd)) {
+		out = append(out, nested{text: s, shell: guard.ShellPOSIX})
+	}
 	for _, pos := range CommandPositions(cmd) {
 		words := Words(pos)
 		if len(words) < 2 {
@@ -383,4 +444,66 @@ func nestedScripts(cmd string) []nested {
 		}
 	}
 	return out
+}
+
+// envSplitStrings 取出前缀 env 的 -S、--split-string 给出的命令：env 把这个字符串拆成词，接上后面的词作为命令运行
+// （env -S 'npm publish'）。返回字符串与其后各词的原文拼成的命令，按 POSIX 规则检查（env 的拆分规则与之相近）。
+func envSplitStrings(lx lexed) []string {
+	var out []string
+	for _, seg := range lx.segments() {
+		words, k := commandStart(lx, seg)
+		for i := 0; i < k && i < len(words); i++ {
+			if strings.ToLower(path.Base(words[i].value)) != "env" {
+				continue
+			}
+			if s, rest, ok := envSplit(words[i+1:]); ok {
+				if rest += i + 1; rest < len(words) {
+					s += " " + lx.join(words[rest].start, seg.end)
+				}
+				out = append(out, s)
+			}
+		}
+	}
+	return out
+}
+
+// envSplit 在 env 的选项 ws 里找 -S、--split-string（可与别的短选项连写，值可连写或在下一个词里），返回它的值与
+// 值之后第一个词的下标。-u、-C 与对应的长选项带一个参数；遇到 -- 或不是选项的词即停下。
+func envSplit(ws []token) (s string, rest int, ok bool) {
+	for j := 0; j < len(ws); j++ {
+		v := ws[j].value
+		switch {
+		case v == "--" || !strings.HasPrefix(v, "-") || v == "-":
+			return "", 0, false
+		case strings.HasPrefix(v, "--split-string="):
+			return strings.TrimPrefix(v, "--split-string="), j + 1, true
+		case v == "--split-string":
+			if j+1 < len(ws) {
+				return ws[j+1].value, j + 2, true
+			}
+			return "", 0, false
+		case v == "--unset" || v == "--chdir":
+			j++
+		case strings.HasPrefix(v, "--"):
+		default:
+			for c := 1; c < len(v); c++ {
+				if v[c] != 'S' && v[c] != 'u' && v[c] != 'C' {
+					continue
+				}
+				val, next := v[c+1:], j+1
+				if val == "" {
+					if j+1 >= len(ws) {
+						return "", 0, false
+					}
+					val, next = ws[j+1].value, j+2
+				}
+				if v[c] == 'S' {
+					return val, next, true
+				}
+				j = next - 1
+				break
+			}
+		}
+	}
+	return "", 0, false
 }
