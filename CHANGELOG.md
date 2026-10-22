@@ -178,6 +178,13 @@ minor releases. Every such change is recorded in this file.
   `Get-Content` paths).
 - `pkg/detect/command`: `Unit.FullTexts` may return a third text, the command
   with quotes and escapes removed from simple words.
+- `pkg/detect/command`: `CommandPositions` and `NormalizedPositions` also
+  return the command that `find -exec`/`-execdir`/`-ok`/`-okdir` runs;
+  `corepack` and the remaining value-taking `xargs` options are skipped as a
+  prefix; `Expand` adds the string of `env -S`/`--split-string` as a nested
+  unit; `NormalizedPositions` writes a relative operand that lexically leaves
+  the working directory in its cleaned form (`./../x` and `sub/../../x` as
+  `../x`).
 - New adapters `pkg/harness/opencode`, `pkg/harness/pi` (registers `pi` and
   `omp`), `pkg/harness/dsh`, `pkg/harness/openclaw` and `pkg/harness/hermes`.
 - `pkg/harness` adds `UnknownToolError` for tools an adapter does not know.

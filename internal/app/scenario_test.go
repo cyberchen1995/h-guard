@@ -98,6 +98,46 @@ func TestLocalFormsInterruptWithoutTheJudge(t *testing.T) {
 		"gh release -R owner/repo create v1":                  "ask",
 		"gh release new v1":                                   "ask",
 		"yarn workspaces foreach -A --no-private npm publish": "ask",
+		// 前缀与包装：env -S、find -exec、xargs 带参数的选项、corepack
+		"env -S 'npm publish'":                                 "ask",
+		"env --split-string='git reset --hard'":                "ask",
+		"env -S 'echo npm publish'":                            "pass",
+		`find . -maxdepth 0 -exec npm publish \;`:              "ask",
+		"find . -name x -execdir rm -rf ../sibling {} +":       "ask",
+		`find . -exec echo npm publish \;`:                     "pass",
+		"xargs --process-slot-var SLOT npm publish </dev/null": "ask",
+		"corepack pnpm publish":                                "ask",
+		"corepack npm@10.0.0 publish":                          "ask",
+		"corepack enable":                                      "pass",
+		// 带参数的选项
+		"yarn workspaces foreach -A -j 2 npm publish":                                   "ask",
+		"yarn workspaces foreach --from '@scope/*' --include a --exclude b npm publish": "ask",
+		"uv --directory pkg publish":                                                    "ask",
+		"uv --project pkg --config-file uv.toml publish":                                "ask",
+		"uv --directory pkg run publish":                                                "pass",
+		"git clean -fd -e -n":                                                           "ask",
+		"git clean -fd --exclude -n":                                                    "ask",
+		"git clean -fen":                                                                "ask",
+		"git clean -e build -n":                                                         "pass",
+		// git-filter-repo 的模块写法与只读用法
+		"python3 -m git_filter_repo --path secrets --invert-paths":    "ask",
+		"python3 -W ignore -m git_filter_repo --force":                "ask",
+		"python3 -m git_filter_repo --analyze":                        "pass",
+		"git filter-repo --analyze":                                   "pass",
+		"git filter-repo --dry-run":                                   "pass",
+		"git filter-repo --path secrets && git filter-repo --analyze": "ask",
+		"git filter-repo --path-glob '*.key --analyze'":               "ask",
+		// rm -r 的操作数按字面整理后再看是否走出工作区
+		"rm -rf ./../sibling":      "ask",
+		"rm -rf sub/../../sibling": "ask",
+		"rm -rf sub/../build":      "pass",
+		// 帮助
+		"npm publish --help":                "pass",
+		"npm publish -h":                    "pass",
+		"cargo publish --help":              "pass",
+		"uv --directory pkg publish --help": "pass",
+		"npm publish && npm --help":         "ask",
+		"cargo publish; cargo --help":       "ask",
 	} {
 		out, errs, _ := e.run(nil, "check", cmd)
 		if !strings.Contains(out, "decision: "+want) {
@@ -114,6 +154,11 @@ func TestLocalFormsInterruptWithoutTheJudge(t *testing.T) {
 		"Remove-Item -Recurse $env:HOME/projects":      "ask",
 		"Publish-Module -Name Example -WhatIf":         "pass",
 		"Publish-Module -Name Example":                 "ask",
+		// 引号里的 -WhatIf 不是参数
+		`Remove-Item -Recurse "$HOME/cache -WhatIf x"`: "ask",
+		`Remove-Item -Recurse "$HOME/cache" -WhatIf`:   "pass",
+		`Publish-Module -Name "Example -WhatIf"`:       "ask",
+		`Publish-Module -Name 'Example' -WhatIf`:       "pass",
 		"git reset --hard":                             "ask",
 		"npm publish":                                  "ask",
 	} {
