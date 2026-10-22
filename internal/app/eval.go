@@ -23,6 +23,8 @@ import (
 // --repeat K 把语料跑 K 遍，K 次结论拼在一起报告与扫描（每条都是单次判断，任一次失败都算失败）；
 // --bootstrap B 对整个扫描重采样，只报告稳定性与乐观偏差，不改建议。
 func runEval(args []string, o Options) int {
+	// 评估是离线回放，不受 hook 的延迟约束：用宽松的正则超时，免得机器负载让同一份语料两次的结论不同
+	defer rules.SetMatchTimeout(rules.ReplayMatchTimeout)()
 	fs := flag.NewFlagSet("eval", flag.ContinueOnError)
 	fs.SetOutput(o.Stderr)
 	backend := fs.String("backend", "", "backend to evaluate (default: judge.backend)")

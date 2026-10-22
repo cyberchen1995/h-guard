@@ -35,7 +35,7 @@ const SchemaVersion = 1
 // MatchTimeout 是每次正则匹配的超时（hook 与 check 用的值）。
 const MatchTimeout = 100 * time.Millisecond
 
-// ReplayMatchTimeout 是不受延迟约束的回放（测试）用的超时：足够宽松，负载不会让正常的匹配超时；
+// ReplayMatchTimeout 是不受延迟约束的回放（测试与 h-guard eval）用的超时：足够宽松，负载不会让正常的匹配超时；
 // 灾难性回溯的正则仍有上限。
 const ReplayMatchTimeout = 10 * time.Second
 
@@ -45,7 +45,7 @@ var matchTimeout atomic.Int64
 func init() { matchTimeout.Store(int64(MatchTimeout)) }
 
 // SetMatchTimeout 把之后编译的正则的匹配超时改为 d，返回恢复原值的函数；已加载的规则不受影响。
-// 只给不受延迟约束的回放用（测试）：机器负载高时 100 毫秒的超时会让结论随负载变化（超时按命中处理），
+// 只给不受延迟约束的回放用（测试与 h-guard eval）：机器负载高时 100 毫秒的超时会让结论随负载变化（超时按命中处理），
 // 同一条语料两次回放的结论不同。hook 与 check 不调用它，超时照样按命中处理。
 func SetMatchTimeout(d time.Duration) (restore func()) {
 	old := matchTimeout.Swap(int64(d))

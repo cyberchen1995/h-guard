@@ -86,6 +86,9 @@ minor releases. Every such change is recorded in this file.
   and braces are literal (`cat '.env*'`), PowerShell has no brace expansion
   and `-LiteralPath` no wildcards, `xargs -a` counts only at a command
   position, and the POSIX `$home` variable is no longer taken for `$HOME`.
+- `h-guard eval` uses a 10 s regex match timeout instead of the hook's
+  100 ms, so replaying the same corpus gives the same verdicts on a loaded
+  machine. Hooks and `check` keep 100 ms, and a timeout still counts as a hit.
 
 ### Harnesses
 
