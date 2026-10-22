@@ -32,8 +32,28 @@ import (
 // SchemaVersion 是规则包格式的版本号（与配置、协议的版本号相互独立）。
 const SchemaVersion = 1
 
-// MatchTimeout 是每次正则匹配的超时。
+// MatchTimeout 是每次正则匹配的超时（hook 与 check 用的值）。
 const MatchTimeout = 100 * time.Millisecond
+
+// ReplayMatchTimeout 是不受延迟约束的回放（测试）用的超时：足够宽松，负载不会让正常的匹配超时；
+// 灾难性回溯的正则仍有上限。
+const ReplayMatchTimeout = 10 * time.Second
+
+// matchTimeout 是编译正则时设的超时：默认 MatchTimeout，只有 SetMatchTimeout 会改它。
+var matchTimeout atomic.Int64
+
+func init() { matchTimeout.Store(int64(MatchTimeout)) }
+
+// SetMatchTimeout 把之后编译的正则的匹配超时改为 d，返回恢复原值的函数；已加载的规则不受影响。
+// 只给不受延迟约束的回放用（测试）：机器负载高时 100 毫秒的超时会让结论随负载变化（超时按命中处理），
+// 同一条语料两次回放的结论不同。hook 与 check 不调用它，超时照样按命中处理。
+func SetMatchTimeout(d time.Duration) (restore func()) {
+	old := matchTimeout.Swap(int64(d))
+	return func() { matchTimeout.Store(old) }
+}
+
+// currentMatchTimeout 返回编译正则时要设的超时。
+func currentMatchTimeout() time.Duration { return time.Duration(matchTimeout.Load()) }
 
 // ReservedIDs 是信号题的 ID（internal/check/action 的 SignalRequested、SignalRadius）：规则 id 与它们同名时，
 // 两道题的答案会混在一起，所以不能用。
@@ -449,7 +469,7 @@ func compileExec(m *ExecMatch) (*compiledExec, error) {
 			if err != nil {
 				return nil, execPatternErr(g.name, i, err)
 			}
-			re.MatchTimeout = MatchTimeout
+			re.MatchTimeout = currentMatchTimeout()
 			*g.dst = append(*g.dst, execPattern{re: re})
 		}
 	}
