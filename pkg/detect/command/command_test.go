@@ -690,9 +690,103 @@ func TestReadTargets(t *testing.T) {
 		{"Get-Item .env; Get-Content", guard.ShellPowerShell, nil},
 		{"Import-Csv -UseCulture .env", guard.ShellPowerShell, []string{".env"}},
 		{`Microsoft.PowerShell.Management\Get-Content .env`, guard.ShellPowerShell, []string{".env"}},
+		// 递归读取给出的目录；没有给出路径时读工作目录（rg 只在标准输入不是管道时）
+		{"grep -r TOKEN .", guard.ShellPOSIX, []string{"."}},
+		{"grep -rn TOKEN", guard.ShellPOSIX, []string{"."}},
+		{"grep -n TOKEN", guard.ShellPOSIX, nil},
+		{"rg TOKEN", guard.ShellPOSIX, []string{"."}},
+		{"rg -r X TOKEN src", guard.ShellPOSIX, []string{"src"}},
+		{"git log | rg TOKEN", guard.ShellPOSIX, nil},
+		{"find . -name '*.go' | xargs grep -r TOKEN", guard.ShellPOSIX, nil},
+		{"grep -r --include '*.go' TOKEN src", guard.ShellPOSIX, []string{"src"}},
+		// cmd 的主目录变量与加了引号的 /c 内层命令
+		{`cmd /c type %USERPROFILE%\.docker\config.json`, guard.ShellPowerShell, []string{`~/.docker\config.json`}},
+		{`cmd /c type %HOMEDRIVE%%HOMEPATH%\.netrc`, guard.ShellPowerShell, []string{`~/.netrc`}},
+		{`cmd /c "type .env"`, guard.ShellPowerShell, []string{".env"}},
+		{`cmd /c 'type .env'`, guard.ShellPowerShell, []string{".env"}},
+		{`cmd /c "echo hi & more < .env"`, guard.ShellPowerShell, []string{".env"}},
+		{`cmd /c type "a b.txt"`, guard.ShellPowerShell, []string{"a b.txt"}},
+		{`cmd /c "echo type .env"`, guard.ShellPowerShell, nil},
+		// git diff --no-index：-- 之后的都是路径
+		{"git diff --no-index -- -dir/.env README", guard.ShellPOSIX, []string{"-dir/.env", "README"}},
+		// PowerShell 的数组表达式
+		{"Get-Content @('.env')", guard.ShellPowerShell, []string{".env"}},
+		{`Get-Content -Path @('README.md'; ".env") -Raw`, guard.ShellPowerShell, []string{"README.md", ".env"}},
+		{"Get-Content ('a.txt', '.env')", guard.ShellPowerShell, []string{"a.txt", ".env"}},
+		{`Get-Content @("$x")`, guard.ShellPowerShell, []string{`@("$x")`}},
+		// xargs 只在命令位置上算
+		{"echo xargs -a .env", guard.ShellPOSIX, nil},
+		{"sudo -u root xargs -a .env echo", guard.ShellPOSIX, []string{".env"}},
+		{"FOO=1 nice -n 5 xargs --arg-file=.env echo", guard.ShellPOSIX, []string{".env"}},
+		// POSIX 的 $HOME 区分大小写，PowerShell 的不区分
+		{`home=/tmp; cat "$home/.netrc"`, guard.ShellPOSIX, []string{"$home/.netrc"}},
+		{`cat "$Home/.netrc"`, guard.ShellPOSIX, []string{"$Home/.netrc"}},
+		{`gc $Home\.netrc`, guard.ShellPowerShell, []string{`~/.netrc`}},
+		{`gc ${env:UserProfile}\.netrc`, guard.ShellPowerShell, []string{`~/.netrc`}},
 	} {
 		if got := command.ReadTargets(tc.cmd, tc.shell); !slices.Equal(got, tc.want) {
 			t.Errorf("%q: %q, want %q", tc.cmd, got, tc.want)
 		}
 	}
+}
+
+// TestReadTargetList：每个文件参数另带通配符、花括号是否生效与递归读取的方式。
+func TestReadTargetList(t *testing.T) {
+	posix, pwsh := guard.ShellPOSIX, guard.ShellPowerShell
+	for _, tc := range []struct {
+		cmd   string
+		shell guard.Shell
+		want  []command.ReadTarget
+	}{
+		{"cat .env*", posix, []command.ReadTarget{{Path: ".env*", Shell: posix, Glob: true}}},
+		{"cat '.env*'", posix, []command.ReadTarget{{Path: ".env*", Shell: posix}}},
+		{`cat .env\*`, posix, []command.ReadTarget{{Path: ".env*", Shell: posix}}},
+		{`cat ".env"*`, posix, []command.ReadTarget{{Path: ".env*", Shell: posix, Glob: true}}},
+		{"cat .en{u..v}", posix, []command.ReadTarget{{Path: ".en{u..v}", Shell: posix, Brace: true}}},
+		{"cat '.{env,example}'", posix, []command.ReadTarget{{Path: ".{env,example}", Shell: posix}}},
+		{"cat ${HOME}/x", posix, []command.ReadTarget{{Path: "~/x", Shell: posix}}},
+		{"cat '.env*' .env*", posix, []command.ReadTarget{{Path: ".env*", Shell: posix, Glob: true}}},
+		{"Get-Content '.env*'", pwsh, []command.ReadTarget{{Path: ".env*", Shell: pwsh, Glob: true}}},
+		{"Get-Content -LiteralPath '.{env,example}'", pwsh, []command.ReadTarget{{Path: ".{env,example}", Shell: pwsh}}},
+		{"Get-Content -LiteralPath '.env*'", pwsh, []command.ReadTarget{{Path: ".env*", Shell: pwsh}}},
+		{"Get-Content '.{env,example}'", pwsh, []command.ReadTarget{{Path: ".{env,example}", Shell: pwsh, Glob: true}}},
+		{"grep -r TOKEN --include=*.go --exclude-dir .git src", posix, []command.ReadTarget{{Path: "src", Shell: posix,
+			Walk: &command.Walk{Hidden: true, Include: []string{"*.go"}, ExcludeDir: []string{".git"}}}}},
+		{"grep -Rl TOKEN", posix, []command.ReadTarget{{Path: ".", Shell: posix, Walk: &command.Walk{Hidden: true, Follow: true}}}},
+		{"grep -d recurse TOKEN x", posix, []command.ReadTarget{{Path: "x", Shell: posix, Walk: &command.Walk{Hidden: true}}}},
+		{"rg TOKEN src", posix, []command.ReadTarget{{Path: "src", Shell: posix, Walk: &command.Walk{}}}},
+		{"rg -uu -L TOKEN", posix, []command.ReadTarget{{Path: ".", Shell: posix, Walk: &command.Walk{Hidden: true, Follow: true}}}},
+		{"rg --hidden -g '!*.md' -g '*.go' -g 'a/*.go' TOKEN", posix, []command.ReadTarget{{Path: ".", Shell: posix,
+			Walk: &command.Walk{Hidden: true, Include: []string{"*.go"}, Exclude: []string{"*.md"}}}}},
+		{"ack -n TOKEN x", posix, []command.ReadTarget{{Path: "x", Shell: posix}}},
+	} {
+		got := command.ReadTargetList(tc.cmd, tc.shell)
+		if !reflect.DeepEqual(got, tc.want) {
+			t.Errorf("%q:\n got  %s\n want %s", tc.cmd, fmtTargets(got), fmtTargets(tc.want))
+		}
+	}
+}
+
+func fmtTargets(ts []command.ReadTarget) string {
+	var b strings.Builder
+	for _, t := range ts {
+		b.WriteString(t.Path + " " + string(t.Shell))
+		if t.Glob {
+			b.WriteString(" glob")
+		}
+		if t.Brace {
+			b.WriteString(" brace")
+		}
+		if t.Walk != nil {
+			b.WriteString(" walk=" + strings.Join(append(append(append([]string{}, t.Walk.Include...), "|"), t.Walk.Exclude...), ","))
+			if t.Walk.Hidden {
+				b.WriteString(" hidden")
+			}
+			if t.Walk.Follow {
+				b.WriteString(" follow")
+			}
+		}
+		b.WriteString("; ")
+	}
+	return b.String()
 }

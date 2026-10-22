@@ -8,6 +8,7 @@ action.guard_self: "This changes the safety guard itself and always needs your c
 action.guard_self_file: "This changes a protected file ({paths}); changing it would switch the safety guard off for later commands, so it always needs your confirmation: {rules}."
 action.file_rule: "This file operation touches {paths}, which a path rule covers, so it needs your confirmation: {rules}."
 action.glob_too_many: "The command reads files through `{pattern}`, which expands to more than {limit} files or across directories; h-guard did not check them all for secrets, so it needs your confirmation."
+action.read_unreadable: "The command reads files through `{pattern}`, but h-guard cannot list `{dir}` to see which files that covers, so it did not check them for secrets and needs your confirmation."
 action.judge_unavailable: "The judge is unavailable ({code}), so the matching rules ask for confirmation: {rules}."
 action.evidence_truncated: "The command or the user's instructions were too long to show the judge in full, so no exemption applies."
 action.regex_timeout: "A rule took too long to match and was treated as matched."
