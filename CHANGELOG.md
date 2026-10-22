@@ -126,8 +126,11 @@ minor releases. Every such change is recorded in this file.
   and quoted messages are checked but never authorize). OpenClaw's own tools are classified like pi's, and for
   `browser`, `message`, `sessions`, `transcripts` and `canvas` by action (only
   observing the browser, reading and sending messages pass). Local files that
-  tools send away (message attachments, PDFs, reference media, `MEDIA:` lines)
-  are checked as file reads, with `file:` URLs decoded as OpenClaw does. Other
+  tools send away (message attachments, any `message` parameter whose name
+  ends in `Path`, `File` or `Url` since channel plugins can declare their own,
+  PDFs, reference media, `MEDIA:` lines) are checked as file reads, with
+  `file:` URLs decoded as OpenClaw does and drive-relative `C:foo` taken as a
+  path. Other
   tools and actions ask (`tool_unknown`), MCP tools included: the plugin cannot
   tell them from plugin tools with the same kind of name. An opt-in channel notifier
   (`plugins.entries.h-guard.config.notify` in OpenClaw's configuration) sends
