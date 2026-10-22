@@ -72,12 +72,32 @@ configuration (`~/.claude`, `~/.codex`). Use a temporary `HOME` and
 
 ## Commits and pull requests
 
-- Use conventional commits: `feat:`, `fix:`, `docs:`, `test:`, `perf:`,
-  `chore:`. Keep each commit buildable, since CI vets every commit in a pull
-  request; the full test suite runs on the branch head.
-- Pull requests are squash-merged. The commit that lands on `main` takes its
-  message from the pull request title and description, so write them the way
-  you would write a commit message; CI checks them the same way.
+- Write commit messages, pull request titles and descriptions in English.
+  Code identifiers, commands and file names stay as they are.
+- Use conventional commits: `<type>(<scope>): <subject>`. The scope is
+  optional, lowercase, and names a module (`rules`, `judge`, `opencode`, `cli`,
+  `ci`). The type is one of `feat`, `fix`, `docs`, `test`, `perf`, `refactor`,
+  `ci`, `build`, `chore`, `revert`.
+- Subject: imperative present tense (`add`, `fix`, `reject`), starts in lower
+  case after the colon, no trailing period, at most 72 characters. Leave the
+  second line blank.
+- Body (optional): explain why and what changes in behavior, not what the diff
+  already shows; wrap at about 72 characters. For a security fix, say what was
+  bypassed and what is blocked now. Verdicts only get stricter, so say so when a
+  change loosens one.
+- Mark an incompatible change with `!` after the type (`feat(pkg)!:`) or a
+  `BREAKING CHANGE:` line in the body. Reference issues in the footer
+  (`Refs #12`, `Fixes #12`); do not type the pull request number, squash merge
+  adds it. Names in footer lines such as `Co-Authored-By:` may be in any
+  language.
+- Keep each commit buildable, since CI vets every commit in a pull request; the
+  full test suite runs on the branch head.
+- Pull requests are squash-merged, with no merge commits on `main`. The commit
+  that lands on `main` takes its message from the pull request title and
+  description, so write them the way you would write a commit message. CI
+  checks them for private references only; the rest of this section is a
+  convention that reviewers apply.
+- Existing history is not rewritten; the rules apply to new commits.
 - Do not put review ids, internal planning terms or private paths in commit
   messages, code or docs. A repository test rejects them.
 - Do not commit real credentials or personal data. Fixtures use made-up values.
