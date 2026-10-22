@@ -59,15 +59,10 @@ func HermesHome(t Target) string {
 var posixVar = regexp.MustCompile(`\$([A-Za-z0-9_]+|\{[^}]*\})`)
 
 // expandVars 与 Hermes 的 os.path.expandvars 一样展开环境变量：POSIX 上是 $VAR 与 ${VAR}；Windows 上另有 %VAR%，
-// 单引号里的不展开，%% 与 $$ 是字面的 % 与 $。没有设置的变量原样保留。
+// 单引号里的不展开，%% 与 $$ 是字面的 % 与 $。没有设置的变量原样保留；设置为空的变量展开为空（Python 按
+// os.environ 里有没有这个名字判断）。
 func expandVars(t Target, s string) string {
-	lookup := func(name string) (string, bool) {
-		if name == "" {
-			return "", false
-		}
-		v := t.Getenv(name)
-		return v, v != ""
-	}
+	lookup := t.lookupEnv
 	if t.GOOS != "windows" {
 		return posixVar.ReplaceAllStringFunc(s, func(m string) string {
 			name := strings.TrimSuffix(strings.TrimPrefix(m[1:], "{"), "}")
@@ -216,17 +211,17 @@ func hermesManaged(t Target) (st hermesState, path string, ok bool) {
 	if err != nil {
 		return hermesState{}, path, false
 	}
-	st, err = readHermesState(b)
+	st, err = readHermesState(t, b)
 	return st, path, err == nil
 }
 
 // overlay 返回托管范围覆盖之后实际生效的设置：托管文件写下的键取它的值。
 func (st hermesState) overlay(m hermesState) hermesState {
 	if m.enabledSet {
-		st.enabled, st.enabledSet = m.enabled, true
+		st.enabled, st.enabledSet, st.others = m.enabled, true, m.others
 	}
 	if m.disabledSet {
-		st.disabled, st.disabledSet = m.disabled, true
+		st.disabled, st.disabledSet, st.disabledUnsure, st.disabledNames = m.disabled, true, m.disabledUnsure, m.disabledNames
 	}
 	if m.timeoutSet {
 		st.timeout, st.timeoutOK, st.timeoutSet = m.timeout, m.timeoutOK, true
@@ -242,6 +237,8 @@ func managedProblem(m hermesState, path string, timeout int) string {
 	switch {
 	case m.disabledSet && m.disabled:
 		return fmt.Sprintf("%s (managed by your administrator) lists h-guard in plugins.disabled, so Hermes does not load it; ask the administrator to remove it there", path)
+	case m.disabledSet && len(m.disabledUnsure) > 0:
+		return fmt.Sprintf("%s (managed by your administrator) lists %q in plugins.disabled, which refers to an environment variable that is not set here, so h-guard cannot tell whether Hermes reads it as h-guard; ask the administrator to write plugin names there", path, m.disabledUnsure[0])
 	case m.enabledSet && !m.enabled:
 		return fmt.Sprintf("%s (managed by your administrator) sets plugins.enabled without h-guard, which replaces your list, so Hermes does not load it; ask the administrator to add h-guard there", path)
 	case m.timeoutSet && m.timeout != 0 && m.timeout < float64(timeout+5):
@@ -280,6 +277,114 @@ func hermesBusyMode(t Target) string {
 		return mode
 	}
 	return "interrupt"
+}
+
+// hermesScanFiles 与 hermesScanBytes 限制读别的插件源码的量：最多这么多个 .py 文件，单个文件最多这么多字节。
+const (
+	hermesScanFiles = 200
+	hermesScanBytes = 1 << 20
+)
+
+// hermesOtherHooks 找出 $HERMES_HOME/plugins/ 下另外启用了的插件（plugins.enabled 里、不在 plugins.disabled 里，托管
+// 范围覆盖用户的配置）中，源码提到 transform_tool_result 或 transform_terminal_output（results）、pre_tool_call（args）
+// 的插件名。Hermes 只用第一个返回字符串的 transform 回调，h-guard 前面的插件返回替换时 h-guard 的替换不生效；
+// pre_tool_call 的 modify 在所有回调之后合并，h-guard 检查的是改写之前的参数。Hermes 的加载顺序看不出来，所以只能
+// 指出可能冲突的插件。随 Hermes 安装或用 pip 安装的插件不在这个目录里，看不到。
+func hermesOtherHooks(t Target) (results, args []string) {
+	var st hermesState
+	if b, err := os.ReadFile(HermesConfig(t)); err == nil {
+		if st, err = readHermesState(t, b); err != nil {
+			return nil, nil
+		}
+	}
+	if m, _, ok := hermesManaged(t); ok {
+		st = st.overlay(m)
+	}
+	var names []string
+	for _, n := range st.others {
+		if !slices.Contains(st.disabledNames, n) {
+			names = append(names, n)
+		}
+	}
+	if len(names) == 0 {
+		return nil, nil
+	}
+	root := filepath.Join(HermesHome(t), "plugins")
+	entries, _ := os.ReadDir(root)
+	dirs := map[string]string{} // 插件名 → 目录：plugin.yaml 的 name，没有时是目录名
+	for _, e := range entries {
+		if !e.IsDir() || e.Name() == hermesPluginName {
+			continue
+		}
+		dir := filepath.Join(root, e.Name())
+		name := e.Name()
+		if b, err := os.ReadFile(filepath.Join(dir, "plugin.yaml")); err == nil {
+			var manifest struct {
+				Name string `yaml:"name"`
+			}
+			if yaml.Unmarshal(b, &manifest) == nil && strings.TrimSpace(manifest.Name) != "" {
+				name = strings.TrimSpace(manifest.Name)
+			}
+		}
+		if _, dup := dirs[name]; !dup {
+			dirs[name] = dir
+		}
+	}
+	for _, name := range names {
+		dir, ok := dirs[name]
+		if !ok {
+			continue
+		}
+		var transform, pre bool
+		files := 0
+		_ = filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return nil
+			}
+			if d.IsDir() {
+				if d.Name() == "__pycache__" {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			if !strings.HasSuffix(d.Name(), ".py") {
+				return nil
+			}
+			if files++; files > hermesScanFiles {
+				return filepath.SkipAll
+			}
+			if fi, err := d.Info(); err != nil || fi.Size() > hermesScanBytes {
+				return nil
+			}
+			b, err := os.ReadFile(path)
+			if err != nil {
+				return nil
+			}
+			transform = transform || bytes.Contains(b, []byte("transform_tool_result")) || bytes.Contains(b, []byte("transform_terminal_output"))
+			pre = pre || bytes.Contains(b, []byte("pre_tool_call"))
+			return nil
+		})
+		if transform {
+			results = append(results, name)
+		}
+		if pre {
+			args = append(args, name)
+		}
+	}
+	return results, args
+}
+
+// hermesPluginNotes 说明另外启用的插件可能让 h-guard 的替换或检查落空（见 hermesOtherHooks）。
+func hermesPluginNotes(t Target) []string {
+	results, args := hermesOtherHooks(t)
+	var notes []string
+	if len(results) > 0 {
+		notes = append(notes, fmt.Sprintf("other enabled plugins also replace tool results (%s): Hermes uses the first replacement a plugin returns, so if one of them loads before h-guard and returns its own, a result h-guard blocks reaches the model anyway", strings.Join(results, ", ")))
+	}
+	if len(args) > 0 {
+		notes = append(notes, fmt.Sprintf("other enabled plugins also hook tool calls (%s): Hermes applies an argument rewrite (modify) they return after h-guard checked the original arguments, so h-guard does not see the rewritten call", strings.Join(args, ", ")))
+	}
+	return notes
 }
 
 // HermesConfig 是 Hermes 的配置文件 $HERMES_HOME/config.yaml。
@@ -414,7 +519,9 @@ func Hermes(t Target, remove bool) ([]Step, error) {
 	}
 
 	config := HermesConfig(t)
-	change := func(old []byte, exists bool) ([]byte, error) { return hermesConfigEdit(old, exists, t.Timeout, remove) }
+	change := func(old []byte, exists bool) ([]byte, error) {
+		return hermesConfigEdit(t, old, exists, t.Timeout, remove)
+	}
 	old, err := os.ReadFile(config)
 	exists := err == nil
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
@@ -449,8 +556,10 @@ func Hermes(t Target, remove bool) ([]Step, error) {
 
 // hermesConfigEdit 改 config.yaml 的 plugins：安装时 enabled 里加上 h-guard、disabled 里去掉它，
 // hook_callback_timeout 不够等 h-guard 时调高（0 表示不限时，不改）；移除时只从 enabled 里去掉 h-guard（空了的
-// enabled 与 plugins 一并去掉）。没有变化时返回原文；文件不存在且是移除时返回 nil（不新建）。
-func hermesConfigEdit(old []byte, exists bool, timeout int, remove bool) ([]byte, error) {
+// enabled 与 plugins 一并去掉）。列表的项按 Hermes 的方式展开环境变量（见 hermesName），展开后是 h-guard 的项同样
+// 算数；disabled 里引用了没有设置的变量、看不出是不是 h-guard 的项，安装时报错（不猜）。没有变化时返回原文；文件
+// 不存在且是移除时返回 nil（不新建）。
+func hermesConfigEdit(t Target, old []byte, exists bool, timeout int, remove bool) ([]byte, error) {
 	if !exists && remove {
 		return nil, nil
 	}
@@ -496,13 +605,15 @@ func hermesConfigEdit(old []byte, exists bool, timeout int, remove bool) ([]byte
 		}
 		return n, nil
 	}
+	isUs := func(e *yaml.Node) bool {
+		name, sure := hermesName(t, e)
+		return sure && name == hermesPluginName
+	}
 	without := func(n *yaml.Node) {
 		if n == nil {
 			return
 		}
-		kept := slices.DeleteFunc(slices.Clone(n.Content), func(e *yaml.Node) bool {
-			return e.Kind == yaml.ScalarNode && e.Value == hermesPluginName
-		})
+		kept := slices.DeleteFunc(slices.Clone(n.Content), isUs)
 		if len(kept) != len(n.Content) {
 			n.Content, changed = kept, true
 		}
@@ -524,8 +635,15 @@ func hermesConfigEdit(old []byte, exists bool, timeout int, remove bool) ([]byte
 		if err != nil {
 			return nil, err
 		}
+		if disabled != nil {
+			for _, e := range disabled.Content {
+				if _, sure := hermesName(t, e); !sure {
+					return nil, fmt.Errorf("plugins.disabled lists %q, which refers to an environment variable that is not set here, so h-guard cannot tell whether Hermes reads it as h-guard; write plugin names there, or run install with the variable set as Hermes sees it", e.Value)
+				}
+			}
+		}
 		without(disabled)
-		if !slices.ContainsFunc(enabled.Content, func(e *yaml.Node) bool { return e.Kind == yaml.ScalarNode && e.Value == hermesPluginName }) {
+		if !slices.ContainsFunc(enabled.Content, isUs) {
 			enabled.Content = append(enabled.Content, &yaml.Node{Kind: yaml.ScalarNode, Value: hermesPluginName})
 			changed = true
 		}
@@ -602,9 +720,34 @@ type hermesState struct {
 	timeout                             float64 // plugins.hook_callback_timeout，没有时为 30
 	timeoutOK                           bool
 	isolation                           string
+	// disabledUnsure 是 plugins.disabled 里引用了没有设置的环境变量、看不出是不是 h-guard 的项（原文）
+	disabledUnsure []string
+	// disabledNames 是 plugins.disabled 里展开之后的插件名
+	disabledNames []string
+	// others 是 plugins.enabled 里 h-guard 以外的插件（展开之后；看不出名字的项不在内）
+	others []string
 }
 
-func readHermesState(b []byte) (hermesState, error) {
+// hermesName 读出 plugins.enabled 或 plugins.disabled 的一项。Hermes 读配置时展开值里的环境变量，这里同样展开
+// $VAR 与 ${VAR}（设置为空的变量展开为空）；引用了这里没有设置的变量时 sure 为假：Hermes 运行时的环境可能有它，
+// 看不出这一项指的是哪个插件。不是字符串的项名字为空。
+func hermesName(t Target, e *yaml.Node) (name string, sure bool) {
+	if e == nil || e.Kind != yaml.ScalarNode {
+		return "", true
+	}
+	sure = true
+	name = posixVar.ReplaceAllStringFunc(e.Value, func(m string) string {
+		v, ok := t.lookupEnv(strings.TrimSuffix(strings.TrimPrefix(m[1:], "{"), "}"))
+		if !ok {
+			sure = false
+			return m
+		}
+		return v
+	})
+	return name, sure
+}
+
+func readHermesState(t Target, b []byte) (hermesState, error) {
 	st := hermesState{timeout: hermesHookTimeout, timeoutOK: true}
 	var doc yaml.Node
 	if err := yaml.Unmarshal(b, &doc); err != nil {
@@ -619,7 +762,26 @@ func readHermesState(b []byte) (hermesState, error) {
 	}
 	has := func(key string) bool {
 		n := mapValue(plugins, key)
-		return n != nil && n.Kind == yaml.SequenceNode && slices.ContainsFunc(n.Content, func(e *yaml.Node) bool { return e.Value == hermesPluginName })
+		return n != nil && n.Kind == yaml.SequenceNode && slices.ContainsFunc(n.Content, func(e *yaml.Node) bool {
+			name, sure := hermesName(t, e)
+			return sure && name == hermesPluginName
+		})
+	}
+	if n := mapValue(plugins, "disabled"); n != nil && n.Kind == yaml.SequenceNode {
+		for _, e := range n.Content {
+			if name, sure := hermesName(t, e); !sure {
+				st.disabledUnsure = append(st.disabledUnsure, e.Value)
+			} else {
+				st.disabledNames = append(st.disabledNames, name)
+			}
+		}
+	}
+	if n := mapValue(plugins, "enabled"); n != nil && n.Kind == yaml.SequenceNode {
+		for _, e := range n.Content {
+			if name, sure := hermesName(t, e); sure && name != "" && name != hermesPluginName && !slices.Contains(st.others, name) {
+				st.others = append(st.others, name)
+			}
+		}
 	}
 	set := func(key string) bool {
 		n := mapValue(plugins, key)
@@ -641,7 +803,7 @@ func inspectHermes(t Target) []string {
 	st := hermesState{timeout: hermesHookTimeout, timeoutOK: true}
 	if b, err := os.ReadFile(config); err == nil {
 		var yerr error
-		if st, yerr = readHermesState(b); yerr != nil {
+		if st, yerr = readHermesState(t, b); yerr != nil {
 			return []string{fmt.Sprintf("problem: %s cannot be read: %v", config, yerr)}
 		}
 	}
@@ -666,9 +828,11 @@ func inspectHermes(t Target) []string {
 		return append(lines, fmt.Sprintf("problem: %s is not h-guard's plugin", dir))
 	}
 	switch {
-	case m.enabledSet && !m.enabled || m.disabledSet && m.disabled: // 已按托管文件报告
+	case m.enabledSet && !m.enabled || m.disabledSet && (m.disabled || len(m.disabledUnsure) > 0): // 已按托管文件报告
 	case st.disabled:
 		lines = append(lines, fmt.Sprintf("problem: %s lists h-guard in plugins.disabled, so Hermes does not load it; run h-guard install hermes --write", config))
+	case len(st.disabledUnsure) > 0:
+		lines = append(lines, fmt.Sprintf("problem: %s lists %q in plugins.disabled, which refers to an environment variable that is not set here, so h-guard cannot tell whether it keeps Hermes from loading h-guard; write plugin names there", config, st.disabledUnsure[0]))
 	case !st.enabled:
 		lines = append(lines, fmt.Sprintf("problem: the plugin is written but %s does not list it in plugins.enabled; run h-guard install hermes --write", config))
 	}

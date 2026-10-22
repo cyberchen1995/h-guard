@@ -762,11 +762,19 @@ Hermes differences:
   `ha_get_state`, `ha_list_services`) pass, and `ha_call_service` asks. `text_to_speech` with an
   `output_path` is checked as a file write.
 - **Other plugins.** Another plugin's `block` still wins over h-guard's
-  `approve`, and another plugin's `modify` can change a tool's arguments after
-  h-guard checked them. For `transform_tool_result` and
-  `transform_terminal_output` the first plugin that returns a replacement
-  wins, so a plugin that loads before h-guard and rewrites a result keeps
-  h-guard's replacement from applying.
+  `approve`. See the **Not covered** items below for rewrites by other plugins; `install` and
+  `h-guard status` name the other enabled plugins in Hermes's `plugins/`
+  directory whose source mentions `transform_tool_result`,
+  `transform_terminal_output` or `pre_tool_call`. Plugins that come with
+  Hermes or are installed with pip are not in that directory and are not
+  checked.
+- **Environment variables in the plugin lists.** Hermes expands environment
+  variables in `config.yaml` values, so `install` and `status` expand `$VAR`
+  and `${VAR}` in `plugins.enabled` and `plugins.disabled` from their own
+  environment (a variable set to an empty value expands to nothing, as in
+  Python). An entry in `plugins.disabled` that uses a variable h-guard's
+  environment does not have may name h-guard when Hermes runs; `status`
+  reports it and `install` stops instead of guessing.
 - **Not covered.** MCP tools and connectors (`mcp__…`, `connectors__…`) pass,
   as on the other harnesses. Gateway events that Hermes generates itself
   (background-process notifications) skip `pre_gateway_dispatch`; their text
@@ -777,6 +785,21 @@ Hermes differences:
   (`pre_llm_call`) instead of being blocked; with `steer` it is added to the
   running turn and no plugin hook sees it, which `install` and `status` point
   out.
+- **Not covered: tool results replaced by another plugin.** For `transform_tool_result`
+  and `transform_terminal_output` Hermes uses the first replacement a plugin
+  returns. A plugin that runs before h-guard and returns its own replacement
+  keeps h-guard's from applying, so a result h-guard blocks reaches the model
+  (rewritten by that plugin). h-guard cannot tell Hermes's plugin order from
+  outside, so `install` and `status` only point out the plugins that may do
+  this (see **Other plugins**).
+- **Not covered: arguments rewritten by another plugin.** Hermes calls every
+  `pre_tool_call` callback with the same original arguments and applies a
+  `modify` that a plugin returns after all of them, so h-guard checks the call
+  as the model made it, not as it runs. This cannot be fixed in a plugin;
+  `install` and `status` point out the plugins that may do it.
+- **Not covered: tool errors.** When a tool raises an exception, Hermes returns the error
+  text to the model without passing it through `transform_tool_result`, so
+  h-guard cannot withhold a credential that appears in an error message.
 
 When h-guard cannot run, the plugin asks before a tool call (and blocks it when
 Hermes would approve it without asking), and lets tool output and prompts

@@ -62,6 +62,7 @@ func ExtNotes(t Target, harness string) []string {
 		if v := harnessVersion(t, h.cmd); v == "" || calver(v) {
 			notes = harnessVersionNote(t, h.cmd, h.product, h.written, h.major)
 		}
+		notes = append(notes, hermesPluginNotes(t)...)
 		if hermesBusyMode(t) == "steer" {
 			notes = append(notes, hermesSteerNote)
 		}

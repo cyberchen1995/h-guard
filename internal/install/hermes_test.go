@@ -85,7 +85,7 @@ func TestHermesInstall(t *testing.T) {
 	os.WriteFile(cfg, []byte("# mine\nmodel: {default: m}\nplugins:\n  enabled: [disk-cleanup]\n  disabled: [noisy, h-guard]\ncommand_allowlist: [rm_rf]\n"), 0o600)
 	apply(t, hermesPlan(t, tg, false))
 	b, _ := os.ReadFile(cfg)
-	st, err := readHermesState(b)
+	st, err := readHermesState(tg, b)
 	if err != nil || !st.enabled || st.disabled {
 		t.Fatalf("state %+v %v:\n%s", st, err, b)
 	}
@@ -110,7 +110,7 @@ func TestHermesInstall(t *testing.T) {
 
 	apply(t, hermesPlan(t, tg, true))
 	b, _ = os.ReadFile(cfg)
-	if st, _ := readHermesState(b); st.enabled || !strings.Contains(string(b), "disk-cleanup") {
+	if st, _ := readHermesState(tg, b); st.enabled || !strings.Contains(string(b), "disk-cleanup") {
 		t.Errorf("after remove:\n%s", b)
 	}
 	if _, err := os.Stat(HermesPluginDir(tg)); !errors.Is(err, os.ErrNotExist) {
@@ -152,12 +152,12 @@ func TestHermesHookTimeout(t *testing.T) {
 		"plugins: {hook_callback_timeout: 0}\n":  "hook_callback_timeout: 0",
 		"plugins: {hook_callback_timeout: 90}\n": "hook_callback_timeout: 90",
 	} {
-		got, err := hermesConfigEdit([]byte(body), true, 20, false)
+		got, err := hermesConfigEdit(Target{}, []byte(body), true, 20, false)
 		if err != nil || !strings.Contains(string(got), want) {
 			t.Errorf("%q: %v\n%s", body, err, got)
 		}
 	}
-	got, _ := hermesConfigEdit(nil, false, 40, false)
+	got, _ := hermesConfigEdit(Target{}, nil, false, 40, false)
 	if !strings.Contains(string(got), "hook_callback_timeout: 45") {
 		t.Errorf("--timeout 40:\n%s", got)
 	}
@@ -195,7 +195,7 @@ func TestHermesTimeoutValues(t *testing.T) {
 		"{hook_callback_timeout: 0}": 0, "{hook_callback_timeout: -5}": 30, "{hook_callback_timeout: 900}": 600,
 		"{hook_callback_timeout: true}": 1, "{hook_callback_timeout: nope}": 30, "{hook_callback_timeout: [1]}": 30,
 	} {
-		st, err := readHermesState([]byte("plugins: " + body + "\n"))
+		st, err := readHermesState(Target{}, []byte("plugins: "+body+"\n"))
 		if err != nil || st.timeout != want {
 			t.Errorf("%s: %v %v, want %v", body, st.timeout, err, want)
 		}
@@ -206,7 +206,7 @@ func TestHermesTimeoutValues(t *testing.T) {
 	os.WriteFile(cfg, []byte("plugins: {enabled: [h-guard], hook_callback_timeout: nope}\n"), 0o600)
 	apply(t, hermesPlan(t, tg, false))
 	b, _ := os.ReadFile(cfg)
-	if st, _ := readHermesState(b); !st.timeoutOK || st.timeout < float64(max(tg.Timeout+5, 30)) {
+	if st, _ := readHermesState(tg, b); !st.timeoutOK || st.timeout < float64(max(tg.Timeout+5, 30)) {
 		t.Errorf("install left the timeout:\n%s", b)
 	}
 	os.WriteFile(cfg, []byte("plugins: {enabled: [h-guard], hook_callback_timeout: nope}\n"), 0o600)
@@ -293,7 +293,7 @@ func TestHermesManagedScope(t *testing.T) {
 // TestHermesConfigErrors：plugins 或 plugins.enabled 不是期望的类型时报错，不写入。
 func TestHermesConfigErrors(t *testing.T) {
 	for _, body := range []string{"- a\n", "plugins: [x]\n", "plugins: {enabled: h-guard}\n"} {
-		if _, err := hermesConfigEdit([]byte(body), true, 20, false); err == nil {
+		if _, err := hermesConfigEdit(Target{}, []byte(body), true, 20, false); err == nil {
 			t.Errorf("%q: no error", body)
 		}
 	}
@@ -366,5 +366,116 @@ func TestHermesVersion(t *testing.T) {
 		if n := ExtNotes(tg, "hermes"); len(n) != 0 {
 			t.Errorf("%q: notes %v", out, n)
 		}
+	}
+}
+
+func lookup(vals map[string]string) func(string) (string, bool) {
+	return func(k string) (string, bool) { v, ok := vals[k]; return v, ok }
+}
+
+// TestHermesEmptyVar：与 Python 的 os.path.expandvars 一样，设置为空的变量展开为空，没有设置的才原样保留。
+func TestHermesEmptyVar(t *testing.T) {
+	tg := target(t, "linux")
+	vars := map[string]string{"HERMES_HOME": "${EMPTY}/srv/hermes$NOPE", "EMPTY": ""}
+	tg.Getenv, tg.LookupEnv = env(vars), lookup(vars)
+	if got := HermesHome(tg); got != filepath.Clean("/srv/hermes$NOPE") {
+		t.Errorf("HERMES_HOME with an empty variable: %s", got)
+	}
+	win := target(t, "windows")
+	wvars := map[string]string{"E": ""}
+	win.Getenv, win.LookupEnv = env(wvars), lookup(wvars)
+	if got := expandVars(win, `C:\%E%x$E\${E}y%NOPE%`); got != `C:\x\y%NOPE%` {
+		t.Errorf("windows: %s", got)
+	}
+}
+
+// TestHermesPluginListVars：Hermes 展开配置值里的环境变量。plugins.disabled 里展开后是 h-guard 的项按停用处理：status
+// 报告，install 去掉它；引用了没有设置的变量、看不出是什么的项 status 报告、install 报错（不猜）；设成别的插件的项保留。
+// plugins.enabled 里展开后是 h-guard 的项算作启用。托管范围同样展开。
+func TestHermesPluginListVars(t *testing.T) {
+	tg := target(t, "linux")
+	vars := map[string]string{"HG_PLUGIN": "h-guard", "OTHER": "noisy"}
+	tg.Getenv, tg.LookupEnv = env(vars), lookup(vars)
+	tg.Bin = filepath.Join(tg.Home, "bin", "h-guard")
+	os.MkdirAll(filepath.Dir(tg.Bin), 0o700)
+	os.WriteFile(tg.Bin, nil, 0o700)
+	apply(t, hermesPlan(t, tg, false))
+	cfg := HermesConfig(tg)
+	os.WriteFile(cfg, []byte("plugins:\n  enabled: [h-guard]\n  disabled: ['${HG_PLUGIN}', '$OTHER']\n"), 0o600)
+	if lines := strings.Join(Inspect(tg, "hermes"), "\n"); !strings.Contains(lines, "lists h-guard in plugins.disabled") {
+		t.Errorf("status misses the disabled entry:\n%s", lines)
+	}
+	apply(t, hermesPlan(t, tg, false))
+	b, _ := os.ReadFile(cfg)
+	if st, _ := readHermesState(tg, b); st.disabled || !strings.Contains(string(b), "$OTHER") || strings.Contains(string(b), "HG_PLUGIN") {
+		t.Errorf("install kept h-guard disabled or dropped another entry:\n%s", b)
+	}
+	if lines := strings.Join(Inspect(tg, "hermes"), "\n"); strings.Contains(lines, "problem") {
+		t.Errorf("status after install:\n%s", lines)
+	}
+
+	os.WriteFile(cfg, []byte("plugins:\n  enabled: [h-guard]\n  disabled: ['${UNSET_PLUGIN}']\n"), 0o600)
+	if lines := strings.Join(Inspect(tg, "hermes"), "\n"); !strings.Contains(lines, `"${UNSET_PLUGIN}" in plugins.disabled`) {
+		t.Errorf("status misses the unknown entry:\n%s", lines)
+	}
+	if _, err := Hermes(tg, false); err == nil || !strings.Contains(err.Error(), "${UNSET_PLUGIN}") {
+		t.Errorf("install with an unknown entry: %v", err)
+	}
+	// 设置为空也是设置了：展开为空串，不是 h-guard
+	vars["UNSET_PLUGIN"] = ""
+	if _, err := Hermes(tg, false); err != nil {
+		t.Errorf("install with an empty variable: %v", err)
+	}
+
+	os.WriteFile(cfg, []byte("plugins:\n  enabled: ['${HG_PLUGIN}']\n"), 0o600)
+	if lines := strings.Join(Inspect(tg, "hermes"), "\n"); strings.Contains(lines, "problem") {
+		t.Errorf("enabled through a variable:\n%s", lines)
+	}
+
+	managed := filepath.Join(tg.Home, "managed")
+	os.MkdirAll(managed, 0o700)
+	os.WriteFile(filepath.Join(managed, "config.yaml"), []byte("plugins: {disabled: ['${HG_PLUGIN}']}\n"), 0o600)
+	vars["HERMES_MANAGED_DIR"] = managed
+	if _, err := Hermes(tg, false); err == nil || !strings.Contains(err.Error(), "lists h-guard in plugins.disabled") {
+		t.Errorf("managed disabled through a variable: %v", err)
+	}
+	os.WriteFile(filepath.Join(managed, "config.yaml"), []byte("plugins: {disabled: ['${NOT_SET}']}\n"), 0o600)
+	if _, err := Hermes(tg, false); err == nil || !strings.Contains(err.Error(), "administrator") {
+		t.Errorf("managed unknown entry: %v", err)
+	}
+}
+
+// TestHermesOtherPlugins：另外启用的插件的源码注册了 transform_tool_result（或 transform_terminal_output）、pre_tool_call
+// 时，install 与 status 说明它们可能让 h-guard 的替换或检查落空；停用的、没有启用的、不注册这些 hook 的插件不提。
+func TestHermesOtherPlugins(t *testing.T) {
+	tg := target(t, "linux")
+	apply(t, hermesPlan(t, tg, false))
+	plugins := filepath.Dir(HermesPluginDir(tg))
+	write := func(dir, name, src string) {
+		os.MkdirAll(filepath.Join(plugins, dir, "lib"), 0o700)
+		os.WriteFile(filepath.Join(plugins, dir, "plugin.yaml"), []byte("name: "+name+"\n"), 0o600)
+		os.WriteFile(filepath.Join(plugins, dir, "lib", "hooks.py"), []byte(src), 0o600)
+	}
+	write("redact-dir", "redact", "def register(ctx):\n    ctx.register_hook('transform_tool_result', f)\n")
+	write("rewrite", "rewrite", "def register(ctx):\n    ctx.register_hook(\"pre_tool_call\", g)\n")
+	write("quiet", "quiet", "def register(ctx):\n    ctx.register_hook('post_tool_call', h)\n")
+	write("off", "off", "def register(ctx):\n    ctx.register_hook('transform_terminal_output', f)\n")
+	write("idle", "idle", "def register(ctx):\n    ctx.register_hook('transform_tool_result', f)\n")
+	os.WriteFile(HermesConfig(tg), []byte("plugins:\n  enabled: [h-guard, redact, rewrite, quiet, off, bundled]\n  disabled: [off]\n"), 0o600)
+	notes := strings.Join(ExtNotes(tg, "hermes"), "\n")
+	if !strings.Contains(notes, "replace tool results (redact)") || !strings.Contains(notes, "hook tool calls (rewrite)") {
+		t.Errorf("notes:\n%s", notes)
+	}
+	for _, name := range []string{"quiet", "off", "idle", "bundled"} {
+		if strings.Contains(notes, name) {
+			t.Errorf("note mentions %s:\n%s", name, notes)
+		}
+	}
+	if lines := strings.Join(Inspect(tg, "hermes"), "\n"); !strings.Contains(lines, "note: other enabled plugins also replace tool results") {
+		t.Errorf("status:\n%s", lines)
+	}
+	os.WriteFile(HermesConfig(tg), []byte("plugins:\n  enabled: [h-guard]\n"), 0o600)
+	if notes := strings.Join(ExtNotes(tg, "hermes"), "\n"); strings.Contains(notes, "other enabled plugins") {
+		t.Errorf("notes without other plugins:\n%s", notes)
 	}
 }

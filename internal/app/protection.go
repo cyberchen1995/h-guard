@@ -19,7 +19,7 @@ import (
 func statusProtection(s setup, o Options) {
 	fmt.Fprintln(o.Stdout, "protection:")
 	if o.Home != "" {
-		t := install.Target{Home: o.Home, ConfigDir: o.ConfigDir, CacheDir: o.CacheDir, GOOS: o.GOOS, Getenv: o.Getenv, Now: o.Now}
+		t := install.Target{Home: o.Home, ConfigDir: o.ConfigDir, CacheDir: o.CacheDir, GOOS: o.GOOS, Getenv: o.Getenv, LookupEnv: o.LookupEnv, Now: o.Now}
 		for _, h := range installable {
 			if h != "claudecode" && h != "codex" {
 				// 扩展协议的 harness 只写配置这一层，装了才列出：运行记录与自测目前只覆盖 Claude Code 与 Codex
@@ -62,13 +62,13 @@ func statusProtection(s setup, o Options) {
 		fmt.Fprintln(o.Stdout, "  codex: cannot ask, so every ask blocks; approve one stopped operation with h-guard allow <id>")
 	}
 	if o.Home != "" && guard.Decision(s.cfg.Policy.WhenAskUnsupported) != guard.DecisionPass {
-		t := install.Target{Home: o.Home, ConfigDir: o.ConfigDir, CacheDir: o.CacheDir, GOOS: o.GOOS, Getenv: o.Getenv, Now: o.Now}
+		t := install.Target{Home: o.Home, ConfigDir: o.ConfigDir, CacheDir: o.CacheDir, GOOS: o.GOOS, Getenv: o.Getenv, LookupEnv: o.LookupEnv, Now: o.Now}
 		if lines := install.Inspect(t, "opencode"); len(lines) > 0 && !strings.HasPrefix(lines[0], "not installed") {
 			fmt.Fprintln(o.Stdout, "  opencode: cannot ask either, so every ask blocks; one-time approvals are only offered on Codex")
 		}
 	}
 	if o.Home != "" {
-		t := install.Target{Home: o.Home, ConfigDir: o.ConfigDir, CacheDir: o.CacheDir, GOOS: o.GOOS, Getenv: o.Getenv, Now: o.Now}
+		t := install.Target{Home: o.Home, ConfigDir: o.ConfigDir, CacheDir: o.CacheDir, GOOS: o.GOOS, Getenv: o.Getenv, LookupEnv: o.LookupEnv, Now: o.Now}
 		if lines := install.Inspect(t, "hermes"); len(lines) > 0 && !strings.HasPrefix(lines[0], "not installed") {
 			// Hermes 能请求确认，但自动批准时（YOLO 等）不能；挡不住 CLI 里的提示词
 			what := "every ask in a session that Hermes would approve without asking (--yolo, approvals.mode: off) blocks"
