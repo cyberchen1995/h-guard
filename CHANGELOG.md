@@ -137,11 +137,16 @@ minor releases. Every such change is recorded in this file.
   calls are checked in `before_tool_call` (`ask` becomes a
   plugin approval), tool output in the tool result middleware and prompts in
   `before_agent_run` and, for channel messages (including those steered into
-  a running turn), `before_dispatch`. OpenClaw's own tools are classified like pi's, and for
+  a running turn), `before_dispatch`. A channel message counts as the user's
+  instruction once, and only the sender's own text does (the channel envelope
+  and quoted messages are checked but never authorize). OpenClaw's own tools are classified like pi's, and for
   `browser`, `message`, `sessions`, `transcripts` and `canvas` by action (only
   observing the browser, reading and sending messages pass). Local files that
-  tools send away (message attachments, PDFs, reference media, `MEDIA:` lines)
-  are checked as file reads, with `file:` URLs decoded as OpenClaw does. Other
+  tools send away (message attachments, any `message` parameter whose name
+  ends in `Path`, `File` or `Url` since channel plugins can declare their own,
+  PDFs, reference media, `MEDIA:` lines) are checked as file reads, with
+  `file:` URLs decoded as OpenClaw does and drive-relative `C:foo` taken as a
+  path. Other
   tools and actions ask (`tool_unknown`), MCP tools included: the plugin cannot
   tell them from plugin tools with the same kind of name. An opt-in channel notifier
   (`plugins.entries.h-guard.config.notify` in OpenClaw's configuration) sends
@@ -156,8 +161,12 @@ minor releases. Every such change is recorded in this file.
   call` with `config.set`, `config.patch` or `config.apply`) or disable
   the plugin, reset or uninstall OpenClaw's configuration and state
   (`openclaw reset`, `openclaw uninstall --state`/`--all`, `--reset` on
-  `onboard`, `setup` and `gateway`). Path and `exec` patterns can use `{openclaw_config}` and
-  `{openclaw_includes}` (matching any included file).
+  `onboard`, `setup` and `gateway`), and the `openclaw secrets configure`
+  wizard. The state directory OpenClaw really uses (`OPENCLAW_STATE_DIR`
+  anywhere) is protected like `~/.openclaw`: the directory itself and the
+  `.json5` files in it. Path and `exec` patterns can use `{openclaw_config}`,
+  `{openclaw_state_dir}` and `{openclaw_includes}` (matching any included
+  file, both the path as written and with symbolic links resolved).
 - `h-guard install hermes` connects Hermes Agent through a Python plugin in
   `$HERMES_HOME/plugins/h-guard`, enabled in `plugins.enabled`. Tool calls are
   checked on `pre_tool_call` (`ask` goes to Hermes's own approval, keyed to the

@@ -31,6 +31,8 @@ func TestLocalRef(t *testing.T) {
 		{"https://example.com/a.png", "linux", "", false},
 		{"data:image/png;base64,eA==", "linux", "", false},
 		{`C:\x\c.txt`, "linux", `C:\x\c.txt`, true},
+		{`C:secrets\.env`, "win32", `C:secrets\.env`, true}, // 盘符相对路径：单个字母不是 scheme
+		{"c:.env", "linux", "c:.env", true},
 		{"notes/a.pdf", "linux", "notes/a.pdf", true},
 		{"~/report.pdf", "linux", "~/report.pdf", true},
 		{"  ", "linux", "", false},
@@ -58,6 +60,10 @@ func TestRefReads(t *testing.T) {
 		{"message", map[string]any{"action": "upload-file", "url": "file:///home/u/.ssh/id_rsa"}, []string{"/home/u/.ssh/id_rsa"}},
 		{"message", map[string]any{"action": "upload-file", "url": "~/.aws/credentials"}, []string{"~/.aws/credentials"}},
 		{"message", map[string]any{"action": "upload-file", "url": "https://example.com/a.pdf"}, nil},
+		// 频道插件按子命令声明的媒体参数（mediaSourceParams）：名字以 Path、File、Url 结尾的顶层参数都算
+		{"message", map[string]any{"action": "upload-file", "sourcePath": "~/.ssh/id_rsa", "avatarUrl": "file:///home/u/.env", "avatar_path": "a.png",
+			"backupFile": []string{"b.txt"}, "linkUrl": "https://example.com", "profile": "p", "caption": "c"},
+			[]string{"/home/u/.env", "a.png", "b.txt", "~/.ssh/id_rsa"}},
 		{"sessions_send", map[string]any{"message": "see\nMEDIA: /home/u/.env\nand MEDIA:`notes.md`"}, []string{"/home/u/.env", "notes.md"}},
 		{"view_image", map[string]any{"path": "https://x/a.png", "paths": []string{"b.png"}}, []string{"b.png"}},
 		{"view_image", map[string]any{"file": "~/.ssh/id_rsa", "file_path": "c.png"}, []string{"c.png", "~/.ssh/id_rsa"}},
