@@ -26,9 +26,32 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 1
+      - name: Fetch GitHub OIDC token
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const token = await core.getIDToken('https://api.anthropic.com');
+            core.setSecret(token);
+            core.exportVariable('JWT', token);
+      - name: Exchange for an Anthropic access token
+        id: exchange
+        run: |
+          set -euo pipefail
+          token=$(curl -sSf https://api.anthropic.com/v1/oauth/token \
+            -H "content-type: application/json" \
+            --data @- <<JSON | jq -r .access_token
+          {
+            "grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer",
+            "assertion": "$JWT",
+            "federation_rule_id": "fdrl_01WrWAeWn5XEJkesReosRJyu",
+            "organization_id": "ad6d3c9d-e295-4006-a95e-200fef450033",
+            "service_account_id": "svac_018N8fKFoTbmazrz9CkVbB63",
+            "workspace_id": "wrkspc_01LMoAdBnxgTiqzBNUZ9MXZp"
+          }
+          JSON
+          )
+          echo "::add-mask::$token"
+          echo "token=$token" >> "$GITHUB_OUTPUT"
       - uses: anthropics/claude-code-action@v1
         with:
-          anthropic_federation_rule_id: fdrl_01WrWAeWn5XEJkesReosRJyu
-          anthropic_organization_id: ad6d3c9d-e295-4006-a95e-200fef450033
-          anthropic_service_account_id: svac_018N8fKFoTbmazrz9CkVbB63
-          anthropic_workspace_id: wrkspc_01LMoAdBnxgTiqzBNUZ9MXZp
+          claude_code_oauth_token: ${{ steps.exchange.outputs.token }}
