@@ -33,6 +33,11 @@ jobs:
             const token = await core.getIDToken('https://api.anthropic.com');
             core.setSecret(token);
             core.exportVariable('JWT', token);
+      - name: Debug OIDC claims
+        # 临时排障：只打印 claims，不含签名；定位 match_subject_prefix 后删除
+        run: |
+          echo "$JWT" | cut -d. -f2 | tr '_-' '/+' | { read -r p; printf '%s%s' "$p" "$(printf '%*s' $(( (4 - ${#p} % 4) % 4 )) '' | tr ' ' '=')"; } \
+            | base64 -d | jq '{iss, sub, aud, repository, repository_owner, ref, event_name, workflow}'
       - name: Exchange for an Anthropic access token
         id: exchange
         run: |
