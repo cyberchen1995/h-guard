@@ -140,6 +140,13 @@ Options:
 
 An `exec` rule needs at least one pattern or `encoded: true`.
 
+Without `command_position` or `strip_quotes`, patterns are matched against the
+whole command, and also against the command as the shell reads it: with line
+continuations removed, and with quotes and escapes removed from each word that
+then contains no spaces or shell operators. So a pattern for
+`hermes plugins disable` also matches `hermes 'plugins' disable`, and one for
+`/opt/pi` also matches `/opt/\p\i` (POSIX) and `` /opt/`p`i `` (PowerShell).
+
 Patterns can use the same placeholders as file patterns (see the table under
 `match.file`), anywhere in the pattern except inside a character class. A
 placeholder becomes the directory or file h-guard sees, matched literally

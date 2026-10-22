@@ -203,6 +203,40 @@ func TestFullTextsJoinOnlyRealContinuations(t *testing.T) {
 	}
 }
 
+// TestFullTextsPlain：全文另给出简单词去掉引号与转义后的版本（只在与原文不同时给出）；
+// 引号里含空白、运算符的数据、命令替换与 $'…' 保留原文，词的边界不变。
+func TestFullTextsPlain(t *testing.T) {
+	tests := []struct {
+		shell guard.Shell
+		cmd   string
+		want  []string // 原文之后的视图
+	}{
+		{guard.ShellPOSIX, `rm /opt/\p\i/agent/extensions/h-guard.js`, []string{"rm /opt/pi/agent/extensions/h-guard.js"}},
+		{guard.ShellPOSIX, `hermes 'plugins' disable "h-guard"`, []string{"hermes plugins disable h-guard"}},
+		{guard.ShellPOSIX, `r\m -r\f x; echo 'a'"b"c`, []string{"rm -rf x; echo abc"}},
+		// 续行与转义一起去掉
+		{guard.ShellPOSIX, "rm \\\n /o\\pt/x", []string{"rm  /o\\pt/x", "rm  /opt/x"}},
+		// 不是简单词：引号里的空白与运算符、命令替换、$'…'、转义的分隔符与空格、"\\"
+		{guard.ShellPOSIX, `echo "rm -rf ~" 'a;b' "$(id)" $'\x72m' a\;b a\ b "a\\b"`, nil},
+		{guard.ShellPOSIX, "rm -rf /tmp/x", nil},
+		{guard.ShellPowerShell, "hermes 'plugins' disable \"h-guard\"", []string{"hermes plugins disable h-guard"}},
+		// 代码里的转义反引号已由去掉续行的视图处理；字符串里的反引号不是代码
+		{guard.ShellPowerShell, "Remove-Item /opt/`p`i/x", []string{"Remove-Item /opt/pi/x"}},
+		{guard.ShellPowerShell, "Remove-Item 'C:\\opt\\pi\\x'", []string{"Remove-Item C:\\opt\\pi\\x"}},
+		{guard.ShellPowerShell, "Write-Output 'rm -rf ~' (Get-Date) @('a') 'a,b'", nil},
+	}
+	for _, tt := range tests {
+		e, err := command.Expand(context.Background(), tt.cmd, tt.shell)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := e.Units[0].FullTexts()
+		if want := append([]string{e.Units[0].Text}, tt.want...); !reflect.DeepEqual(got, want) {
+			t.Errorf("%s %q: FullTexts = %q, want %q", tt.shell, tt.cmd, got, want)
+		}
+	}
+}
+
 // TestExpansionContextMatrix：所处位置 × 展开写法 × 是否被续行拆开，逐一核对哪些内容会被提取为内层命令
 // （成对的用例）。预期取自 bash 实测（printf 标记，不执行危险命令）：命令替换在单引号与
 // 带引号定界符的 heredoc 正文之外都会执行；进程替换只在引号之外执行（双引号、heredoc 正文里是字面内容）；

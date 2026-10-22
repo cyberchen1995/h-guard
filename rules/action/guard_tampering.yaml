@@ -455,6 +455,15 @@ examples:
     - {action: file_delete, path: "~/.hermes/plugins/h-guard/__init__.py"}
     - {action: file_rename, path: "~/.hermes/plugins"}
     - {action: file_write, path: "~/.hermes/profiles/work/config.yaml"}
+    # 引号与转义去掉之后与不带的写法相同（POSIX 引号外的 \x 即 x，PowerShell 代码里的 `x 即 x）
+    - {shell: posix, command: "hermes 'plugins' disable h-guard"}
+    - {shell: posix, command: "hermes config 'unset' plugins"}
+    - {shell: posix, command: "hermes \"config\" set \"plugins\" '{}' --force"}
+    - {shell: posix, command: "rm /opt/\\p\\i/agent/extensions/h-guard.js"}
+    - {shell: posix, command: "rm ~/.her\\mes/plugins/h-guard/__init__.py"}
+    - {shell: posix, command: "r\\m ~/.config/h-guard/questions.json"}
+    - {shell: powershell, command: "Remove-Item /opt/`p`i/agent/extensions/h-guard.js"}
+    - {shell: powershell, command: "hermes 'plugins' disable h-guard"}
   miss:
     - {shell: powershell, command: "Get-Content ~\\.claude\\settings.json"}
     - {shell: posix, command: "cat ~/.claude/settings.json"}
@@ -531,6 +540,7 @@ examples:
     - {shell: posix, command: "rm -rf ~/.hermes/profiles/work/plugins/other"}
     - {action: file_write, path: "~/.hermes/profiles/work/skills/x/SKILL.md"}
     - {shell: posix, command: "hermes config set plugins_note x"}
+    - {shell: posix, command: "hermes 'plugins' disable 'h-guard-notes'"}
     - {shell: posix, command: "echo plugins disable h-guard"}
     - {shell: posix, command: "rm -rf ~/.hermes/plugins/other-plugin"}
     - {action: file_write, path: "~/.hermes/skills/notes/SKILL.md"}

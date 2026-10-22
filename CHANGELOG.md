@@ -70,6 +70,10 @@ minor releases. Every such change is recorded in this file.
   `publish` interrupt their high-impact forms instead of only logging every
   match. The interruption no longer says that the agent chose the operation on
   its own, which h-guard cannot tell without the judge.
+- Full-text exec rules also match the command with quotes and escapes removed
+  from simple words, so `rm /opt/\p\i/...`, PowerShell's `` `p`i `` and
+  `hermes 'plugins' disable h-guard` match like their plain spellings. Quoted
+  text that contains spaces or shell operators is left as it is.
 
 ### Harnesses
 
@@ -172,6 +176,8 @@ minor releases. Every such change is recorded in this file.
 - `pkg/detect/command` adds `ReadTargets`: the files a command reads locally
   (file operands of common read commands, input redirections and PowerShell's
   `Get-Content` paths).
+- `pkg/detect/command`: `Unit.FullTexts` may return a third text, the command
+  with quotes and escapes removed from simple words.
 - New adapters `pkg/harness/opencode`, `pkg/harness/pi` (registers `pi` and
   `omp`), `pkg/harness/dsh`, `pkg/harness/openclaw` and `pkg/harness/hermes`.
 - `pkg/harness` adds `UnknownToolError` for tools an adapter does not know.
