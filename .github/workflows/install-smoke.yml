@@ -80,6 +80,9 @@ jobs:
 
       - name: verify signature
         working-directory: ${{ runner.temp }}/download
+        env:
+          # Git Bash on Windows rewrites arguments that look like paths, which breaks the https:// regex below.
+          MSYS_NO_PATHCONV: "1"
         run: |
           cosign verify-blob \
             --bundle checksums.txt.sigstore.json \
